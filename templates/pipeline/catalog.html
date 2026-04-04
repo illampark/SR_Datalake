@@ -1,0 +1,2415 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.catalog.title') }}{% endblock %}
+{% block page_title %}{{ t('page.catalog.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.catalog.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openRecipeWizard()"><i class="fas fa-flask"></i> {{ t('page.catalog.btn_recipe') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Statistics -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.catalog.stat_total_catalogs') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-book-open"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.catalog.stat_published') }}</h4>
+      <div class="stat-value" id="stat-published">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-globe"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.catalog.stat_categories') }}</h4>
+      <div class="stat-value" id="stat-categories">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-folder-tree"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.catalog.stat_connector_types') }}</h4>
+      <div class="stat-value" id="stat-connector-types">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-plug"></i></div>
+  </div>
+</div>
+
+<!-- Two-Column Layout -->
+<div class="grid-12">
+  <!-- Left: Tree Navigation -->
+  <div class="col-4">
+    <div class="card">
+      <div class="card-header">
+        <h3><i class="fas fa-sitemap"></i> {{ t('page.catalog.tree_title') }}</h3>
+      </div>
+      <div class="card-body" style="max-height:600px;overflow-y:auto;padding:0;">
+        <div class="tree-view" id="catalog-tree">
+          <div class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Catalog List -->
+  <div class="col-8">
+    <div class="card">
+      <div class="card-header">
+        <h3><i class="fas fa-list"></i> {{ t('page.catalog.catalog_list_title') }}</h3>
+        <div class="d-flex gap-8">
+          <input type="text" class="form-control" id="filter-search" placeholder="{{ t('page.catalog.filter_search_placeholder') }}" style="width:180px;padding:5px 10px;" oninput="debounceSearch()">
+          <select class="form-select" id="filter-category" style="width:auto;min-width:130px;padding:5px 10px;" onchange="loadCatalogs(1)">
+            <option value="">{{ t('page.catalog.filter_all_categories') }}</option>
+          </select>
+          <select class="form-select" id="filter-connector-type" style="width:auto;min-width:130px;padding:5px 10px;" onchange="loadCatalogs(1)">
+            <option value="">{{ t('page.catalog.filter_all_connectors') }}</option>
+            <option value="opcua">OPC-UA</option>
+            <option value="opcda">OPC-DA</option>
+            <option value="modbus">Modbus</option>
+            <option value="mqtt">MQTT</option>
+            <option value="db">DB</option>
+            <option value="file">File</option>
+            <option value="api">API</option>
+            <option value="pipeline">Pipeline</option>
+            <option value="recipe">Recipe</option>
+          </select>
+          <select class="form-select" id="filter-data-level" style="width:auto;min-width:130px;padding:5px 10px;" onchange="loadCatalogs(1)">
+            <option value="">{{ t('page.catalog.filter_all_levels') }}</option>
+            <option value="raw">{{ t('page.catalog.level_raw') }}</option>
+            <option value="processed">{{ t('page.catalog.level_processed') }}</option>
+            <option value="user_created">{{ t('page.catalog.level_user_created') }}</option>
+          </select>
+          <select class="form-select" id="filter-tag-scope" style="width:auto;min-width:140px;padding:5px 10px;" onchange="loadCatalogs(1)">
+            <option value="">{{ t('page.catalog.filter_tag_scope_all') }}</option>
+            <option value="tag">{{ t('page.catalog.filter_tag_scope_tag') }}</option>
+            <option value="connector">{{ t('page.catalog.filter_tag_scope_connector') }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-wrapper">
+          <table id="catalog-table">
+            <thead>
+              <tr>
+                <th>{{ t('page.catalog.th_name') }}</th>
+                <th>{{ t('page.catalog.th_connector_type') }}</th>
+                <th>{{ t('page.catalog.th_category') }}</th>
+                <th>{{ t('page.catalog.th_data_level') }}</th>
+                <th>{{ t('page.catalog.th_sensitivity') }}</th>
+                <th>{{ t('page.catalog.th_published') }}</th>
+                <th>{{ t('common.actions') }}</th>
+              </tr>
+            </thead>
+            <tbody id="catalog-tbody">
+              <tr><td colspan="7" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- Pagination -->
+        <div class="d-flex align-center" style="justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);">
+          <span class="fs-12 text-muted" id="pagination-info">-</span>
+          <div class="d-flex gap-8" id="pagination-controls"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Panel (shown when tree item clicked) -->
+<div class="card mt-16" id="detail-panel" style="display:none;">
+  <div class="card-header">
+    <h3><i class="fas fa-info-circle"></i> {{ t('page.catalog.detail_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#detail-panel').hide();$('#data-panel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body" id="detail-body">
+  </div>
+</div>
+
+<!-- Data Query Panel -->
+<div class="card mt-16" id="data-panel" style="display:none;">
+  <div class="card-header">
+    <h3 id="data-panel-title"><i class="fas fa-database"></i> {{ t('page.catalog.data_query_title') }}</h3>
+    <div class="d-flex gap-8">
+      <button class="btn btn-outline btn-sm" id="btn-export-csv" style="display:none;" onclick="exportData('csv')"><i class="fas fa-file-csv"></i> CSV</button>
+      <button class="btn btn-outline btn-sm" id="btn-export-json" style="display:none;" onclick="exportData('json')"><i class="fas fa-file-code"></i> JSON</button>
+      <button class="btn btn-sm" id="btn-show-api" style="display:none;background:var(--info);color:#fff;" onclick="toggleDataApiInfo()"><i class="fas fa-code"></i> API</button>
+      <button class="btn btn-outline btn-sm" onclick="$('#data-panel').hide();$('#data-api-box').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <!-- Filters -->
+    <div class="d-flex gap-8 align-center" style="margin-bottom:16px;flex-wrap:wrap;">
+      <div class="form-group" style="margin:0;">
+        <label class="form-label fs-11" style="margin-bottom:2px;">{{ t('page.catalog.data_from_label') }}</label>
+        <input type="date" class="form-control" id="data-from" style="padding:5px 10px;width:160px;">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label fs-11" style="margin-bottom:2px;">{{ t('page.catalog.data_to_label') }}</label>
+        <input type="date" class="form-control" id="data-to" style="padding:5px 10px;width:160px;">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label class="form-label fs-11" style="margin-bottom:2px;">{{ t('page.catalog.data_search_label') }}</label>
+        <input type="text" class="form-control" id="data-search" placeholder="{{ t('page.catalog.data_search_placeholder') }}" style="padding:5px 10px;width:160px;">
+      </div>
+      <div style="align-self:flex-end;">
+        <button class="btn btn-primary btn-sm" onclick="queryData(1)"><i class="fas fa-search"></i> {{ t('page.metadata.btn_query') }}</button>
+      </div>
+    </div>
+    <!-- Stats Summary -->
+    <div id="data-stats" style="display:none;margin-bottom:16px;">
+      <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">
+      </div>
+    </div>
+    <!-- Data Table / File List -->
+    <div class="table-wrapper">
+      <table id="data-table">
+        <thead id="data-thead"></thead>
+        <tbody id="data-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('page.catalog.data_query_hint') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Data Pagination -->
+    <div class="d-flex align-center" style="justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);">
+      <span class="fs-12 text-muted" id="data-pagination-info">-</span>
+      <div class="d-flex gap-8" id="data-pagination-controls"></div>
+    </div>
+    <!-- Inline API Access Info -->
+    <div id="data-api-box" style="display:none;margin-top:0;padding:16px;border-top:1px solid var(--border);background:var(--bg-secondary);">
+      <div class="d-flex align-center" style="justify-content:space-between;margin-bottom:12px;">
+        <h4 style="margin:0;font-size:14px;"><i class="fas fa-code" style="color:var(--info);margin-right:6px;"></i> {{ t('page.catalog.api_info_title') }}</h4>
+        <button class="btn btn-outline btn-sm" onclick="$('#data-api-box').hide()"><i class="fas fa-times"></i></button>
+      </div>
+      <p class="text-muted fs-12" style="margin-bottom:12px;">{{ t('page.catalog.api_info_subtitle') }}</p>
+      <div id="data-api-endpoints"></div>
+    </div>
+  </div>
+</div>
+<!-- Export Panel -->
+<div class="card mt-16" id="export-panel" style="display:none;">
+  <div class="card-header">
+    <h3><i class="fas fa-file-export"></i> {{ t('page.catalog.export_title') }}</h3>
+    <div class="d-flex gap-8">
+      <button class="btn btn-primary btn-sm" onclick="openExportModal()"><i class="fas fa-plus"></i> {{ t('page.catalog.export_btn_new') }}</button>
+      <button class="btn btn-outline btn-sm" onclick="loadExportRequests()"><i class="fas fa-sync-alt"></i> {{ t('page.catalog.export_btn_refresh') }}</button>
+      <button class="btn btn-outline btn-sm" onclick="$('#export-panel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <p class="text-muted fs-12" style="margin-bottom:16px;">{{ t('page.catalog.export_subtitle') }}</p>
+    <!-- Export Stats -->
+    <div class="stat-grid" id="export-stats" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr));margin-bottom:16px;">
+      <div class="stat-card" style="padding:12px;">
+        <div class="stat-info"><h4 class="fs-11">{{ t('page.catalog.export_stat_total') }}</h4><div class="stat-value fs-16" id="export-stat-total">0</div></div>
+      </div>
+      <div class="stat-card" style="padding:12px;">
+        <div class="stat-info"><h4 class="fs-11">{{ t('page.catalog.export_stat_queued') }}</h4><div class="stat-value fs-16" id="export-stat-queued">0</div></div>
+      </div>
+      <div class="stat-card" style="padding:12px;">
+        <div class="stat-info"><h4 class="fs-11">{{ t('page.catalog.export_stat_processing') }}</h4><div class="stat-value fs-16" id="export-stat-processing">0</div></div>
+      </div>
+      <div class="stat-card" style="padding:12px;">
+        <div class="stat-info"><h4 class="fs-11">{{ t('page.catalog.export_stat_ready') }}</h4><div class="stat-value fs-16" id="export-stat-ready">0</div></div>
+      </div>
+    </div>
+    <!-- Export Table -->
+    <div class="table-wrapper">
+      <table id="export-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.catalog.export_th_name') }}</th>
+            <th>{{ t('page.catalog.export_th_tags') }}</th>
+            <th>{{ t('page.catalog.export_th_format') }}</th>
+            <th>{{ t('page.catalog.export_th_status') }}</th>
+            <th>{{ t('page.catalog.export_th_progress') }}</th>
+            <th>{{ t('page.catalog.export_th_rows') }}</th>
+            <th>{{ t('page.catalog.export_th_size') }}</th>
+            <th>{{ t('page.catalog.export_th_created') }}</th>
+            <th>{{ t('page.catalog.export_th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="export-tbody">
+          <tr><td colspan="9" class="text-center text-muted" style="padding:40px">{{ t('page.catalog.export_no_requests') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="d-flex align-center" style="justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);">
+      <span class="fs-12 text-muted" id="export-pagination-info">-</span>
+      <div class="d-flex gap-8" id="export-pagination-controls"></div>
+    </div>
+  </div>
+</div>
+
+<!-- API Info Panel -->
+<div class="card mt-16" id="api-info-panel" style="display:none;">
+  <div class="card-header">
+    <h3><i class="fas fa-code"></i> {{ t('page.catalog.api_info_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#api-info-panel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body">
+    <p class="text-muted fs-12" style="margin-bottom:16px;">{{ t('page.catalog.api_info_subtitle') }}</p>
+    <div id="api-info-body"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/catalog';
+var currentPage = 1;
+var pageSize = 15;
+var searchTimer = null;
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+var connectorIcons = {
+  opcua: 'fa-plug-circle-bolt',
+  opcda: 'fa-plug',
+  modbus: 'fa-microchip',
+  mqtt: 'fa-satellite-dish',
+  db: 'fa-database',
+  file: 'fa-file-import',
+  api: 'fa-code',
+  pipeline: 'fa-project-diagram',
+  recipe: 'fa-flask'
+};
+
+var connectorLabels = {
+  opcua: 'OPC-UA',
+  opcda: 'OPC-DA',
+  modbus: 'Modbus',
+  mqtt: 'MQTT',
+  db: 'DB',
+  file: 'File',
+  api: 'API',
+  pipeline: 'Pipeline',
+  recipe: 'Recipe'
+};
+
+var sinkLabels = {
+  internal_tsdb_sink: 'TSDB',
+  internal_rdbms_sink: 'RDBMS',
+  internal_file_sink: 'File(S3)'
+};
+function _sinkLabel(t) { return sinkLabels[t] || t || ''; }
+
+var levelLabels = {
+  raw: __t('page.catalog.level_raw'),
+  processed: __t('page.catalog.level_processed'),
+  user_created: __t('page.catalog.level_user_created')
+};
+
+var levelBadge = {
+  raw: '<span class="badge-sm badge-primary">' + __t('page.catalog.level_raw') + '</span>',
+  processed: '<span class="badge-sm badge-success">' + __t('page.catalog.level_processed') + '</span>',
+  user_created: '<span class="badge-sm badge-warning">' + __t('page.catalog.level_user_created') + '</span>'
+};
+
+var sensitivityBadge = {
+  'public': '<span class="badge-sm badge-success">' + __t('page.catalog.sensitivity_public') + '</span>',
+  internal: '<span class="badge-sm badge-primary">' + __t('page.catalog.sensitivity_internal') + '</span>',
+  confidential: '<span class="badge-sm badge-warning">' + __t('page.catalog.sensitivity_confidential') + '</span>',
+  restricted: '<span class="badge-sm badge-danger">' + __t('page.catalog.sensitivity_restricted') + '</span>'
+};
+
+/* ── Load Catalogs ── */
+function loadCatalogs(page) {
+  currentPage = page || 1;
+  var params = { page: currentPage, size: pageSize };
+
+  var connType = $('#filter-connector-type').val();
+  if (connType) params.connector_type = connType;
+
+  var category = $('#filter-category').val();
+  if (category) params.category = category;
+
+  var search = ($('#filter-search').val() || '').trim();
+  if (search) params.search = search;
+
+  var tagScope = $('#filter-tag-scope').val();
+  if (tagScope) params.tag_scope = tagScope;
+
+  var dataLevel = $('#filter-data-level').val();
+  if (dataLevel) params.data_level = dataLevel;
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var data = r.data;
+    var items = data.items || [];
+    var total = data.total || 0;
+    var totalPages = Math.ceil(total / pageSize) || 1;
+
+    // Update stats
+    $('#stat-total').text(fmt(data.total));
+    if (data.publishedCount != null) $('#stat-published').text(fmt(data.publishedCount));
+    if (data.connectorTypeCount != null) $('#stat-connector-types').text(fmt(data.connectorTypeCount));
+
+    var $tb = $('#catalog-tbody').empty();
+
+    if (!items.length) {
+      $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.no_catalogs') + '</td></tr>');
+      $('#pagination-info').text('0' + __t('page.catalog.pagination_count_unit'));
+      $('#pagination-controls').empty();
+      return;
+    }
+
+    items.forEach(function(item) {
+      var icon = connectorIcons[item.connectorType] || 'fa-plug';
+      var label = connectorLabels[item.connectorType] || item.connectorType;
+      var lvl = levelBadge[item.dataLevel] || escHtml(item.dataLevel || '-');
+      var sens = sensitivityBadge[item.sensitivity] || escHtml(item.sensitivity || '-');
+      var published = item.isPublished
+        ? '<span class="badge-sm badge-success"><i class="fas fa-check"></i> ' + __t('page.catalog.published_yes') + '</span>'
+        : '<span class="badge-sm" style="background:#e2e8f0;color:#64748b;">' + __t('page.catalog.published_no') + '</span>';
+
+      $tb.append(
+        '<tr>' +
+        '<td>' +
+          '<div class="fw-600" style="cursor:pointer;color:var(--c-primary);" onclick="showDetail(' + item.id + ')">' + escHtml(item.name) + '</div>' +
+          '<div class="fs-11 text-muted">' + escHtml(item.description || '') + '</div>' +
+          (item.connectorDescription ? '<div class="fs-11 text-muted" style="margin-top:2px;"><i class="fas fa-plug" style="font-size:9px;opacity:.5;margin-right:3px;"></i>' + escHtml(item.connectorDescription) + '</div>' : '') +
+        '</td>' +
+        '<td><i class="fas ' + icon + ' text-muted"></i> ' + escHtml(label) + '</td>' +
+        '<td>' + escHtml(item.category || '-') + '</td>' +
+        '<td>' + lvl + '</td>' +
+        '<td>' + sens + '</td>' +
+        '<td>' + published + '</td>' +
+        '<td>' +
+          '<div class="d-flex gap-8">' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + item.id + ')"><i class="fas fa-edit"></i></button>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteCatalog(' + item.id + ',\'' + escAttr(item.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+          '</div>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+
+    // Pagination info
+    var start = (currentPage - 1) * pageSize + 1;
+    var end = Math.min(currentPage * pageSize, total);
+    $('#pagination-info').text(start + '-' + end + ' / ' + __t('page.catalog.pagination_total') + ' ' + fmt(total) + __t('page.catalog.pagination_count_unit'));
+
+    // Pagination controls
+    var $pc = $('#pagination-controls').empty();
+    if (totalPages > 1) {
+      if (currentPage > 1) {
+        $pc.append('<button class="btn btn-outline btn-sm" onclick="loadCatalogs(' + (currentPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>');
+      }
+      for (var p = 1; p <= totalPages; p++) {
+        if (p === currentPage) {
+          $pc.append('<button class="btn btn-primary btn-sm" disabled>' + p + '</button>');
+        } else if (p <= 3 || p > totalPages - 2 || Math.abs(p - currentPage) <= 1) {
+          $pc.append('<button class="btn btn-outline btn-sm" onclick="loadCatalogs(' + p + ')">' + p + '</button>');
+        } else if (p === 4 && currentPage > 5) {
+          $pc.append('<span class="text-muted" style="padding:4px;">...</span>');
+        } else if (p === totalPages - 2 && currentPage < totalPages - 4) {
+          $pc.append('<span class="text-muted" style="padding:4px;">...</span>');
+        }
+      }
+      if (currentPage < totalPages) {
+        $pc.append('<button class="btn btn-outline btn-sm" onclick="loadCatalogs(' + (currentPage + 1) + ')"><i class="fas fa-chevron-right"></i></button>');
+      }
+    }
+  });
+}
+
+/* ── Load Tree ── */
+function loadTree() {
+  $.getJSON(API + '/tree', function(r) {
+    if (!r.success) return;
+    var tree = r.data;
+    var $tv = $('#catalog-tree').empty();
+
+    if (!tree || !Object.keys(tree).length) {
+      $tv.html('<div class="text-center text-muted" style="padding:40px">' + __t('page.catalog.tree_no_catalogs') + '</div>');
+      return;
+    }
+
+    // tree structure: { connectorType: { connectorId: [ items ] } }
+    Object.keys(tree).forEach(function(connType) {
+      var icon = connectorIcons[connType] || 'fa-plug';
+      var label = connectorLabels[connType] || connType;
+      var connectors = tree[connType];
+      var connCount = 0;
+      Object.keys(connectors).forEach(function(k) { connCount += connectors[k].length; });
+
+      var $typeNode = $(
+        '<div class="tree-item" style="font-weight:600;padding:8px 12px;cursor:pointer;">' +
+          '<i class="fas fa-chevron-right tree-toggle" style="margin-right:6px;font-size:10px;"></i>' +
+          '<i class="fas ' + icon + '" style="margin-right:6px;color:var(--c-primary);"></i>' +
+          escHtml(label) +
+          '<span class="fs-11 text-muted" style="margin-left:6px;">(' + connCount + ')</span>' +
+        '</div>'
+      );
+      var $typeChildren = $('<div class="tree-node" style="display:none;"></div>');
+
+      $typeNode.on('click', function() {
+        var $toggle = $(this).find('.tree-toggle');
+        $toggle.toggleClass('open');
+        $typeChildren.slideToggle(150);
+      });
+
+      Object.keys(connectors).forEach(function(connId) {
+        var items = connectors[connId];
+        var $connNode = $(
+          '<div class="tree-item" style="padding:6px 12px;cursor:pointer;">' +
+            '<i class="fas fa-chevron-right tree-toggle" style="margin-right:6px;font-size:9px;"></i>' +
+            '<i class="fas fa-link text-muted" style="margin-right:6px;font-size:11px;"></i>' +
+            '<span class="fw-600 fs-12">' + __t('page.catalog.tree_connector_prefix') + escHtml(String(connId)) + '</span>' +
+            '<span class="fs-11 text-muted" style="margin-left:6px;">(' + items.length + ')</span>' +
+          '</div>'
+        );
+        var $connChildren = $('<div class="tree-node" style="display:none;"></div>');
+
+        $connNode.on('click', function(e) {
+          e.stopPropagation();
+          var $toggle = $(this).find('.tree-toggle');
+          $toggle.toggleClass('open');
+          $connChildren.slideToggle(150);
+        });
+
+        items.forEach(function(item) {
+          var $leaf = $(
+            '<div class="tree-item" style="padding:5px 12px;cursor:pointer;font-size:12px;" data-id="' + item.id + '">' +
+              '<i class="fas fa-file-alt text-muted" style="margin-right:6px;font-size:11px;"></i>' +
+              escHtml(item.name) +
+            '</div>'
+          );
+          $leaf.on('click', function(e) {
+            e.stopPropagation();
+            $('.tree-item').removeClass('selected');
+            $(this).addClass('selected');
+            showDetail(item.id);
+          });
+          $connChildren.append($leaf);
+        });
+
+        $typeChildren.append($connNode, $connChildren);
+      });
+
+      $tv.append($typeNode, $typeChildren);
+    });
+  });
+}
+
+/* ── Load Categories ── */
+function loadCategories() {
+  $.getJSON(API + '/categories', function(r) {
+    if (!r.success) return;
+    var cats = r.data || [];
+    var $sel = $('#filter-category');
+    $sel.find('option:gt(0)').remove();
+    cats.forEach(function(cat) {
+      $sel.append('<option value="' + escAttr(cat) + '">' + escHtml(cat) + '</option>');
+    });
+    $('#stat-categories').text(fmt(cats.length));
+  });
+}
+
+/* ── Load Stats ── */
+function loadStats() {
+  $.getJSON(API, { page: 1, size: 1 }, function(r) {
+    if (!r.success) return;
+    var data = r.data;
+    if (data.total != null) $('#stat-total').text(fmt(data.total));
+    if (data.publishedCount != null) $('#stat-published').text(fmt(data.publishedCount));
+    if (data.connectorTypeCount != null) $('#stat-connector-types').text(fmt(data.connectorTypeCount));
+  });
+}
+
+/* ── Show Detail ── */
+function showDetail(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.catalog.catalog_load_fail'), 'error'); return; }
+    var item = r.data;
+    var icon = connectorIcons[item.connectorType] || 'fa-plug';
+    var label = connectorLabels[item.connectorType] || item.connectorType;
+    var lvl = levelLabels[item.dataLevel] || item.dataLevel || '-';
+    var tags = (item.searchTags || []).map(function(t) {
+      var tagStr = (typeof t === 'string') ? t : (t.tag || '');
+      return '<span class="tag" style="margin-right:4px;margin-bottom:4px;">' + escHtml(tagStr) + '</span>';
+    }).join('');
+
+    var html =
+      '<div class="grid-12">' +
+        '<div class="col-8">' +
+          '<h4 style="margin-bottom:12px;">' + escHtml(item.name) + '</h4>' +
+          '<p class="text-muted" style="margin-bottom:16px;">' + escHtml(item.description || __t('page.catalog.no_description')) + '</p>' +
+          '<table style="width:100%;font-size:13px;">' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;width:120px;">' + __t('page.catalog.detail_connector_type') + '</td><td><i class="fas ' + icon + '"></i> ' + escHtml(label) + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_connector_id') + '</td><td class="mono">' + escHtml(String(item.connectorId || '-')) + '</td></tr>' +
+            (item.connectorDescription ? '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.connector_description') + '</td><td>' + escHtml(item.connectorDescription) + '</td></tr>' : '') +
+            (item.sinkType ? '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_sink_type') + '</td><td><span class="badge-sm badge-info">' + escHtml(_sinkLabel(item.sinkType)) + '</span></td></tr>' : '') +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_tag_name') + '</td><td class="mono">' + (item.tagName ? escHtml(item.tagName) : '<span class="badge-sm" style="background:#dbeafe;color:#1e40af;">' + __t('page.catalog.connector_level_label') + '</span>') + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_owner') + '</td><td>' + escHtml(item.owner || '-') + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_category') + '</td><td>' + escHtml(item.category || '-') + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_data_level') + '</td><td>' + escHtml(lvl) + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_sensitivity') + '</td><td>' + escHtml(item.sensitivity || '-') + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_retention_policy') + '</td><td>' + escHtml(item.retentionPolicy || '-') + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_format') + '</td><td class="mono">' + escHtml(item.format || '-') + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_access_url') + '</td><td class="mono fs-12">' + escHtml(item.accessUrl || '-') + '</td></tr>' +
+            '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_published') + '</td><td>' + (item.isPublished ? '<span class="badge-sm badge-success">' + __t('page.catalog.published_yes') + '</span>' : '<span class="badge-sm" style="background:#e2e8f0;color:#64748b;">' + __t('page.catalog.published_no') + '</span>') + '</td></tr>' +
+          '</table>' +
+        '</div>' +
+        '<div class="col-4">' +
+          '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;">' +
+            '<h5 style="margin-bottom:12px;"><i class="fas fa-tags"></i> ' + __t('page.catalog.detail_search_tags') + '</h5>' +
+            '<div>' + (tags || '<span class="text-muted fs-12">' + __t('page.catalog.detail_no_tags') + '</span>') + '</div>' +
+          '</div>' +
+          (item.schemaInfo ? (
+            '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
+              '<h5 style="margin-bottom:12px;"><i class="fas fa-code"></i> ' + __t('page.catalog.detail_schema_info') + '</h5>' +
+              '<pre style="font-size:11px;background:#f1f5f9;padding:8px;border-radius:4px;overflow-x:auto;max-height:200px;margin:0;">' + escHtml(item.schemaInfo) + '</pre>' +
+            '</div>'
+          ) : '') +
+          (item.liveStats ? (
+            '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
+              '<h5 style="margin-bottom:12px;"><i class="fas fa-chart-line" style="color:#3b82f6;"></i> ' + __t('page.catalog.detail_live_stats_title') + '</h5>' +
+              '<table style="width:100%;font-size:12px;">' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('common.status') + '</td><td>' + (item.liveStats.isActive ? '<span class="badge-sm badge-success">' + __t('common.active') + '</span>' : '<span class="badge-sm badge-warning">' + __t('common.inactive') + '</span>') + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.detail_live_quality') + '</td><td><span class="fw-600">' + (item.liveStats.qualityScore != null ? item.liveStats.qualityScore.toFixed(1) : '-') + '</span>/100</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.detail_live_last_value') + '</td><td class="mono">' + escHtml(item.liveStats.lastValue || '-') + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.detail_live_sample_count') + '</td><td class="mono">' + fmt(item.liveStats.sampleCount) + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.detail_live_range') + '</td><td class="mono">' + (item.liveStats.minObserved != null ? item.liveStats.minObserved.toFixed(2) : '-') + ' ~ ' + (item.liveStats.maxObserved != null ? item.liveStats.maxObserved.toFixed(2) : '-') + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">MQTT</td><td class="mono fs-11" style="word-break:break-all;">' + escHtml(item.liveStats.mqttTopic || '-') + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.detail_live_last_seen') + '</td><td class="fs-11">' + escHtml(item.liveStats.lastSeenAt || '-') + '</td></tr>' +
+              '</table>' +
+              '<a href="/pipeline/metadata?search=' + escAttr(item.tagName || '') + '" class="btn btn-outline btn-sm" style="margin-top:8px;display:inline-block;">' +
+                '<i class="fas fa-external-link-alt"></i> ' + __t('page.catalog.detail_metadata_link') +
+              '</a>' +
+            '</div>'
+          ) : '') +
+          (item.connectorStats ? (
+            '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
+              '<h5 style="margin-bottom:12px;"><i class="fas fa-plug" style="color:#3b82f6;"></i> ' + __t('page.catalog.connector_stats_title') + '</h5>' +
+              '<table style="width:100%;font-size:12px;">' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.connector_stats_tag_count') + '</td><td class="mono fw-600">' + item.connectorStats.tagCount + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.connector_stats_active_tags') + '</td><td>' + '<span class="badge-sm badge-success">' + item.connectorStats.activeTagCount + '</span> / ' + item.connectorStats.tagCount + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.connector_stats_total_samples') + '</td><td class="mono">' + fmt(item.connectorStats.totalSampleCount) + '</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.connector_stats_avg_quality') + '</td><td><span class="fw-600">' + (item.connectorStats.avgQualityScore != null ? item.connectorStats.avgQualityScore : '-') + '</span>/100</td></tr>' +
+                '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.detail_live_last_seen') + '</td><td class="fs-11">' + escHtml(item.connectorStats.lastSeenAt || '-') + '</td></tr>' +
+              '</table>' +
+            '</div>'
+          ) : '') +
+          '<div id="detail-pipelines" style="margin-top:12px;"></div>' +
+          '<div style="margin-top:12px;">' +
+            '<button class="btn btn-primary btn-sm" onclick="openDataPanel(' + item.id + ',\'' + escAttr(item.connectorType || '') + '\',\'' + escAttr(item.sinkType || '') + '\')"><i class="fas fa-database"></i> ' + __t('page.catalog.btn_data_query') + '</button> ' +
+            '<button class="btn btn-sm" style="background:var(--info);color:#fff;" onclick="openExportPanel(' + item.id + ',\'' + escAttr(item.tagName || '') + '\',\'' + escAttr(item.connectorType || '') + '\',' + (item.connectorId || 0) + ')"><i class="fas fa-file-export"></i> ' + __t('page.catalog.export_title') + '</button> ' +
+            '<button class="btn btn-outline btn-sm" onclick="showApiInfo(' + item.id + ')"><i class="fas fa-code"></i> API</button> ' +
+            '<a href="/collection/connectors/' + (item.connectorType || 'opcua') + '" class="btn btn-outline btn-sm"><i class="fas fa-plug"></i> ' + __t('page.catalog.btn_connector_settings') + '</a> ' +
+            '<button class="btn btn-outline btn-sm" onclick="openEditModal(' + item.id + ')"><i class="fas fa-edit"></i> ' + __t('common.edit') + '</button> ' +
+            '<button class="btn btn-outline btn-sm" onclick="deleteCatalog(' + item.id + ',\'' + escAttr(item.name) + '\')"><i class="fas fa-trash text-danger"></i> ' + __t('common.delete') + '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    $('#detail-body').html(html);
+    $('#detail-panel').show();
+    // Load pipeline linkage (UC-4)
+    loadDetailPipelines(item.tagName, item.connectorType, item.connectorId);
+    $('html, body').animate({ scrollTop: $('#detail-panel').offset().top - 80 }, 300);
+  });
+}
+
+/* ── Pipeline Linkage (UC-4) ── */
+function loadDetailPipelines(tagName, connectorType, connectorId) {
+  var $el = $('#detail-pipelines');
+  if (!tagName) { $el.empty(); return; }
+  $.getJSON('/api/metadata/search/tag-pipelines', {
+    tag: tagName, connector_type: connectorType || '', connector_id: connectorId || 0
+  }, function(r) {
+    if (!r.success || !r.data) { $el.empty(); return; }
+    var pipes = r.data.pipelines || [];
+    if (!pipes.length) {
+      $el.html('<div style="padding:8px 12px;background:var(--bg-secondary);border-radius:6px;border-left:3px solid var(--warning);">' +
+        '<span class="fs-12"><i class="fas fa-exclamation-triangle text-warning"></i> ' + __t('page.catalog.no_pipeline_linked') + '</span></div>');
+      return;
+    }
+    var html = '<div style="padding:8px 12px;background:var(--bg-secondary);border-radius:6px;border-left:3px solid var(--primary);">' +
+      '<div class="fw-600 fs-12" style="margin-bottom:6px;"><i class="fas fa-diagram-project"></i> ' + __t('page.catalog.linked_pipelines') + ' (' + pipes.length + __t('page.catalog.linked_pipelines_count') + ')</div>';
+    pipes.forEach(function(p) {
+      var statusCls = p.pipelineStatus === 'running' ? 'badge-running' : 'badge-stopped';
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">' +
+        '<span class="badge-status ' + statusCls + '" style="font-size:11px">' + escHtml(p.pipelineStatus) + '</span>' +
+        '<a href="/pipeline/builder" class="fs-12">' + escHtml(p.pipelineName) + '</a>' +
+        '<span class="mono text-muted fs-11">(' + __t('page.catalog.linked_pipeline_processed') + ' ' + fmt(p.processedCount || 0) + __t('page.catalog.pagination_count_unit') + ', ' + __t('page.catalog.linked_pipeline_steps') + ' ' + (p.stepCount || 0) + __t('page.catalog.linked_pipelines_count') + ')</span>' +
+      '</div>';
+    });
+    html += '</div>';
+    $el.html(html);
+  });
+}
+
+/* ── Search ── */
+function debounceSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(function() { loadCatalogs(1); }, 300);
+}
+
+/* ── Modal Form HTML ── */
+function _catalogFormHtml() {
+  return (
+    '<form id="catalog-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.catalog.form_name_label') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="' + __t('page.catalog.form_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.catalog.form_desc_label') + '</label>' +
+    '  <textarea class="form-control" id="f-description" rows="2" placeholder="' + __t('page.catalog.form_desc_placeholder') + '"></textarea>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_connector_type') + ' <span class="text-danger">*</span></label>' +
+    '    <select class="form-select" id="f-connectorType">' +
+    '      <option value="">' + __t('page.catalog.form_connector_select') + '</option>' +
+    '      <option value="opcua">OPC-UA</option>' +
+    '      <option value="opcda">OPC-DA</option>' +
+    '      <option value="modbus">Modbus</option>' +
+    '      <option value="mqtt">MQTT</option>' +
+    '      <option value="db">DB</option>' +
+    '      <option value="file">File</option>' +
+    '      <option value="api">API</option>' +
+    '      <option value="pipeline">Pipeline</option>' +
+    '      <option value="recipe">Recipe</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_connector_id') + '</label>' +
+    '    <input type="number" class="form-control" id="f-connectorId" placeholder="' + __t('page.catalog.form_connector_id_placeholder') + '" min="0">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_tag_name') + '</label>' +
+    '    <input type="text" class="form-control" id="f-tagName" placeholder="e.g. TT-101_PV">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_owner') + '</label>' +
+    '    <input type="text" class="form-control" id="f-owner" placeholder="' + __t('page.catalog.form_owner_placeholder') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_category') + '</label>' +
+    '    <input type="text" class="form-control" id="f-category" placeholder="' + __t('page.catalog.form_category_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_data_level') + '</label>' +
+    '    <select class="form-select" id="f-dataLevel">' +
+    '      <option value="raw">' + __t('page.catalog.form_level_raw') + '</option>' +
+    '      <option value="processed">' + __t('page.catalog.form_level_processed') + '</option>' +
+    '      <option value="user_created">' + __t('page.catalog.form_level_user_created') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_sensitivity') + '</label>' +
+    '    <select class="form-select" id="f-sensitivity">' +
+    '      <option value="public">' + __t('page.catalog.form_sensitivity_public') + '</option>' +
+    '      <option value="internal">' + __t('page.catalog.form_sensitivity_internal') + '</option>' +
+    '      <option value="confidential">' + __t('page.catalog.form_sensitivity_confidential') + '</option>' +
+    '      <option value="restricted">' + __t('page.catalog.form_sensitivity_restricted') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_retention_policy') + '</label>' +
+    '    <input type="text" class="form-control" id="f-retentionPolicy" placeholder="' + __t('page.catalog.form_retention_placeholder') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_access_url') + '</label>' +
+    '    <input type="text" class="form-control" id="f-accessUrl" placeholder="' + __t('page.catalog.form_access_url_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.catalog.form_format') + '</label>' +
+    '    <input type="text" class="form-control" id="f-format" placeholder="' + __t('page.catalog.form_format_placeholder') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.catalog.form_schema_info') + '</label>' +
+    '  <textarea class="form-control" id="f-schemaInfo" rows="3" placeholder="' + __t('page.catalog.form_schema_placeholder') + '"></textarea>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.catalog.form_search_tags') + '</label>' +
+    '  <input type="text" class="form-control" id="f-searchTags" placeholder="' + __t('page.catalog.form_search_tags_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">' +
+    '    <input type="checkbox" id="f-isPublished">' +
+    '    <span class="form-label" style="margin:0;">' + __t('page.catalog.form_is_published') + '</span>' +
+    '  </label>' +
+    '</div>' +
+    '</form>'
+  );
+}
+
+function _collectForm() {
+  var tagsRaw = ($('#f-searchTags').val() || '').trim();
+  var searchTags = tagsRaw ? tagsRaw.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+  return {
+    name: $('#f-name').val().trim(),
+    description: $('#f-description').val().trim(),
+    connectorType: $('#f-connectorType').val(),
+    connectorId: parseInt($('#f-connectorId').val()) || null,
+    tagName: $('#f-tagName').val().trim(),
+    owner: $('#f-owner').val().trim(),
+    category: $('#f-category').val().trim(),
+    dataLevel: $('#f-dataLevel').val(),
+    sensitivity: $('#f-sensitivity').val(),
+    retentionPolicy: $('#f-retentionPolicy').val().trim(),
+    accessUrl: $('#f-accessUrl').val().trim(),
+    format: $('#f-format').val().trim(),
+    schemaInfo: $('#f-schemaInfo').val().trim(),
+    isPublished: $('#f-isPublished').is(':checked'),
+    searchTags: searchTags
+  };
+}
+
+/* ── Edit ── */
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.catalog.catalog_load_fail'), 'error'); return; }
+    var item = r.data;
+
+    var body = _catalogFormHtml();
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" id="btn-update-catalog"><i class="fas fa-save"></i> ' + __t('common.edit') + '</button>';
+    openModal(__t('page.catalog.modal_edit_title') + ' - ' + item.name, body, footer, 'modal-lg');
+
+    setTimeout(function() {
+      $('#f-name').val(item.name);
+      $('#f-description').val(item.description || '');
+      $('#f-connectorType').val(item.connectorType || '');
+      $('#f-connectorId').val(item.connectorId || '');
+      $('#f-tagName').val(item.tagName || '');
+      $('#f-owner').val(item.owner || '');
+      $('#f-category').val(item.category || '');
+      $('#f-dataLevel').val(item.dataLevel || 'raw');
+      $('#f-sensitivity').val(item.sensitivity || 'public');
+      $('#f-retentionPolicy').val(item.retentionPolicy || '');
+      $('#f-accessUrl').val(item.accessUrl || '');
+      $('#f-format').val(item.format || '');
+      $('#f-schemaInfo').val(item.schemaInfo || '');
+      $('#f-searchTags').val((item.searchTags || []).map(function(t) {
+        return (typeof t === 'string') ? t : (t.tag || '');
+      }).join(', '));
+      $('#f-isPublished').prop('checked', item.isPublished || false);
+
+      $('#btn-update-catalog').off('click').on('click', function() { updateCatalog(id); });
+    }, 100);
+  });
+}
+
+function updateCatalog(id) {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.catalog.toast_name_required'), 'error'); return; }
+  if (!d.connectorType) { showToast(__t('page.catalog.toast_connector_required'), 'error'); return; }
+
+  $.ajax({
+    url: API + '/' + id,
+    type: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) {
+        closeModal();
+        showToast(__t('page.catalog.toast_updated'), 'success');
+        refreshAll();
+      } else {
+        showToast((r.error && r.error.message) || __t('common.save_failed'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON;
+      showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error');
+    }
+  });
+}
+
+/* ── Delete ── */
+function deleteCatalog(id, name) {
+  confirmAction('"' + name + '" ' + __t('page.catalog.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id,
+      type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.catalog.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        refreshAll();
+      },
+      error: function() {
+        showToast(__t('common.delete_failed'), 'error');
+      }
+    });
+  });
+}
+
+/* ── Data Query Panel ── */
+var _dataCatalogId = null;
+var _dataConnectorType = '';
+var _dataPage = 1;
+var _dataPageSize = 50;
+
+var _dataSinkType = '';
+
+function openDataPanel(catalogId, connectorType, sinkType) {
+  _dataCatalogId = catalogId;
+  _dataConnectorType = connectorType;
+  _dataSinkType = sinkType || '';
+  _dataPage = 1;
+
+  var today = new Date();
+  var week = new Date(); week.setDate(today.getDate() - 7);
+  $('#data-to').val(today.toISOString().slice(0, 10));
+  $('#data-from').val(week.toISOString().slice(0, 10));
+  $('#data-search').val('');
+
+  $('#data-api-box').hide();
+  if (connectorType === 'file' || _dataSinkType === 'internal_file_sink') {
+    $('#data-panel-title').html('<i class="fas fa-folder-open"></i> ' + __t('page.catalog.file_browser_title'));
+    $('#btn-export-csv, #btn-export-json, #btn-show-api').hide();
+    $('#data-search').attr('placeholder', __t('page.catalog.data_search_placeholder'));
+  } else {
+    $('#data-panel-title').html('<i class="fas fa-database"></i> ' + __t('page.catalog.file_ts_data_title'));
+    $('#btn-export-csv, #btn-export-json, #btn-show-api').show();
+    $('#data-search').attr('placeholder', '');
+  }
+
+  $('#data-panel').show();
+  queryData(1);
+  $('html, body').animate({ scrollTop: $('#data-panel').offset().top - 80 }, 300);
+}
+
+function queryData(page) {
+  _dataPage = page || 1;
+  if (!_dataCatalogId) return;
+  if (_dataConnectorType === 'file' || _dataSinkType === 'internal_file_sink') {
+    loadCatalogFiles(_dataPage);
+  } else {
+    loadCatalogData(_dataPage);
+  }
+}
+
+function loadCatalogData(page) {
+  var params = { page: page, size: _dataPageSize };
+  var from = $('#data-from').val();
+  var to = $('#data-to').val();
+  if (from) params.from = from;
+  if (to) params.to = to;
+
+  var $tb = $('#data-tbody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.data_querying') + '</td></tr>');
+
+  $.getJSON(API + '/' + _dataCatalogId + '/data', params, function(r) {
+    if (!r.success) {
+      $tb.html('<tr><td colspan="9" class="text-center text-danger" style="padding:30px">' + escHtml((r.error && r.error.message) || __t('page.catalog.data_query_fail')) + '</td></tr>');
+      return;
+    }
+    var data = r.data;
+    var items = data.items || [];
+    var total = data.total || 0;
+    var stats = data.stats || {};
+    var isCL = data.isConnectorLevel || false;
+    var sinkType = data.sinkType || '';
+
+    // File 싱크 → 파일 탭으로 자동 전환
+    if (data.useFilesApi) {
+      _dataSinkType = 'internal_file_sink';
+      loadCatalogFiles(1);
+      return;
+    }
+
+    // RDBMS 싱크 또는 Recipe → 동적 컬럼 테이블
+    if (sinkType === 'internal_rdbms_sink' || sinkType === 'recipe') {
+      var columns = data.columns || [];
+      var colCount = columns.length;
+      var rdbmsInfo = data.rdbmsInfo || {};
+
+      // Header
+      var hdr = '<tr>';
+      columns.forEach(function(col) { hdr += '<th>' + escHtml(col) + '</th>'; });
+      hdr += '</tr>';
+      $('#data-thead').html(hdr);
+
+      // RDBMS 정보 표시
+      $('#data-stats').show().find('.stat-grid').html(
+        '<div class="stat-card" style="padding:12px;">' +
+          '<div class="stat-info"><h4 class="fs-11">' + __t('page.catalog.data_stat_count') + '</h4><div class="stat-value fs-16">' + fmt(total) + '</div></div>' +
+        '</div>' +
+        '<div class="stat-card" style="padding:12px;">' +
+          '<div class="stat-info"><h4 class="fs-11">' + __t('page.catalog.rdbms_info') + '</h4><div class="stat-value fs-14 mono">' + escHtml(rdbmsInfo.dbType || '') + ' / ' + escHtml(rdbmsInfo.tableName || '') + '</div></div>' +
+        '</div>'
+      );
+
+      $tb = $('#data-tbody').empty();
+      if (!items.length) {
+        $tb.html('<tr><td colspan="' + colCount + '" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.data_no_data') + '</td></tr>');
+        $('#data-pagination-info').text('0' + __t('page.catalog.pagination_count_unit'));
+        $('#data-pagination-controls').empty();
+        return;
+      }
+
+      items.forEach(function(d) {
+        var row = '<tr>';
+        columns.forEach(function(col) {
+          var v = d[col];
+          row += '<td class="mono fs-12">' + (v != null ? escHtml(String(v)) : '-') + '</td>';
+        });
+        row += '</tr>';
+        $tb.append(row);
+      });
+
+      renderDataPagination(total, page);
+      return;
+    }
+
+    // 기본: 시계열 데이터 테이블
+    var colCount = isCL ? 8 : 7;
+
+    // Header
+    var hdr = '<tr><th style="width:180px;">' + __t('page.catalog.data_ts_header_timestamp') + '</th>';
+    if (isCL) hdr += '<th>' + __t('page.catalog.data_ts_header_tag') + '</th>';
+    hdr +=
+        '<th>' + __t('page.catalog.data_ts_header_value') + '</th>' +
+        '<th>' + __t('page.catalog.data_ts_header_value_str') + '</th>' +
+        '<th>' + __t('page.catalog.data_ts_header_type') + '</th>' +
+        '<th>' + __t('page.catalog.data_ts_header_unit') + '</th>' +
+        '<th>' + __t('page.catalog.data_ts_header_quality') + '</th>' +
+        '<th>' + __t('page.catalog.data_ts_header_measurement') + '</th></tr>';
+    $('#data-thead').html(hdr);
+
+    // Stats
+    if (stats.count > 0) {
+      $('#data-stats').show().find('.stat-grid').html(
+        '<div class="stat-card" style="padding:12px;">' +
+          '<div class="stat-info"><h4 class="fs-11">' + __t('page.catalog.data_stat_count') + '</h4><div class="stat-value fs-16">' + fmt(stats.count) + '</div></div>' +
+        '</div>' +
+        '<div class="stat-card" style="padding:12px;">' +
+          '<div class="stat-info"><h4 class="fs-11">' + __t('page.catalog.data_stat_min') + '</h4><div class="stat-value fs-16 mono">' + (stats.min != null ? stats.min : '-') + '</div></div>' +
+        '</div>' +
+        '<div class="stat-card" style="padding:12px;">' +
+          '<div class="stat-info"><h4 class="fs-11">' + __t('page.catalog.data_stat_max') + '</h4><div class="stat-value fs-16 mono">' + (stats.max != null ? stats.max : '-') + '</div></div>' +
+        '</div>' +
+        '<div class="stat-card" style="padding:12px;">' +
+          '<div class="stat-info"><h4 class="fs-11">' + __t('page.catalog.data_stat_avg') + '</h4><div class="stat-value fs-16 mono">' + (stats.avg != null ? stats.avg : '-') + '</div></div>' +
+        '</div>'
+      );
+    } else {
+      $('#data-stats').hide();
+    }
+
+    $tb = $('#data-tbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="' + colCount + '" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.data_no_data') + '</td></tr>');
+      $('#data-pagination-info').text('0' + __t('page.catalog.pagination_count_unit'));
+      $('#data-pagination-controls').empty();
+      return;
+    }
+
+    items.forEach(function(d) {
+      var row = '<tr><td class="mono fs-12">' + escHtml((d.timestamp || '').replace('T', ' ').slice(0, 19)) + '</td>';
+      if (isCL) row += '<td class="mono fs-12">' + escHtml(d.tagName || '') + '</td>';
+      row +=
+          '<td class="mono fw-600">' + (d.value != null ? d.value : '-') + '</td>' +
+          '<td class="mono fs-12">' + escHtml(d.valueStr || '') + '</td>' +
+          '<td class="fs-12">' + escHtml(d.dataType || '') + '</td>' +
+          '<td class="fs-12">' + escHtml(d.unit || '') + '</td>' +
+          '<td>' + (d.quality != null ? '<span class="badge-sm ' + (d.quality >= 80 ? 'badge-success' : d.quality >= 50 ? 'badge-warning' : 'badge-danger') + '">' + d.quality + '</span>' : '-') + '</td>' +
+          '<td class="fs-12">' + escHtml(d.measurement || '') + '</td></tr>';
+      $tb.append(row);
+    });
+
+    renderDataPagination(total, page);
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON;
+    $tb.html('<tr><td colspan="8" class="text-center text-danger" style="padding:30px">' + escHtml((e && e.error && e.error.message) || __t('page.catalog.data_query_fail')) + '</td></tr>');
+  });
+}
+
+function loadCatalogFiles(page) {
+  var params = { page: page, size: _dataPageSize };
+  var date = $('#data-from').val();
+  if (date) params.date = date.replace(/-/g, '-');
+  var search = ($('#data-search').val() || '').trim();
+  if (search) params.search = search;
+
+  var $tb = $('#data-tbody').html('<tr><td colspan="6" class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.data_querying') + '</td></tr>');
+
+  // Header for files
+  $('#data-thead').html(
+    '<tr>' +
+      '<th>' + __t('page.catalog.file_header_name') + '</th>' +
+      '<th>' + __t('page.catalog.file_header_type') + '</th>' +
+      '<th>' + __t('page.catalog.file_header_size') + '</th>' +
+      '<th>' + __t('page.catalog.file_header_path') + '</th>' +
+      '<th>' + __t('page.catalog.file_header_modified') + '</th>' +
+      '<th>' + __t('page.catalog.file_header_download') + '</th>' +
+    '</tr>'
+  );
+  $('#data-stats').hide();
+
+  $.getJSON(API + '/' + _dataCatalogId + '/files', params, function(r) {
+    if (!r.success) {
+      $tb.html('<tr><td colspan="6" class="text-center text-danger" style="padding:30px">' + escHtml((r.error && r.error.message) || __t('page.catalog.data_query_fail')) + '</td></tr>');
+      return;
+    }
+    var data = r.data;
+    var items = data.items || [];
+    var total = data.total || 0;
+
+    $tb = $('#data-tbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="6" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.file_no_files') + '</td></tr>');
+      $('#data-pagination-info').text('0' + __t('page.catalog.pagination_count_unit'));
+      $('#data-pagination-controls').empty();
+      return;
+    }
+
+    var fileIcons = { image: 'fa-file-image', csv: 'fa-file-csv', data: 'fa-file-code', doc: 'fa-file-alt', excel: 'fa-file-excel', archive: 'fa-file-archive', log: 'fa-file-alt' };
+    items.forEach(function(f) {
+      var ficon = fileIcons[f.type] || 'fa-file';
+      $tb.append(
+        '<tr>' +
+          '<td><i class="fas ' + ficon + ' text-muted" style="margin-right:6px;"></i><span class="fw-600">' + escHtml(f.name) + '</span></td>' +
+          '<td><span class="badge-sm badge-primary">' + escHtml(f.type || 'other') + '</span></td>' +
+          '<td class="mono fs-12">' + escHtml(f.sizeDisplay || '-') + '</td>' +
+          '<td class="mono fs-11 text-muted">' + escHtml(f.path || '/') + '</td>' +
+          '<td class="fs-12">' + escHtml((f.modifiedAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
+          '<td><a href="' + API + '/' + _dataCatalogId + '/files/download?objectName=' + encodeURIComponent(f.objectName || '') + '&bucket=' + encodeURIComponent(f.bucket || '') + '" class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '"><i class="fas fa-download"></i></a></td>' +
+        '</tr>'
+      );
+    });
+
+    renderDataPagination(total, page);
+  }).fail(function() {
+    $tb.html('<tr><td colspan="6" class="text-center text-danger" style="padding:30px">' + __t('page.catalog.file_load_fail') + '</td></tr>');
+  });
+}
+
+function renderDataPagination(total, page) {
+  var totalPages = Math.ceil(total / _dataPageSize) || 1;
+  var start = (page - 1) * _dataPageSize + 1;
+  var end = Math.min(page * _dataPageSize, total);
+  $('#data-pagination-info').text(start + '-' + end + ' / ' + __t('page.catalog.pagination_total') + ' ' + fmt(total) + __t('page.catalog.pagination_count_unit'));
+
+  var $pc = $('#data-pagination-controls').empty();
+  if (totalPages > 1) {
+    if (page > 1) $pc.append('<button class="btn btn-outline btn-sm" onclick="queryData(' + (page - 1) + ')"><i class="fas fa-chevron-left"></i></button>');
+    for (var p = 1; p <= totalPages; p++) {
+      if (p === page) {
+        $pc.append('<button class="btn btn-primary btn-sm" disabled>' + p + '</button>');
+      } else if (p <= 3 || p > totalPages - 2 || Math.abs(p - page) <= 1) {
+        $pc.append('<button class="btn btn-outline btn-sm" onclick="queryData(' + p + ')">' + p + '</button>');
+      } else if (p === 4 && page > 5) {
+        $pc.append('<span class="text-muted" style="padding:4px;">...</span>');
+      }
+    }
+    if (page < totalPages) $pc.append('<button class="btn btn-outline btn-sm" onclick="queryData(' + (page + 1) + ')"><i class="fas fa-chevron-right"></i></button>');
+  }
+}
+
+function exportData(format) {
+  if (!_dataCatalogId) return;
+  var params = 'format=' + format;
+  var from = $('#data-from').val();
+  var to = $('#data-to').val();
+  if (from) params += '&from=' + from;
+  if (to) params += '&to=' + to;
+  window.location.href = API + '/' + _dataCatalogId + '/data/export?' + params;
+}
+
+function toggleDataApiInfo() {
+  var $box = $('#data-api-box');
+  if ($box.is(':visible')) { $box.hide(); return; }
+
+  var base = window.location.origin;
+  var catApi = base + '/api/catalog/' + _dataCatalogId;
+  var from = $('#data-from').val() || '';
+  var to = $('#data-to').val() || '';
+  var qp = [];
+  if (from) qp.push('from=' + from);
+  if (to) qp.push('to=' + to);
+  var qs = qp.length ? '?' + qp.join('&') : '';
+
+  var endpoints = [
+    {
+      method: 'GET',
+      label: __t('page.catalog.api_info_data_query'),
+      url: catApi + '/data' + qs + (qs ? '&' : '?') + 'page=1&size=100',
+      curl: 'curl -s -b "session=<SESSION>" "' + catApi + '/data' + qs + (qs ? '&' : '?') + 'page=1&size=100" | python3 -m json.tool'
+    },
+    {
+      method: 'GET',
+      label: __t('page.catalog.api_info_data_export') + ' (CSV)',
+      url: catApi + '/data/export' + qs + (qs ? '&' : '?') + 'format=csv',
+      curl: 'curl -s -b "session=<SESSION>" "' + catApi + '/data/export' + qs + (qs ? '&' : '?') + 'format=csv" -o export.csv'
+    },
+    {
+      method: 'GET',
+      label: __t('page.catalog.api_info_data_export') + ' (JSON)',
+      url: catApi + '/data/export' + qs + (qs ? '&' : '?') + 'format=json',
+      curl: 'curl -s -b "session=<SESSION>" "' + catApi + '/data/export' + qs + (qs ? '&' : '?') + 'format=json" -o export.json'
+    },
+    {
+      method: 'POST',
+      label: __t('page.catalog.api_info_bulk_export'),
+      url: base + '/api/catalog/export',
+      curl: 'curl -s -X POST "' + base + '/api/catalog/export" -H "Content-Type: application/json" -b "session=<SESSION>" -d \'{"name":"my-export","tags":[],"dateFrom":"' + (from || '2024-01-01') + '","dateTo":"' + (to || '2024-12-31') + '","format":"csv"}\' | python3 -m json.tool'
+    }
+  ];
+
+  var html = '';
+  endpoints.forEach(function(ep, idx) {
+    var badgeCls = ep.method === 'POST' ? 'badge-warning' : 'badge-success';
+    var curlId = 'data-curl-' + idx;
+    html += '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;">';
+    html += '<div class="d-flex align-center gap-8" style="margin-bottom:6px;">';
+    html += '<span class="badge-sm ' + badgeCls + '">' + ep.method + '</span>';
+    html += '<span class="fw-600 fs-12">' + escHtml(ep.label) + '</span>';
+    html += '</div>';
+    html += '<div class="mono fs-11 text-muted" style="word-break:break-all;margin-bottom:8px;">' + escHtml(ep.url) + '</div>';
+    html += '<div style="position:relative;">';
+    html += '<pre id="' + curlId + '" class="mono fs-11" style="background:#1e293b;color:#e2e8f0;padding:10px 12px;border-radius:6px;overflow-x:auto;margin:0;white-space:pre-wrap;word-break:break-all;">' + escHtml(ep.curl) + '</pre>';
+    html += '<button class="btn btn-sm" style="position:absolute;top:4px;right:4px;background:rgba(255,255,255,.12);color:#fff;font-size:10px;padding:3px 8px;" onclick="copyCurl(\'' + curlId + '\')">';
+    html += '<i class="fas fa-copy"></i> ' + __t('page.catalog.api_info_copy') + '</button>';
+    html += '</div></div>';
+  });
+
+  $('#data-api-endpoints').html(html);
+  $box.show();
+  $('html, body').animate({ scrollTop: $box.offset().top - 80 }, 300);
+}
+
+/* ── Export Panel ── */
+var _exportCatalogId = null;
+var _exportTagName = '';
+var _exportConnType = '';
+var _exportConnId = 0;
+var _exportPage = 1;
+var _exportPageSize = 10;
+var _exportPollTimer = null;
+
+function openExportPanel(catalogId, tagName, connType, connId) {
+  _exportCatalogId = catalogId;
+  _exportTagName = tagName;
+  _exportConnType = connType;
+  _exportConnId = connId;
+  $('#export-panel').show();
+  loadExportRequests(1);
+  _startExportPolling();
+  $('html, body').animate({ scrollTop: $('#export-panel').offset().top - 80 }, 300);
+}
+
+function _startExportPolling() {
+  _stopExportPolling();
+  _exportPollTimer = setInterval(function() {
+    if ($('#export-panel').is(':visible')) loadExportRequests(_exportPage);
+    else _stopExportPolling();
+  }, 5000);
+}
+
+function _stopExportPolling() {
+  if (_exportPollTimer) { clearInterval(_exportPollTimer); _exportPollTimer = null; }
+}
+
+function loadExportRequests(page) {
+  _exportPage = page || 1;
+  $.getJSON(API + '/export', { page: _exportPage, size: _exportPageSize }, function(r) {
+    if (!r.success) return;
+    var data = r.data;
+    var items = data.items || [];
+    var summary = data.summary || {};
+
+    $('#export-stat-total').text(fmt(summary.total || 0));
+    $('#export-stat-queued').text(fmt(summary.queued || 0));
+    $('#export-stat-processing').text(fmt(summary.processing || 0));
+    $('#export-stat-ready').text(fmt(summary.ready || 0));
+
+    var $tb = $('#export-tbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="9" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.export_no_requests') + '</td></tr>');
+      $('#export-pagination-info').text('-');
+      $('#export-pagination-controls').empty();
+      return;
+    }
+
+    items.forEach(function(item) {
+      var tags = (item.tags || []).slice(0, 3).map(function(t) { return '<span class="tag" style="font-size:10px;margin:1px 2px;">' + escHtml(t) + '</span>'; }).join('');
+      if ((item.tags || []).length > 3) tags += '<span class="text-muted fs-10">+' + ((item.tags.length) - 3) + '</span>';
+
+      var statusMap = {
+        queued: { cls: 'badge-warning', label: __t('page.catalog.export_status_queued') },
+        processing: { cls: 'badge-primary', label: __t('page.catalog.export_status_processing') },
+        ready: { cls: 'badge-success', label: __t('page.catalog.export_status_ready') },
+        failed: { cls: 'badge-danger', label: __t('page.catalog.export_status_failed') },
+        expired: { cls: '', label: __t('page.catalog.export_status_expired') }
+      };
+      var st = statusMap[item.status] || { cls: '', label: item.status };
+
+      var progressHtml = '';
+      if (item.status === 'processing') {
+        progressHtml = '<div style="width:80px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;"><div style="height:100%;background:var(--primary);width:' + item.progress + '%;transition:width .3s;"></div></div><span class="fs-10 mono">' + item.progress + '%</span>';
+      } else if (item.status === 'ready') {
+        progressHtml = '<span class="text-success fs-11">100%</span>';
+      } else {
+        progressHtml = '<span class="text-muted fs-11">-</span>';
+      }
+
+      var actions = '';
+      if (item.status === 'ready') {
+        actions += '<a href="' + API + '/export/' + escAttr(item.requestId) + '/download" class="btn btn-outline btn-sm btn-icon" title="' + __t('page.catalog.export_download_tooltip') + '"><i class="fas fa-download"></i></a> ';
+        actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.catalog.export_profile_title') + '" onclick="showExportProfile(\'' + escAttr(item.requestId) + '\')"><i class="fas fa-chart-bar"></i></button> ';
+      }
+      actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.catalog.export_delete_tooltip') + '" onclick="deleteExportRequest(\'' + escAttr(item.requestId) + '\')"><i class="fas fa-trash text-danger"></i></button>';
+
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(item.name) + '</div><div class="fs-10 mono text-muted">' + escHtml(item.requestId) + '</div></td>' +
+        '<td>' + (tags || '-') + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(item.format || 'csv') + '</span>' + (item.compression === 'gzip' ? ' <span class="badge-sm" style="background:#e2e8f0;color:#475569;">gz</span>' : '') + '</td>' +
+        '<td><span class="badge-sm ' + st.cls + '">' + st.label + '</span></td>' +
+        '<td>' + progressHtml + '</td>' +
+        '<td class="mono fs-12">' + fmt(item.totalRows || 0) + '</td>' +
+        '<td class="mono fs-12">' + escHtml(item.fileSizeDisplay || '-') + '</td>' +
+        '<td class="fs-11">' + escHtml((item.createdAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
+        '<td><div class="d-flex gap-4">' + actions + '</div></td>' +
+        '</tr>'
+      );
+    });
+
+    // Pagination
+    var total = data.total || 0;
+    var totalPages = Math.ceil(total / _exportPageSize) || 1;
+    var start = (_exportPage - 1) * _exportPageSize + 1;
+    var end = Math.min(_exportPage * _exportPageSize, total);
+    $('#export-pagination-info').text(start + '-' + end + ' / ' + fmt(total));
+
+    var $pc = $('#export-pagination-controls').empty();
+    if (totalPages > 1) {
+      if (_exportPage > 1) $pc.append('<button class="btn btn-outline btn-sm" onclick="loadExportRequests(' + (_exportPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>');
+      for (var p = 1; p <= totalPages && p <= 5; p++) {
+        if (p === _exportPage) $pc.append('<button class="btn btn-primary btn-sm" disabled>' + p + '</button>');
+        else $pc.append('<button class="btn btn-outline btn-sm" onclick="loadExportRequests(' + p + ')">' + p + '</button>');
+      }
+      if (_exportPage < totalPages) $pc.append('<button class="btn btn-outline btn-sm" onclick="loadExportRequests(' + (_exportPage + 1) + ')"><i class="fas fa-chevron-right"></i></button>');
+    }
+  });
+}
+
+function openExportModal() {
+  var body =
+    '<form id="export-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.catalog.export_name_label') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="ex-name" placeholder="' + __t('page.catalog.export_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.catalog.export_tags_label') + '</label>' +
+    '  <input type="text" class="form-control" id="ex-tags" placeholder="' + __t('page.catalog.export_tags_placeholder') + '" value="' + escAttr(_exportTagName || '') + '">' +
+    '  <span class="fs-11 text-muted">' + __t('page.catalog.form_search_tags_placeholder') + '</span>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_connector_types_label') + '</label>' +
+    '    <input type="text" class="form-control" id="ex-connTypes" placeholder="opcua, modbus, ..." value="' + escAttr(_exportConnType || '') + '">' +
+    '  </div>' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_connector_ids_label') + '</label>' +
+    '    <input type="text" class="form-control" id="ex-connIds" placeholder="1, 2, 3" value="' + (_exportConnId ? _exportConnId : '') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_date_from') + '</label>' +
+    '    <input type="date" class="form-control" id="ex-dateFrom">' +
+    '  </div>' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_date_to') + '</label>' +
+    '    <input type="date" class="form-control" id="ex-dateTo">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_quality_min') + '</label>' +
+    '    <input type="number" class="form-control" id="ex-qualityMin" min="0" max="100" value="0">' +
+    '  </div>' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_sampling_label') + '</label>' +
+    '    <select class="form-select" id="ex-sampling" onchange="toggleSamplingOpts()">' +
+    '      <option value="none">' + __t('page.catalog.export_sampling_none') + '</option>' +
+    '      <option value="downsample">' + __t('page.catalog.export_sampling_downsample') + '</option>' +
+    '      <option value="random">' + __t('page.catalog.export_sampling_random') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row" id="sampling-opts" style="display:none;">' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_sampling_interval') + '</label>' +
+    '    <input type="text" class="form-control" id="ex-samplingInterval" placeholder="10s, 1min, 5min, 1h">' +
+    '  </div>' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_sampling_ratio') + '</label>' +
+    '    <input type="number" class="form-control" id="ex-samplingRatio" min="0" max="1" step="0.1" value="1.0">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_format_label') + '</label>' +
+    '    <select class="form-select" id="ex-format"><option value="csv">CSV</option><option value="json">JSON</option></select>' +
+    '  </div>' +
+    '  <div class="form-group"><label class="form-label">' + __t('page.catalog.export_compression_label') + '</label>' +
+    '    <select class="form-select" id="ex-compression"><option value="none">' + __t('page.catalog.export_compression_none') + '</option><option value="gzip">' + __t('page.catalog.export_compression_gzip') + '</option></select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">' +
+    '    <input type="checkbox" id="ex-metadata" checked>' +
+    '    <span class="form-label" style="margin:0;">' + __t('page.catalog.export_include_metadata') + '</span>' +
+    '  </label>' +
+    '</div>' +
+    '</form>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('page.catalog.export_btn_cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="submitExportRequest()"><i class="fas fa-file-export"></i> ' + __t('page.catalog.export_btn_submit') + '</button>';
+
+  openModal(__t('page.catalog.export_btn_new'), body, footer, 'modal-lg');
+
+  // Set default dates
+  setTimeout(function() {
+    var today = new Date();
+    var monthAgo = new Date(); monthAgo.setMonth(today.getMonth() - 1);
+    $('#ex-dateTo').val(today.toISOString().slice(0, 10));
+    $('#ex-dateFrom').val(monthAgo.toISOString().slice(0, 10));
+  }, 100);
+}
+
+function toggleSamplingOpts() {
+  var method = $('#ex-sampling').val();
+  $('#sampling-opts').toggle(method !== 'none');
+}
+
+function submitExportRequest() {
+  var name = $('#ex-name').val().trim();
+  if (!name) { showToast(__t('page.catalog.export_toast_name_required'), 'error'); return; }
+
+  var tagsRaw = ($('#ex-tags').val() || '').trim();
+  var tags = tagsRaw ? tagsRaw.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+
+  var connTypesRaw = ($('#ex-connTypes').val() || '').trim();
+  var connTypes = connTypesRaw ? connTypesRaw.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [];
+
+  var connIdsRaw = ($('#ex-connIds').val() || '').trim();
+  var connIds = connIdsRaw ? connIdsRaw.split(',').map(function(t) { return parseInt(t.trim()); }).filter(function(n) { return !isNaN(n); }) : [];
+
+  var payload = {
+    name: name,
+    tags: tags,
+    connectorTypes: connTypes,
+    connectorIds: connIds,
+    dateFrom: $('#ex-dateFrom').val() || null,
+    dateTo: $('#ex-dateTo').val() || null,
+    qualityMin: parseInt($('#ex-qualityMin').val()) || 0,
+    samplingMethod: $('#ex-sampling').val(),
+    samplingInterval: $('#ex-samplingInterval').val() || '',
+    samplingRatio: parseFloat($('#ex-samplingRatio').val()) || 1.0,
+    format: $('#ex-format').val(),
+    compression: $('#ex-compression').val(),
+    includeMetadata: $('#ex-metadata').is(':checked')
+  };
+
+  $.ajax({
+    url: API + '/export',
+    type: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(r) {
+      if (r.success) {
+        closeModal();
+        showToast(__t('page.catalog.export_toast_created'), 'success');
+        loadExportRequests(1);
+      } else {
+        showToast((r.error && r.error.message) || __t('common.save_failed'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON;
+      showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error');
+    }
+  });
+}
+
+function deleteExportRequest(requestId) {
+  confirmAction(__t('page.catalog.export_confirm_delete'), function() {
+    $.ajax({
+      url: API + '/export/' + requestId,
+      type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.catalog.export_toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        loadExportRequests(_exportPage);
+      },
+      error: function() { showToast(__t('common.delete_failed'), 'error'); }
+    });
+  });
+}
+
+function showExportProfile(requestId) {
+  $.getJSON(API + '/export/' + requestId, function(r) {
+    if (!r.success) { showToast(__t('page.catalog.data_query_fail'), 'error'); return; }
+    var item = r.data;
+    var profile = item.profile || {};
+    var columns = profile.columns || {};
+
+    var html =
+      '<div style="margin-bottom:16px;">' +
+      '<div class="d-flex gap-16" style="margin-bottom:12px;">' +
+      '  <div><span class="fw-600">' + __t('page.catalog.export_profile_total_rows') + ':</span> <span class="mono">' + fmt(profile.totalRows || 0) + '</span></div>' +
+      '  <div><span class="fw-600">' + __t('page.catalog.export_profile_tag_count') + ':</span> <span class="mono">' + fmt(profile.tagCount || 0) + '</span></div>' +
+      '</div>';
+
+    if (Object.keys(columns).length) {
+      html += '<div class="table-wrapper"><table><thead><tr>' +
+        '<th>' + __t('page.catalog.export_profile_column') + '</th>' +
+        '<th>' + __t('page.catalog.export_profile_count') + '</th>' +
+        '<th>' + __t('page.catalog.export_profile_min') + '</th>' +
+        '<th>' + __t('page.catalog.export_profile_max') + '</th>' +
+        '<th>' + __t('page.catalog.export_profile_mean') + '</th>' +
+        '<th>' + __t('page.catalog.export_profile_null_ratio') + '</th>' +
+        '</tr></thead><tbody>';
+      Object.keys(columns).forEach(function(tag) {
+        var c = columns[tag];
+        html += '<tr>' +
+          '<td class="mono fw-600 fs-12">' + escHtml(tag) + '</td>' +
+          '<td class="mono">' + fmt(c.count || 0) + '</td>' +
+          '<td class="mono">' + (c.min != null ? c.min : '-') + '</td>' +
+          '<td class="mono">' + (c.max != null ? c.max : '-') + '</td>' +
+          '<td class="mono">' + (c.mean != null ? c.mean : '-') + '</td>' +
+          '<td class="mono">' + (c.nullRatio != null ? (c.nullRatio * 100).toFixed(1) + '%' : '-') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+
+    openModal(__t('page.catalog.export_profile_title') + ' — ' + item.name, html, '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>', 'modal-lg');
+  });
+}
+
+/* ── API Info ── */
+function showApiInfo(catalogId) {
+  $.getJSON(API + '/' + catalogId + '/api-info', function(r) {
+    if (!r.success) { showToast(__t('page.catalog.data_query_fail'), 'error'); return; }
+    var info = r.data;
+    var endpoints = info.endpoints || {};
+
+    var html =
+      '<div style="margin-bottom:16px;">' +
+      '<div class="d-flex gap-16 fs-12" style="margin-bottom:12px;">' +
+      '  <span class="fw-600">' + escHtml(info.catalogName) + '</span>' +
+      '  <span class="mono text-muted">' + escHtml(info.connectorType) + ' #' + (info.connectorId || '-') + '</span>' +
+      '  <span class="mono text-muted">' + escHtml(info.tagName || '') + '</span>' +
+      '</div></div>';
+
+    var endpointOrder = ['detail', 'data', 'export', 'files', 'bulkExport'];
+    var epDescriptions = {
+      detail: __t('page.catalog.api_info_data_query'),
+      data: __t('page.catalog.api_info_data_query'),
+      export: __t('page.catalog.api_info_data_export'),
+      files: __t('page.catalog.api_info_file_list'),
+      bulkExport: __t('page.catalog.api_info_bulk_export')
+    };
+
+    endpointOrder.forEach(function(key) {
+      var ep = endpoints[key];
+      if (!ep) return;
+
+      html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;">';
+      html += '<div class="d-flex align-center gap-8" style="margin-bottom:8px;">';
+      html += '<span class="badge-sm ' + (ep.method === 'POST' ? 'badge-warning' : 'badge-success') + '">' + ep.method + '</span>';
+      html += '<code class="mono fs-12" style="word-break:break-all;">' + escHtml(ep.url) + '</code>';
+      html += '</div>';
+      html += '<p class="text-muted fs-12" style="margin-bottom:8px;">' + escHtml(ep.description || '') + '</p>';
+
+      if (ep.params) {
+        html += '<div style="margin-bottom:8px;"><span class="fw-600 fs-11">' + __t('page.catalog.api_info_params') + ':</span>';
+        html += '<table style="width:100%;font-size:11px;margin-top:4px;"><tbody>';
+        Object.keys(ep.params).forEach(function(k) {
+          html += '<tr><td class="mono fw-600" style="padding:2px 8px 2px 0;width:100px;">' + escHtml(k) + '</td><td class="text-muted">' + escHtml(ep.params[k]) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      if (ep.curl) {
+        var curlId = 'curl-' + key;
+        html += '<div style="position:relative;">';
+        html += '<pre id="' + curlId + '" class="mono fs-11" style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:6px;overflow-x:auto;margin:0;">' + escHtml(ep.curl) + '</pre>';
+        html += '<button class="btn btn-sm" style="position:absolute;top:6px;right:6px;background:rgba(255,255,255,.1);color:#fff;font-size:10px;padding:4px 8px;" onclick="copyCurl(\'' + curlId + '\')">' +
+          '<i class="fas fa-copy"></i> ' + __t('page.catalog.api_info_copy') + '</button>';
+        html += '</div>';
+      }
+
+      html += '</div>';
+    });
+
+    $('#api-info-body').html(html);
+    $('#api-info-panel').show();
+    $('html, body').animate({ scrollTop: $('#api-info-panel').offset().top - 80 }, 300);
+  });
+}
+
+function copyCurl(elId) {
+  var text = document.getElementById(elId).textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    showToast(__t('page.catalog.api_info_copied'), 'success');
+  });
+}
+
+/* ── Recipe Wizard ── */
+var _recipeWizardStep = 1;
+var _recipeSources = { rdbms: [], tsdb: [] };
+var _recipeSourceType = 'rdbms';
+var _recipeSelectedSource = null;
+var _recipeTables = [];
+var _recipeSelectedTables = [];
+var _recipeTableColumns = {};  // { tableName: [columns] }
+var _recipeSelectedTags = {};  // { measurement: [tag_name, ...] }
+var _recipeQueryMode = 'sql';
+var _recipeSql = '';
+
+function openRecipeWizard() {
+  _recipeWizardStep = 1;
+  _recipeSourceType = 'rdbms';
+  _recipeSelectedSource = null;
+  _recipeTables = [];
+  _recipeSelectedTables = [];
+  _recipeTableColumns = {};
+  _recipeSelectedTags = {};
+  _recipeQueryMode = 'sql';
+  _recipeSql = '';
+
+  var body = '<div id="recipe-wizard">' +
+    '<div class="d-flex gap-8" style="margin-bottom:20px;justify-content:center;" id="recipe-steps">' +
+      '<div class="recipe-step active" data-step="1"><span class="recipe-step-num">1</span> ' + __t('page.catalog.recipe_step1_title') + '</div>' +
+      '<div class="recipe-step-arrow"><i class="fas fa-chevron-right"></i></div>' +
+      '<div class="recipe-step" data-step="2"><span class="recipe-step-num">2</span> ' + __t('page.catalog.recipe_step2_title') + '</div>' +
+      '<div class="recipe-step-arrow"><i class="fas fa-chevron-right"></i></div>' +
+      '<div class="recipe-step" data-step="3"><span class="recipe-step-num">3</span> ' + __t('page.catalog.recipe_step3_title') + '</div>' +
+    '</div>' +
+    '<div id="recipe-step-1"></div>' +
+    '<div id="recipe-step-2" style="display:none;"></div>' +
+    '<div id="recipe-step-3" style="display:none;"></div>' +
+  '</div>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-outline" id="recipe-btn-prev" style="display:none;" onclick="recipeWizardPrev()"><i class="fas fa-chevron-left"></i> ' + __t('page.catalog.recipe_btn_prev') + '</button>' +
+    '<button class="btn btn-primary" id="recipe-btn-next" onclick="recipeWizardNext()">' + __t('page.catalog.recipe_btn_next') + ' <i class="fas fa-chevron-right"></i></button>' +
+    '<button class="btn btn-primary" id="recipe-btn-execute" style="display:none;" onclick="recipeCreate()"><i class="fas fa-play"></i> ' + __t('page.catalog.recipe_btn_create_execute') + '</button>';
+
+  openModal(__t('page.catalog.recipe_wizard_title'), body, footer, 'modal-xl');
+
+  // Add wizard step styles
+  setTimeout(function() {
+    if (!document.getElementById('recipe-wizard-css')) {
+      var css = document.createElement('style');
+      css.id = 'recipe-wizard-css';
+      css.textContent =
+        '.recipe-step{padding:8px 16px;border-radius:20px;font-size:13px;color:var(--text-muted);background:var(--bg-secondary);cursor:default;}' +
+        '.recipe-step.active{background:var(--primary);color:#fff;font-weight:600;}' +
+        '.recipe-step.done{background:#d1fae5;color:#065f46;}' +
+        '.recipe-step-num{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,255,255,.2);font-size:11px;font-weight:700;margin-right:4px;}' +
+        '.recipe-step-arrow{display:flex;align-items:center;color:var(--text-muted);font-size:11px;}' +
+        '.recipe-tab{display:inline-block;padding:8px 16px;cursor:pointer;border-bottom:2px solid transparent;font-size:13px;font-weight:500;color:var(--text-muted);}' +
+        '.recipe-tab.active{color:var(--primary);border-bottom-color:var(--primary);}' +
+        '.recipe-table-check{cursor:pointer;padding:6px 12px;border-bottom:1px solid var(--border);}' +
+        '.recipe-table-check:hover{background:var(--bg-secondary);}' +
+        '.recipe-table-check input{margin-right:8px;}';
+      document.head.appendChild(css);
+    }
+    _recipeLoadStep1();
+  }, 100);
+}
+
+function _recipeUpdateSteps() {
+  $('#recipe-steps .recipe-step').each(function() {
+    var s = parseInt($(this).data('step'));
+    $(this).removeClass('active done');
+    if (s === _recipeWizardStep) $(this).addClass('active');
+    else if (s < _recipeWizardStep) $(this).addClass('done');
+  });
+  $('#recipe-step-1, #recipe-step-2, #recipe-step-3').hide();
+  $('#recipe-step-' + _recipeWizardStep).show();
+  $('#recipe-btn-prev').toggle(_recipeWizardStep > 1);
+  $('#recipe-btn-next').toggle(_recipeWizardStep < 3);
+  $('#recipe-btn-execute').toggle(_recipeWizardStep === 3);
+}
+
+function recipeWizardPrev() {
+  if (_recipeWizardStep > 1) {
+    _recipeWizardStep--;
+    _recipeUpdateSteps();
+  }
+}
+
+function recipeWizardNext() {
+  if (_recipeWizardStep === 1) {
+    if (!_recipeSelectedSource) {
+      showToast(__t('page.catalog.recipe_source_required'), 'error');
+      return;
+    }
+    if (_recipeSourceType === 'rdbms' && _recipeSelectedTables.length === 0) {
+      showToast(__t('page.catalog.recipe_table_required'), 'error');
+      return;
+    }
+    _recipeWizardStep = 2;
+    _recipeUpdateSteps();
+    _recipeLoadStep2();
+  } else if (_recipeWizardStep === 2) {
+    var sql = _recipeGetSql();
+    if (!sql) {
+      showToast(__t('page.catalog.recipe_sql_required'), 'error');
+      return;
+    }
+    _recipeSql = sql;
+    _recipeWizardStep = 3;
+    _recipeUpdateSteps();
+    _recipeLoadStep3();
+  }
+}
+
+/* Step 1: Source Selection */
+function _recipeLoadStep1() {
+  var $el = $('#recipe-step-1');
+  $el.html('<div class="text-center text-muted" style="padding:40px"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</div>');
+
+  $.getJSON(API + '/recipe/sources', function(r) {
+    if (!r.success) { $el.html('<div class="text-danger">' + __t('page.catalog.recipe_no_sources') + '</div>'); return; }
+    _recipeSources = r.data;
+
+    var html = '<div class="form-group">' +
+      '<label class="form-label fw-600">' + __t('page.catalog.recipe_source_type') + '</label>' +
+      '<div class="d-flex gap-8">' +
+        '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 16px;border:2px solid var(--primary);border-radius:8px;background:var(--bg-secondary);" id="recipe-radio-rdbms">' +
+          '<input type="radio" name="recipe-source-type" value="rdbms" checked onchange="recipeChangeSourceType(\'rdbms\')"> ' +
+          '<i class="fas fa-database"></i> ' + __t('page.catalog.recipe_source_rdbms') +
+        '</label>' +
+        '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 16px;border:2px solid var(--border);border-radius:8px;" id="recipe-radio-tsdb">' +
+          '<input type="radio" name="recipe-source-type" value="tsdb" onchange="recipeChangeSourceType(\'tsdb\')"> ' +
+          '<i class="fas fa-chart-line"></i> ' + __t('page.catalog.recipe_source_tsdb') +
+        '</label>' +
+      '</div>' +
+    '</div>';
+
+    html += '<div class="form-group">' +
+      '<label class="form-label fw-600">' + __t('page.catalog.recipe_select_instance') + '</label>' +
+      '<select class="form-select" id="recipe-instance-select" onchange="recipeSelectInstance()">' +
+        '<option value="">' + __t('page.catalog.recipe_select_instance_placeholder') + '</option>' +
+      '</select>' +
+    '</div>';
+
+    html += '<div id="recipe-tables-area"></div>';
+
+    $el.html(html);
+    _recipePopulateInstances();
+  });
+}
+
+function recipeChangeSourceType(type) {
+  _recipeSourceType = type;
+  _recipeSelectedSource = null;
+  _recipeTables = [];
+  _recipeSelectedTables = [];
+  _recipeTableColumns = {};
+  _recipeSelectedTags = {};
+  $('#recipe-radio-rdbms').css('border-color', type === 'rdbms' ? 'var(--primary)' : 'var(--border)');
+  $('#recipe-radio-tsdb').css('border-color', type === 'tsdb' ? 'var(--primary)' : 'var(--border)');
+  _recipePopulateInstances();
+  $('#recipe-tables-area').empty();
+}
+
+function _recipePopulateInstances() {
+  var $sel = $('#recipe-instance-select').empty().append('<option value="">' + __t('page.catalog.recipe_select_instance_placeholder') + '</option>');
+  var list = _recipeSourceType === 'rdbms' ? (_recipeSources.rdbms || []) : (_recipeSources.tsdb || []);
+  list.forEach(function(item) {
+    var label = item.name + ' (' + (item.host || '') + ':' + (item.port || '') + ')';
+    $sel.append('<option value="' + item.id + '">' + escHtml(label) + '</option>');
+  });
+}
+
+function recipeSelectInstance() {
+  var id = parseInt($('#recipe-instance-select').val());
+  if (!id) { _recipeSelectedSource = null; $('#recipe-tables-area').empty(); return; }
+  _recipeSelectedSource = id;
+  _recipeSelectedTables = [];
+  _recipeTableColumns = {};
+
+  var $area = $('#recipe-tables-area');
+  $area.html('<div class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.recipe_tables_loading') + '</div>');
+
+  var params = _recipeSourceType === 'rdbms' ? { rdbmsId: id } : { tsdbId: id };
+  $.getJSON(API + '/recipe/tables', params, function(r) {
+    if (!r.success || !r.data || !r.data.length) {
+      $area.html('<div class="text-muted" style="padding:16px">' + __t('page.catalog.recipe_no_tables') + '</div>');
+      return;
+    }
+    _recipeTables = r.data;
+
+    var html = '<label class="form-label fw-600">' + __t('page.catalog.recipe_tables') + '</label>';
+    html += '<div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">';
+    _recipeTables.forEach(function(t, idx) {
+      html += '<div class="recipe-table-check">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;width:100%;">' +
+          '<input type="checkbox" value="' + escAttr(t.name) + '" onchange="recipeToggleTable(this)">' +
+          '<span class="fw-600 fs-13">' + escHtml(t.name) + '</span>' +
+          '<span class="text-muted fs-11" style="margin-left:auto;">' +
+            (t.rowCount != null ? fmt(t.rowCount) + ' ' + __t('page.catalog.recipe_preview_rows') : '') +
+            (t.size ? ' · ' + escHtml(t.size) : '') +
+          '</span>' +
+        '</label>' +
+      '</div>';
+    });
+    html += '</div>';
+    $area.html(html);
+  });
+}
+
+function recipeToggleTable(cb) {
+  var name = cb.value;
+  if (cb.checked) {
+    if (_recipeSelectedTables.indexOf(name) === -1) _recipeSelectedTables.push(name);
+    // Load columns for this table
+    if (!_recipeTableColumns[name]) {
+      var params = _recipeSourceType === 'rdbms' ? { rdbmsId: _recipeSelectedSource, table: name } : { tsdbId: _recipeSelectedSource, table: name };
+      $.getJSON(API + '/recipe/columns', params, function(r) {
+        if (r.success) _recipeTableColumns[name] = (r.data && r.data.columns) || [];
+      });
+    }
+    // TSDB: measurement 선택 시 tag_name 목록 로드
+    if (_recipeSourceType === 'tsdb') {
+      _recipeLoadTags(name);
+    }
+  } else {
+    _recipeSelectedTables = _recipeSelectedTables.filter(function(t) { return t !== name; });
+    delete _recipeSelectedTags[name];
+    // TSDB: tag 영역 제거
+    $('#recipe-tags-' + _escId(name)).remove();
+  }
+}
+
+function _escId(s) { return s.replace(/[^a-zA-Z0-9]/g, '_'); }
+
+function _recipeLoadTags(measurement) {
+  var safeId = _escId(measurement);
+  // 이미 태그 영역이 있으면 스킵
+  if ($('#recipe-tags-' + safeId).length) return;
+
+  var $area = $('#recipe-tables-area');
+  var $tagBox = $('<div id="recipe-tags-' + safeId + '" style="margin:0 0 8px 28px;padding:8px 12px;background:var(--bg-secondary);border-radius:6px;font-size:12px;">' +
+    '<div class="text-muted" style="margin-bottom:4px;"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.recipe_tags_loading', 'Loading tags...') + '</div>' +
+  '</div>');
+  // Insert right after the measurement checkbox
+  var $checkbox = $area.find('input[value="' + CSS.escape(measurement) + '"]').closest('.recipe-table-check');
+  if ($checkbox.length) $checkbox.after($tagBox);
+  else $area.append($tagBox);
+
+  $.getJSON(API + '/recipe/tags', { tsdbId: _recipeSelectedSource, measurement: measurement }, function(r) {
+    if (!r.success || !r.data || !r.data.length) {
+      $tagBox.html('<span class="text-muted">' + __t('page.catalog.recipe_no_tags', 'No tags') + '</span>');
+      return;
+    }
+    var html = '<div style="margin-bottom:4px;font-weight:600;"><i class="fas fa-tags" style="margin-right:4px;"></i> ' +
+      __t('page.catalog.recipe_select_tags', 'Tag 선택') +
+      ' <button class="btn btn-outline" style="font-size:10px;padding:1px 6px;margin-left:8px;" onclick="recipeToggleAllTags(\'' + escAttr(measurement) + '\', true)">' + __t('common.select_all', '전체') + '</button>' +
+      ' <button class="btn btn-outline" style="font-size:10px;padding:1px 6px;" onclick="recipeToggleAllTags(\'' + escAttr(measurement) + '\', false)">' + __t('common.deselect_all', '해제') + '</button>' +
+    '</div>';
+    html += '<div class="d-flex" style="flex-wrap:wrap;gap:4px;">';
+    r.data.forEach(function(tag) {
+      var hint = tag.unit ? ' (' + escHtml(tag.unit) + ')' : '';
+      html += '<label style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:#fff;border:1px solid var(--border);border-radius:4px;cursor:pointer;white-space:nowrap;">' +
+        '<input type="checkbox" data-measurement="' + escAttr(measurement) + '" data-tag="' + escAttr(tag.name) + '" onchange="recipeToggleTag(this)" checked>' +
+        '<span>' + escHtml(tag.name) + '</span>' +
+        '<span class="text-muted">' + escHtml(hint) + '</span>' +
+      '</label>';
+    });
+    html += '</div>';
+    $tagBox.html(html);
+
+    // 기본: 전체 선택
+    _recipeSelectedTags[measurement] = r.data.map(function(t) { return t.name; });
+  });
+}
+
+function recipeToggleTag(cb) {
+  var meas = cb.getAttribute('data-measurement');
+  var tag = cb.getAttribute('data-tag');
+  if (!_recipeSelectedTags[meas]) _recipeSelectedTags[meas] = [];
+  if (cb.checked) {
+    if (_recipeSelectedTags[meas].indexOf(tag) === -1) _recipeSelectedTags[meas].push(tag);
+  } else {
+    _recipeSelectedTags[meas] = _recipeSelectedTags[meas].filter(function(t) { return t !== tag; });
+  }
+}
+
+function recipeToggleAllTags(measurement, selectAll) {
+  var safeId = _escId(measurement);
+  var $box = $('#recipe-tags-' + safeId);
+  $box.find('input[type=checkbox]').prop('checked', selectAll).trigger('change');
+  if (selectAll) {
+    _recipeSelectedTags[measurement] = [];
+    $box.find('input[type=checkbox]').each(function() {
+      var t = $(this).attr('data-tag');
+      if (t) _recipeSelectedTags[measurement].push(t);
+    });
+  } else {
+    _recipeSelectedTags[measurement] = [];
+  }
+}
+
+/* Step 2: Recipe Editor */
+function _recipeLoadStep2() {
+  var $el = $('#recipe-step-2');
+  try {
+    var html = '<div style="margin-bottom:12px;">' +
+      '<span class="recipe-tab active" data-tab="sql" onclick="recipeToggleTab(\'sql\')">' +
+        '<i class="fas fa-code"></i> ' + __t('page.catalog.recipe_tab_sql') +
+      '</span>' +
+      '<span class="recipe-tab" data-tab="visual" onclick="recipeToggleTab(\'visual\')">' +
+        '<i class="fas fa-th-large"></i> ' + __t('page.catalog.recipe_tab_visual') +
+      '</span>' +
+    '</div>';
+
+    // SQL Editor Tab
+    html += '<div id="recipe-tab-sql">' +
+      '<div class="form-group">' +
+        '<textarea class="form-control mono" id="recipe-sql-editor" rows="10" placeholder="' + __t('page.catalog.recipe_sql_placeholder') + '" style="font-size:13px;tab-size:2;">' + escHtml(_recipeSql || _recipeGenerateDefaultSql()) + '</textarea>' +
+        '<p class="fs-11 text-muted" style="margin-top:4px;"><i class="fas fa-info-circle"></i> ' + __t('page.catalog.recipe_sql_hint') + '</p>' +
+      '</div>' +
+      '<button class="btn btn-sm" style="background:var(--info);color:#fff;" onclick="recipePreviewSql()"><i class="fas fa-eye"></i> ' + __t('page.catalog.recipe_btn_preview') + '</button>' +
+      '<div id="recipe-preview-area" style="margin-top:12px;"></div>' +
+    '</div>';
+
+    // Visual Builder Tab
+    var visualHtml = '';
+    try { visualHtml = _recipeVisualBuilderHtml(); } catch(e) { console.error('Visual builder error:', e); }
+    html += '<div id="recipe-tab-visual" style="display:none;">' + visualHtml + '</div>';
+
+    $el.html(html);
+  } catch(err) {
+    console.error('_recipeLoadStep2 error:', err);
+    $el.html('<div class="text-danger" style="padding:20px;"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.catalog.recipe_step2_error', 'Step 2 rendering error: ') + escHtml(err.message || String(err)) + '</div>');
+  }
+}
+
+function _recipeGenerateDefaultSql() {
+  if (!_recipeSelectedTables.length) return '';
+  if (_recipeSourceType === 'tsdb') {
+    // 선택된 모든 tag_name 수집
+    var allTags = [];
+    _recipeSelectedTables.forEach(function(m) {
+      (_recipeSelectedTags[m] || []).forEach(function(t) {
+        if (allTags.indexOf(t) === -1) allTags.push(t);
+      });
+    });
+    var measurements = _recipeSelectedTables.map(function(m) { return "'" + m.replace(/'/g, "''") + "'"; }).join(', ');
+
+    if (allTags.length > 0 && allTags.length <= 30) {
+      // 피벗 SQL: tag_name별 컬럼 생성
+      var cols = allTags.map(function(tag) {
+        var safe = tag.replace(/'/g, "''");
+        var alias = '"' + tag.replace(/"/g, '""') + '"';
+        return '  MAX(CASE WHEN tag_name = \'' + safe + '\' THEN value END) AS ' + alias;
+      });
+      return 'SELECT "timestamp",\n' + cols.join(',\n') + '\n' +
+        'FROM time_series_data\n' +
+        'WHERE tsdb_id = ' + _recipeSelectedSource + '\n' +
+        '  AND measurement IN (' + measurements + ')\n' +
+        '  AND tag_name IN (' + allTags.map(function(t) { return "'" + t.replace(/'/g, "''") + "'"; }).join(', ') + ')\n' +
+        'GROUP BY "timestamp"\n' +
+        'ORDER BY "timestamp" DESC\nLIMIT 1000';
+    }
+    // tag 미선택 또는 30개 초과 시 long 형식
+    return 'SELECT "timestamp", tag_name, value, quality, unit\n' +
+      'FROM time_series_data\n' +
+      'WHERE tsdb_id = ' + _recipeSelectedSource + '\n' +
+      '  AND measurement IN (' + measurements + ')\n' +
+      'ORDER BY "timestamp" DESC\nLIMIT 1000';
+  }
+  var t = _recipeSelectedTables[0];
+  return 'SELECT *\nFROM "' + t + '"\nLIMIT 100';
+}
+
+function recipeToggleTab(tab) {
+  _recipeQueryMode = tab;
+  $('.recipe-tab').removeClass('active');
+  $('.recipe-tab[data-tab="' + tab + '"]').addClass('active');
+  $('#recipe-tab-sql, #recipe-tab-visual').hide();
+  $('#recipe-tab-' + tab).show();
+  if (tab === 'sql' && $('#recipe-sql-editor').val().trim() === '') {
+    $('#recipe-sql-editor').val(_recipeGenerateDefaultSql());
+  }
+}
+
+function _recipeVisualBuilderHtml() {
+  var tables = _recipeSelectedTables;
+  var allCols = [];
+  tables.forEach(function(t) {
+    var cols = _recipeTableColumns[t] || [];
+    cols.forEach(function(c) {
+      allCols.push(t + '.' + c.name);
+    });
+  });
+
+  var colOptions = allCols.map(function(c) { return '<option value="' + escAttr(c) + '">' + escHtml(c) + '</option>'; }).join('');
+  var tableOptions = tables.map(function(t) { return '<option value="' + escAttr(t) + '">' + escHtml(t) + '</option>'; }).join('');
+
+  var html = '';
+
+  // Columns section
+  html += '<div class="form-group">' +
+    '<label class="form-label fw-600">' + __t('page.catalog.recipe_visual_columns') + '</label>' +
+    '<div id="visual-columns-list"></div>' +
+    '<button class="btn btn-outline btn-sm" onclick="visualAddColumn()"><i class="fas fa-plus"></i> ' + __t('page.catalog.recipe_visual_add_column') + '</button>' +
+  '</div>';
+
+  // JOINs (only if multiple tables)
+  if (tables.length > 1) {
+    html += '<div class="form-group">' +
+      '<label class="form-label fw-600">' + __t('page.catalog.recipe_visual_joins') + '</label>' +
+      '<div id="visual-joins-list"></div>' +
+      '<button class="btn btn-outline btn-sm" onclick="visualAddJoin()"><i class="fas fa-plus"></i> ' + __t('page.catalog.recipe_visual_add_join') + '</button>' +
+    '</div>';
+  }
+
+  // WHERE
+  html += '<div class="form-group">' +
+    '<label class="form-label fw-600">' + __t('page.catalog.recipe_visual_where') + '</label>' +
+    '<div id="visual-where-list"></div>' +
+    '<button class="btn btn-outline btn-sm" onclick="visualAddWhere()"><i class="fas fa-plus"></i> ' + __t('page.catalog.recipe_visual_add_where') + '</button>' +
+  '</div>';
+
+  // ORDER BY + LIMIT
+  html += '<div class="form-row">' +
+    '<div class="form-group">' +
+      '<label class="form-label fw-600">' + __t('page.catalog.recipe_visual_order_by') + '</label>' +
+      '<div class="d-flex gap-8">' +
+        '<select class="form-select" id="visual-order-col"><option value="">-</option>' + colOptions + '</select>' +
+        '<select class="form-select" id="visual-order-dir" style="width:100px;"><option value="ASC">ASC</option><option value="DESC">DESC</option></select>' +
+      '</div>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label class="form-label fw-600">' + __t('page.catalog.recipe_visual_limit') + '</label>' +
+      '<input type="number" class="form-control" id="visual-limit" value="1000" min="1" max="50000">' +
+    '</div>' +
+  '</div>';
+
+  // Generate SQL button
+  html += '<button class="btn btn-primary btn-sm" onclick="visualGenerateSql()"><i class="fas fa-magic"></i> ' + __t('page.catalog.recipe_visual_gen_sql') + '</button>';
+
+  return html;
+}
+
+function visualAddColumn() {
+  var tables = _recipeSelectedTables;
+  var allCols = [];
+  tables.forEach(function(t) {
+    (_recipeTableColumns[t] || []).forEach(function(c) { allCols.push(t + '.' + c.name); });
+  });
+  var colOpts = allCols.map(function(c) { return '<option value="' + escAttr(c) + '">' + escHtml(c) + '</option>'; }).join('');
+
+  var row = $('<div class="d-flex gap-8 align-center" style="margin-bottom:6px;">' +
+    '<select class="form-select" style="flex:2;">' + colOpts + '</select>' +
+    '<select class="form-select" style="flex:1;">' +
+      '<option value="">' + __t('page.catalog.recipe_visual_col_agg_none') + '</option>' +
+      '<option value="AVG">AVG</option><option value="SUM">SUM</option>' +
+      '<option value="MIN">MIN</option><option value="MAX">MAX</option>' +
+      '<option value="COUNT">COUNT</option><option value="STDDEV">STDDEV</option>' +
+    '</select>' +
+    '<input type="text" class="form-control" placeholder="' + __t('page.catalog.recipe_visual_col_alias') + '" style="flex:1;">' +
+    '<button class="btn btn-outline btn-sm btn-icon" onclick="$(this).parent().remove()"><i class="fas fa-times text-danger"></i></button>' +
+  '</div>');
+  $('#visual-columns-list').append(row);
+}
+
+function visualAddJoin() {
+  var tables = _recipeSelectedTables;
+  var tblOpts = tables.map(function(t) { return '<option value="' + escAttr(t) + '">' + escHtml(t) + '</option>'; }).join('');
+
+  var row = $('<div class="d-flex gap-8 align-center" style="margin-bottom:6px;">' +
+    '<select class="form-select" style="width:90px;">' +
+      '<option value="LEFT">LEFT</option><option value="INNER">INNER</option>' +
+      '<option value="RIGHT">RIGHT</option><option value="FULL">FULL</option>' +
+    '</select>' +
+    '<select class="form-select visual-join-from-tbl" style="flex:1;" onchange="visualJoinTableChange(this,\'from\')">' + tblOpts + '</select>' +
+    '<select class="form-select visual-join-from-col" style="flex:1;"></select>' +
+    '<span style="padding:0 4px;">=</span>' +
+    '<select class="form-select visual-join-to-tbl" style="flex:1;" onchange="visualJoinTableChange(this,\'to\')">' + tblOpts + '</select>' +
+    '<select class="form-select visual-join-to-col" style="flex:1;"></select>' +
+    '<button class="btn btn-outline btn-sm btn-icon" onclick="$(this).parent().remove()"><i class="fas fa-times text-danger"></i></button>' +
+  '</div>');
+  $('#visual-joins-list').append(row);
+
+  // Populate initial columns
+  row.find('.visual-join-from-tbl, .visual-join-to-tbl').each(function() {
+    visualJoinTableChange(this, $(this).hasClass('visual-join-from-tbl') ? 'from' : 'to');
+  });
+}
+
+function visualJoinTableChange(el, side) {
+  var table = $(el).val();
+  var $row = $(el).closest('.d-flex');
+  var $colSel = $row.find('.visual-join-' + side + '-col').empty();
+  var cols = _recipeTableColumns[table] || [];
+  cols.forEach(function(c) {
+    $colSel.append('<option value="' + escAttr(c.name) + '">' + escHtml(c.name) + '</option>');
+  });
+}
+
+function visualAddWhere() {
+  var tables = _recipeSelectedTables;
+  var allCols = [];
+  tables.forEach(function(t) {
+    (_recipeTableColumns[t] || []).forEach(function(c) { allCols.push(t + '.' + c.name); });
+  });
+  var colOpts = allCols.map(function(c) { return '<option value="' + escAttr(c) + '">' + escHtml(c) + '</option>'; }).join('');
+
+  var row = $('<div class="d-flex gap-8 align-center" style="margin-bottom:6px;">' +
+    '<select class="form-select" style="flex:2;">' + colOpts + '</select>' +
+    '<select class="form-select" style="width:90px;">' +
+      '<option value="=">=</option><option value="!=">!=</option>' +
+      '<option value="<"><</option><option value=">">></option>' +
+      '<option value="<="><=</option><option value=">=">>=</option>' +
+      '<option value="LIKE">LIKE</option><option value="IN">IN</option>' +
+      '<option value="IS NULL">IS NULL</option><option value="IS NOT NULL">IS NOT NULL</option>' +
+    '</select>' +
+    '<input type="text" class="form-control" placeholder="' + __t('page.catalog.recipe_visual_where_val') + '" style="flex:2;">' +
+    '<button class="btn btn-outline btn-sm btn-icon" onclick="$(this).parent().remove()"><i class="fas fa-times text-danger"></i></button>' +
+  '</div>');
+  $('#visual-where-list').append(row);
+}
+
+function visualGenerateSql() {
+  // Collect visual config and send to API for SQL generation
+  var tables = _recipeSelectedTables.map(function(t, i) {
+    return { table: t, alias: 't' + i };
+  });
+
+  var columns = [];
+  $('#visual-columns-list > div').each(function() {
+    var sels = $(this).find('select, input');
+    columns.push({
+      expr: $(sels[0]).val(),
+      aggFunc: $(sels[1]).val() || '',
+      alias: $(sels[2]).val() || ''
+    });
+  });
+
+  var joins = [];
+  $('#visual-joins-list > div').each(function() {
+    var sels = $(this).find('select');
+    joins.push({
+      type: $(sels[0]).val(),
+      from: { alias: 't' + _recipeSelectedTables.indexOf($(sels[1]).val()), col: $(sels[2]).val() },
+      to: { alias: 't' + _recipeSelectedTables.indexOf($(sels[3]).val()), col: $(sels[4]).val() }
+    });
+  });
+
+  var where = [];
+  $('#visual-where-list > div').each(function() {
+    var els = $(this).find('select, input');
+    where.push({
+      col: $(els[0]).val(),
+      op: $(els[1]).val(),
+      val: $(els[2]).val()
+    });
+  });
+
+  var orderCol = $('#visual-order-col').val();
+  var orderBy = orderCol ? [{ col: orderCol, dir: $('#visual-order-dir').val() }] : [];
+  var limit = parseInt($('#visual-limit').val()) || 1000;
+
+  var config = {
+    tables: tables,
+    joins: joins,
+    columns: columns.length ? columns : tables.map(function(t) { return { expr: t.alias + '.*' }; }),
+    where: where,
+    groupBy: [],
+    having: [],
+    orderBy: orderBy,
+    limit: limit
+  };
+
+  // Auto-detect GROUP BY from aggregated columns
+  var hasAgg = columns.some(function(c) { return c.aggFunc; });
+  if (hasAgg) {
+    config.groupBy = columns.filter(function(c) { return !c.aggFunc; }).map(function(c) { return c.expr; });
+  }
+
+  // Build SQL client-side (simple version)
+  var sql = 'SELECT ';
+  var selParts = [];
+  (config.columns || []).forEach(function(c) {
+    var part = c.aggFunc ? c.aggFunc + '(' + c.expr + ')' : c.expr;
+    if (c.alias) part += ' AS "' + c.alias.replace(/"/g, '') + '"';
+    selParts.push(part);
+  });
+  sql += selParts.join(', ');
+  sql += '\nFROM "' + tables[0].table + '" ' + tables[0].alias;
+  joins.forEach(function(j) {
+    var toIdx = parseInt(j.to.alias.replace('t', ''));
+    var toTable = _recipeSelectedTables[toIdx] || '';
+    sql += '\n' + j.type + ' JOIN "' + toTable + '" ' + j.to.alias + ' ON ' + j.from.alias + '."' + j.from.col + '" = ' + j.to.alias + '."' + j.to.col + '"';
+  });
+  if (where.length) {
+    var wParts = where.map(function(w) {
+      if (w.op === 'IS NULL' || w.op === 'IS NOT NULL') return w.col + ' ' + w.op;
+      return w.col + ' ' + w.op + " '" + w.val + "'";
+    });
+    sql += '\nWHERE ' + wParts.join(' AND ');
+  }
+  if (config.groupBy.length) {
+    sql += '\nGROUP BY ' + config.groupBy.join(', ');
+  }
+  if (orderBy.length) {
+    sql += '\nORDER BY ' + orderBy[0].col + ' ' + orderBy[0].dir;
+  }
+  sql += '\nLIMIT ' + limit;
+
+  // Switch to SQL tab and populate
+  recipeToggleTab('sql');
+  $('#recipe-sql-editor').val(sql);
+}
+
+function recipePreviewSql() {
+  var sql = $('#recipe-sql-editor').val().trim();
+  if (!sql) { showToast(__t('page.catalog.recipe_sql_required'), 'error'); return; }
+
+  var $area = $('#recipe-preview-area');
+  $area.html('<div class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</div>');
+
+  // We need to create a temp recipe or directly call preview with SQL
+  // Using the preview endpoint with source info
+  var payload = {
+    sourceType: _recipeSourceType,
+    querySql: sql
+  };
+  if (_recipeSourceType === 'rdbms') payload.rdbmsId = _recipeSelectedSource;
+  else payload.tsdbId = _recipeSelectedSource;
+
+  $.ajax({
+    url: API + '/recipe/preview-sql',
+    type: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(r) {
+      if (!r.success) {
+        var errMsg = (r.error && r.error.message) ? r.error.message : (typeof r.error === 'string' ? r.error : __t('page.catalog.recipe_preview_error'));
+        $area.html('<div class="text-danger" style="padding:12px;background:#fef2f2;border-radius:8px;"><i class="fas fa-exclamation-circle"></i> ' + escHtml(errMsg) + '</div>');
+        return;
+      }
+      var data = r.data;
+      if (!data.rows || !data.rows.length) {
+        $area.html('<div class="text-muted" style="padding:12px">' + __t('page.catalog.recipe_preview_no_data') + '</div>');
+        return;
+      }
+      var cols = data.columns || Object.keys(data.rows[0]);
+      var html = '<div style="font-size:12px;margin-bottom:8px;color:var(--text-muted);">' +
+        '<strong>' + data.rowCount + '</strong> ' + __t('page.catalog.recipe_preview_rows') +
+        ' · ' + __t('page.catalog.recipe_preview_elapsed') + ': <strong>' + data.elapsedMs + '</strong>' + __t('page.catalog.recipe_preview_ms') +
+      '</div>';
+      html += '<div class="table-wrapper" style="max-height:300px;overflow:auto;">';
+      html += '<table style="font-size:12px;"><thead><tr>';
+      cols.forEach(function(c) { html += '<th style="position:sticky;top:0;background:var(--bg-card);z-index:1;">' + escHtml(c) + '</th>'; });
+      html += '</tr></thead><tbody>';
+      data.rows.forEach(function(row) {
+        html += '<tr>';
+        cols.forEach(function(c) {
+          var v = row[c];
+          html += '<td class="mono fs-11">' + (v != null ? escHtml(String(v)) : '<span class="text-muted">NULL</span>') + '</td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+      $area.html(html);
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON;
+      var errMsg = (e && e.error && e.error.message) ? e.error.message : __t('page.catalog.recipe_preview_error');
+      $area.html('<div class="text-danger" style="padding:12px;background:#fef2f2;border-radius:8px;"><i class="fas fa-exclamation-circle"></i> ' + escHtml(errMsg) + '</div>');
+    }
+  });
+}
+
+function _recipeGetSql() {
+  if (_recipeQueryMode === 'sql') return ($('#recipe-sql-editor').val() || '').trim();
+  return '';
+}
+
+/* Step 3: Settings & Execute */
+function _recipeLoadStep3() {
+  var $el = $('#recipe-step-3');
+
+  var defaultName = _recipeSelectedTables.length ? _recipeSelectedTables[0] + ' 레시피' : 'New Recipe';
+
+  var html = '<div class="grid-12">' +
+    '<div class="col-6">' +
+      '<div class="form-group">' +
+        '<label class="form-label fw-600">' + __t('page.catalog.recipe_name') + ' <span class="text-danger">*</span></label>' +
+        '<input type="text" class="form-control" id="recipe-name" placeholder="' + __t('page.catalog.recipe_name_placeholder') + '" value="' + escAttr(defaultName) + '">' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label class="form-label fw-600">' + __t('page.catalog.recipe_description') + '</label>' +
+        '<textarea class="form-control" id="recipe-description" rows="2" placeholder="' + __t('page.catalog.recipe_desc_placeholder') + '"></textarea>' +
+      '</div>' +
+      '<div class="form-row">' +
+        '<div class="form-group">' +
+          '<label class="form-label fw-600">' + __t('page.catalog.recipe_category') + '</label>' +
+          '<input type="text" class="form-control" id="recipe-category" placeholder="' + __t('page.catalog.recipe_category_placeholder') + '">' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label fw-600">' + __t('page.catalog.recipe_owner') + '</label>' +
+          '<input type="text" class="form-control" id="recipe-owner" placeholder="' + __t('page.catalog.recipe_owner_placeholder') + '">' +
+        '</div>' +
+      '</div>' +
+      '<div class="form-group">' +
+        '<label class="form-label fw-600">' + __t('page.catalog.recipe_execution_mode') + '</label>' +
+        '<select class="form-select" id="recipe-exec-mode">' +
+          '<option value="snapshot">' + __t('page.catalog.recipe_mode_snapshot') + '</option>' +
+          '<option value="view">' + __t('page.catalog.recipe_mode_view') + '</option>' +
+        '</select>' +
+      '</div>' +
+    '</div>' +
+    '<div class="col-6">' +
+      '<label class="form-label fw-600">' + __t('page.catalog.recipe_preview_title') + '</label>' +
+      '<div id="recipe-step3-preview" style="max-height:350px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;">' +
+        '<div class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+
+  $el.html(html);
+  _recipeStep3Preview();
+}
+
+function _recipeStep3Preview() {
+  var payload = {
+    sourceType: _recipeSourceType,
+    querySql: _recipeSql
+  };
+  if (_recipeSourceType === 'rdbms') payload.rdbmsId = _recipeSelectedSource;
+  else payload.tsdbId = _recipeSelectedSource;
+
+  $.ajax({
+    url: API + '/recipe/preview-sql',
+    type: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(r) {
+      var $el = $('#recipe-step3-preview');
+      if (!r.success || !r.data || !r.data.rows || !r.data.rows.length) {
+        $el.html('<div class="text-muted" style="padding:20px;text-align:center;">' + __t('page.catalog.recipe_preview_no_data') + '</div>');
+        return;
+      }
+      var data = r.data;
+      var cols = data.columns || Object.keys(data.rows[0]);
+      var html = '<div style="font-size:11px;margin-bottom:6px;color:var(--text-muted);">' + data.rowCount + ' ' + __t('page.catalog.recipe_preview_rows') + ' · ' + data.elapsedMs + __t('page.catalog.recipe_preview_ms') + '</div>';
+      html += '<table style="font-size:11px;width:100%;"><thead><tr>';
+      cols.forEach(function(c) { html += '<th style="font-size:10px;padding:4px 6px;position:sticky;top:0;background:var(--bg-card);">' + escHtml(c) + '</th>'; });
+      html += '</tr></thead><tbody>';
+      data.rows.slice(0, 20).forEach(function(row) {
+        html += '<tr>';
+        cols.forEach(function(c) {
+          var v = row[c];
+          html += '<td class="mono" style="font-size:10px;padding:3px 6px;">' + (v != null ? escHtml(String(v)) : '-') + '</td>';
+        });
+        html += '</tr>';
+      });
+      if (data.rows.length > 20) html += '<tr><td colspan="' + cols.length + '" class="text-center text-muted fs-11" style="padding:6px;">... +' + (data.rows.length - 20) + ' ' + __t('page.catalog.recipe_preview_rows') + '</td></tr>';
+      html += '</tbody></table>';
+      $el.html(html);
+    },
+    error: function() {
+      $('#recipe-step3-preview').html('<div class="text-muted" style="padding:20px;text-align:center;">' + __t('page.catalog.recipe_preview_error') + '</div>');
+    }
+  });
+}
+
+function recipeCreate() {
+  var name = $('#recipe-name').val().trim();
+  if (!name) { showToast(__t('page.catalog.recipe_name_required'), 'error'); return; }
+  if (!_recipeSql) { showToast(__t('page.catalog.recipe_sql_required'), 'error'); return; }
+
+  var payload = {
+    name: name,
+    description: $('#recipe-description').val().trim(),
+    sourceType: _recipeSourceType,
+    queryMode: _recipeQueryMode,
+    querySql: _recipeSql,
+    executionMode: $('#recipe-exec-mode').val(),
+    category: $('#recipe-category').val().trim(),
+    owner: $('#recipe-owner').val().trim()
+  };
+  if (_recipeSourceType === 'rdbms') payload.rdbmsId = _recipeSelectedSource;
+  else payload.tsdbId = _recipeSelectedSource;
+
+  // Disable button to prevent double-click
+  var $btn = $('#recipe-btn-execute').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.recipe_creating'));
+
+  $.ajax({
+    url: API + '/recipe',
+    type: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(r) {
+      if (!r.success) {
+        showToast((r.error && r.error.message) || __t('page.catalog.recipe_create_fail'), 'error');
+        $btn.prop('disabled', false).html('<i class="fas fa-play"></i> ' + __t('page.catalog.recipe_btn_create_execute'));
+        return;
+      }
+      var recipeId = r.data.id;
+      // Execute the recipe
+      $.ajax({
+        url: API + '/recipe/' + recipeId + '/execute',
+        type: 'POST',
+        success: function(er) {
+          closeModal();
+          if (er.success) {
+            showToast(__t('page.catalog.recipe_create_success'), 'success');
+          } else {
+            showToast(__t('page.catalog.recipe_create_success') + ' (' + (er.error || '') + ')', 'warning');
+          }
+          refreshAll();
+        },
+        error: function() {
+          closeModal();
+          showToast(__t('page.catalog.recipe_create_success'), 'success');
+          refreshAll();
+        }
+      });
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON;
+      showToast((e && e.error && e.error.message) || __t('page.catalog.recipe_create_fail'), 'error');
+      $btn.prop('disabled', false).html('<i class="fas fa-play"></i> ' + __t('page.catalog.recipe_btn_create_execute'));
+    }
+  });
+}
+
+/* ── Refresh All ── */
+function refreshAll() {
+  loadCatalogs(currentPage);
+  loadTree();
+  loadCategories();
+  loadStats();
+}
+
+$(document).ready(function() {
+  refreshAll();
+});
+</script>
+{% endblock %}

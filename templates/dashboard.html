@@ -1,0 +1,694 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.dashboard.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.dashboard.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.dashboard.breadcrumb_dashboard') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<label class="form-check-inline fs-12 mr-12" style="cursor:pointer;">
+  <input type="checkbox" id="chk-auto-refresh" checked onchange="toggleAutoRefresh()"> {{ t('page.dashboard.label_auto_refresh') }}
+</label>
+<button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openQuickAction()"><i class="fas fa-bolt"></i> {{ t('page.dashboard.btn_quick_action') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stat Cards -->
+<div class="stat-grid mb-24" style="grid-template-columns:repeat(5,1fr);">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.dashboard.stat_connector') }}</h4>
+      <div class="stat-value" id="stat-conn">-</div>
+      <div class="stat-change" id="stat-conn-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-plug"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.dashboard.stat_total_collected') }}</h4>
+      <div class="stat-value" id="stat-collected">-</div>
+      <div class="stat-change" id="stat-collected-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-gauge-high"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.dashboard.stat_pipeline') }}</h4>
+      <div class="stat-value" id="stat-pipe">-</div>
+      <div class="stat-change" id="stat-pipe-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-diagram-project"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.dashboard.stat_active_alarms') }}</h4>
+      <div class="stat-value" id="stat-alarm">-</div>
+      <div class="stat-change" id="stat-alarm-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon red"><i class="fas fa-bell"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.dashboard.stat_system_health') }}</h4>
+      <div class="stat-value" id="stat-health">-</div>
+      <div class="stat-change" id="stat-health-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon" id="stat-health-icon"><i class="fas fa-heart-pulse"></i></div>
+  </div>
+</div>
+
+<!-- Charts + Infra Row -->
+<div class="grid-2 mb-24">
+  <!-- Connector by Type -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-chart-bar"></i> {{ t('page.dashboard.section_connector_by_type') }}</h3>
+      <span class="badge-sm badge-primary" id="conn-total-badge">-</span>
+    </div>
+    <div class="card-body">
+      <div class="chart-container" style="height:220px;">
+        <canvas id="connectorTypeChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Infra Health -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-server"></i> {{ t('page.dashboard.section_infra_status') }}</h3>
+      <span class="badge-sm" id="infra-badge">-</span>
+    </div>
+    <div class="card-body" id="infra-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+      <div class="text-center text-muted py-24" style="grid-column:span 3;">{{ t('common.loading') }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Alarms -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-bell"></i> {{ t('page.dashboard.section_recent_alarms') }}</h3>
+    <a href="/monitoring/alarm" class="btn btn-outline btn-sm"><i class="fas fa-list"></i> {{ t('page.dashboard.btn_view_all') }}</a>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:160px;">{{ t('page.dashboard.th_occurred_time') }}</th>
+            <th style="width:150px;">{{ t('page.dashboard.th_source') }}</th>
+            <th style="width:90px;">{{ t('page.dashboard.th_severity') }}</th>
+            <th>{{ t('page.dashboard.th_message') }}</th>
+            <th style="width:90px;">{{ t('common.status') }}</th>
+            <th style="width:70px;">{{ t('page.dashboard.th_action') }}</th>
+          </tr>
+        </thead>
+        <tbody id="alarm-tbody">
+          <tr><td colspan="6" class="text-center text-muted py-24">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Errors -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-circle-exclamation"></i> {{ t('page.dashboard.section_recent_errors') }}</h3>
+    <a href="/monitoring/logs/system" class="btn btn-outline btn-sm"><i class="fas fa-scroll"></i> {{ t('page.dashboard.btn_system_logs') }}</a>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:160px;">{{ t('common.time') }}</th>
+            <th style="width:130px;">{{ t('page.dashboard.th_source') }}</th>
+            <th style="width:100px;">{{ t('common.type') }}</th>
+            <th>{{ t('page.dashboard.th_error_message') }}</th>
+          </tr>
+        </thead>
+        <tbody id="error-tbody">
+          <tr><td colspan="4" class="text-center text-muted py-24">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Notice Board -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-bullhorn"></i> {{ t('page.dashboard.section_notice') }}</h3>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span class="badge-sm badge-primary" id="notice-count-badge" style="display:none;"></span>
+      <button id="btn-notice-write" class="btn btn-primary btn-sm" onclick="openNoticeWrite()" style="display:none;">
+        <i class="fas fa-plus"></i> {{ t('page.dashboard.btn_notice_write') }}
+      </button>
+    </div>
+  </div>
+  <div id="notice-list-wrap">
+    <div class="text-center text-muted py-24">{{ t('common.loading') }}</div>
+  </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-bolt"></i> {{ t('page.dashboard.section_quick_actions') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="stat-grid" style="margin-bottom:0">
+      <div class="stat-card" style="cursor:pointer" onclick="location.href='/collection/connectors/opcua'">
+        <div class="stat-info">
+          <h4>{{ t('page.dashboard.action_add_connector') }}</h4>
+          <div style="font-size:13px;color:var(--text-secondary)">{{ t('page.dashboard.action_add_connector_desc') }}</div>
+        </div>
+        <div class="stat-icon blue"><i class="fas fa-plus-circle"></i></div>
+      </div>
+      <div class="stat-card" style="cursor:pointer" onclick="location.href='/pipeline/builder'">
+        <div class="stat-info">
+          <h4>{{ t('page.dashboard.action_create_pipeline') }}</h4>
+          <div style="font-size:13px;color:var(--text-secondary)">{{ t('page.dashboard.action_create_pipeline_desc') }}</div>
+        </div>
+        <div class="stat-icon cyan"><i class="fas fa-wand-magic-sparkles"></i></div>
+      </div>
+      <div class="stat-card" style="cursor:pointer" onclick="location.href='/monitoring/dashboard'">
+        <div class="stat-info">
+          <h4>{{ t('page.dashboard.action_operation_monitoring') }}</h4>
+          <div style="font-size:13px;color:var(--text-secondary)">{{ t('page.dashboard.action_operation_monitoring_desc') }}</div>
+        </div>
+        <div class="stat-icon green"><i class="fas fa-desktop"></i></div>
+      </div>
+      <div class="stat-card" style="cursor:pointer" onclick="location.href='/monitoring/alarm'">
+        <div class="stat-info">
+          <h4>{{ t('page.dashboard.action_alarm_management') }}</h4>
+          <div style="font-size:13px;color:var(--text-secondary)">{{ t('page.dashboard.action_alarm_management_desc') }}</div>
+        </div>
+        <div class="stat-icon yellow"><i class="fas fa-bell"></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var _refreshTimer = null;
+var _typeChart = null;
+var _userRole = '{{ session.get("role", "") }}';
+
+$(function() {
+  loadAll();
+  loadNotices();
+  startAutoRefresh();
+  // admin이면 작성 버튼 표시
+  if (_userRole === 'admin') {
+    $('#btn-notice-write').show();
+  }
+});
+
+/* ═══════════ 데이터 로드 ═══════════ */
+function loadAll() {
+  $.getJSON('/api/monitoring/dashboard', function(res) {
+    if (!res.success) return;
+    var d = res.data;
+    renderConnectorStats(d.connectors);
+    renderPipelineStats(d.pipelines);
+    renderCollectedStats(d.connectors);
+    renderConnectorTypeChart(d.connectors);
+    renderRecentErrors(d.performance.recentErrors);
+  });
+  $.getJSON('/api/alarm/events', { size: 8 }, function(res) {
+    if (!res.success) return;
+    renderAlarmStats(res.data.summary);
+    renderRecentAlarms(res.data.events);
+  });
+  $.getJSON('/api/monitoring/healthcheck', function(res) {
+    if (!res.success) return;
+    renderHealthStats(res.data);
+    renderInfraGrid(res.data.components);
+  });
+}
+
+/* ═══════════ 통계 카드 ═══════════ */
+function renderConnectorStats(conn) {
+  $('#stat-conn').html(conn.running + '<span class="fs-14 text-muted"> / ' + conn.total + '</span>');
+  var parts = [];
+  if (conn.running > 0) parts.push(conn.running + ' ' + __t('page.dashboard.status_running'));
+  if (conn.error > 0) parts.push('<span class="text-danger">' + conn.error + ' ' + __t('page.dashboard.status_error') + '</span>');
+  if (conn.stopped > 0) parts.push(conn.stopped + ' ' + __t('page.dashboard.status_stopped'));
+  $('#stat-conn-sub').html(parts.join(' · ') || __t('page.dashboard.status_no_connectors'));
+}
+
+function renderCollectedStats(conn) {
+  var total = 0;
+  if (conn.byType) {
+    for (var i = 0; i < conn.byType.length; i++) {
+      total += conn.byType[i].collected || 0;
+    }
+  }
+  $('#stat-collected').text(fmtNum(total));
+  $('#stat-collected-sub').text(__t('page.dashboard.status_total_accumulated'));
+}
+
+function renderPipelineStats(pipe) {
+  $('#stat-pipe').html(pipe.running + '<span class="fs-14 text-muted"> / ' + pipe.total + '</span>');
+  var sub = __t('page.dashboard.status_processed') + ' ' + fmtNum(pipe.totalProcessed) + __t('common.items');
+  if (pipe.totalErrors > 0) sub += ' · <span class="text-danger">' + __t('common.error') + ' ' + fmtNum(pipe.totalErrors) + '</span>';
+  $('#stat-pipe-sub').html(sub);
+}
+
+function renderAlarmStats(summary) {
+  $('#stat-alarm').text(summary.active || 0);
+  var parts = [];
+  if (summary.critical > 0) parts.push('<span class="text-danger">' + summary.critical + ' Critical</span>');
+  if (summary.warning > 0) parts.push('<span class="text-warning">' + summary.warning + ' Warning</span>');
+  if (summary.info > 0) parts.push(summary.info + ' Info');
+  $('#stat-alarm-sub').html(parts.join(' · ') || __t('page.dashboard.no_alarms'));
+}
+
+function renderHealthStats(health) {
+  var overall = health.overall;
+  var label, cls;
+  if (overall === 'healthy') { label = __t('page.dashboard.health_healthy'); cls = 'green'; }
+  else if (overall === 'degraded') { label = __t('page.dashboard.health_degraded'); cls = 'yellow'; }
+  else { label = __t('page.dashboard.health_unhealthy'); cls = 'red'; }
+  $('#stat-health').html('<span style="color:var(--' + (overall === 'healthy' ? 'success' : overall === 'degraded' ? 'warning' : 'danger') + ')">' + label + '</span>');
+  $('#stat-health-icon').attr('class', 'stat-icon ' + cls);
+  var s = health.summary;
+  var sub = s.healthy + ' ' + __t('page.dashboard.health_healthy');
+  if (s.degraded > 0) sub += ' · ' + s.degraded + ' ' + __t('page.dashboard.health_degraded');
+  if (s.down > 0) sub += ' · ' + s.down + ' ' + __t('page.dashboard.health_down');
+  sub += ' / ' + s.total + __t('common.ea');
+  $('#stat-health-sub').text(sub);
+}
+
+/* ═══════════ 커넥터 타입별 차트 ═══════════ */
+function renderConnectorTypeChart(conn) {
+  if (!conn.byType || conn.byType.length === 0) return;
+  $('#conn-total-badge').text(__t('common.total') + ' ' + conn.total + __t('common.ea'));
+
+  var labels = [], runData = [], errData = [], stopData = [];
+  for (var i = 0; i < conn.byType.length; i++) {
+    var t = conn.byType[i];
+    labels.push(t.label);
+    runData.push(t.running);
+    errData.push(t.error);
+    stopData.push(t.stopped);
+  }
+
+  if (_typeChart) _typeChart.destroy();
+  _typeChart = createBarChart('connectorTypeChart', labels,
+    [
+      { label: __t('page.dashboard.chart_label_running'), data: runData, backgroundColor: '#22c55e', borderRadius: 3 },
+      { label: __t('page.dashboard.chart_label_error'), data: errData, backgroundColor: '#ef4444', borderRadius: 3 },
+      { label: __t('page.dashboard.chart_label_stopped'), data: stopData, backgroundColor: '#94a3b8', borderRadius: 3 }
+    ],
+    {
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 12 } } },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
+      }
+    }
+  );
+}
+
+/* ═══════════ 인프라 상태 그리드 ═══════════ */
+function renderInfraGrid(components) {
+  // infra 타입만 필터
+  var infra = [];
+  for (var i = 0; i < components.length; i++) {
+    if (components[i].type === 'infra') infra.push(components[i]);
+  }
+  if (infra.length === 0) {
+    $('#infra-grid').html('<div class="text-center text-muted" style="grid-column:span 3;">' + __t('page.dashboard.infra_no_info') + '</div>');
+    return;
+  }
+
+  var healthyCount = 0, totalCount = infra.length;
+  var html = '';
+  for (var i = 0; i < infra.length; i++) {
+    var c = infra[i];
+    var dotColor, bgColor;
+    if (c.status === 'healthy') { dotColor = '#22c55e'; bgColor = 'rgba(34,197,94,0.06)'; healthyCount++; }
+    else if (c.status === 'degraded') { dotColor = '#f59e0b'; bgColor = 'rgba(245,158,11,0.06)'; }
+    else { dotColor = '#ef4444'; bgColor = 'rgba(239,68,68,0.06)'; }
+
+    html += '<div style="background:' + bgColor + ';border-radius:8px;padding:12px;text-align:center;">' +
+      '<div style="font-size:20px;margin-bottom:6px;"><i class="fas ' + c.icon + '" style="color:' + dotColor + ';"></i></div>' +
+      '<div class="fw-600 fs-13">' + _esc(c.name) + '</div>' +
+      '<div class="fs-11 text-muted mt-4">' + _esc(c.detail) + '</div>' +
+      '<div class="mt-6"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + dotColor + ';"></span>' +
+      ' <span class="fs-11">' + (c.response_ms > 0 ? c.response_ms + 'ms' : '') + '</span></div>' +
+      '</div>';
+  }
+  $('#infra-grid').html(html);
+  $('#infra-badge').text(healthyCount + '/' + totalCount + ' ' + __t('page.dashboard.health_healthy'))
+    .attr('class', 'badge-sm ' + (healthyCount === totalCount ? 'badge-success' : 'badge-warning'));
+}
+
+/* ═══════════ 최근 알람 테이블 ═══════════ */
+function renderRecentAlarms(events) {
+  if (!events || events.length === 0) {
+    $('#alarm-tbody').html('<tr><td colspan="6" class="text-center text-muted py-24">' + __t('page.dashboard.no_alarms') + '</td></tr>');
+    return;
+  }
+  // 최근 5건만
+  var list = events.slice(0, 5);
+  var html = '';
+  for (var i = 0; i < list.length; i++) {
+    var e = list[i];
+    var sevHtml = _severityHtml(e.severity);
+    var statusHtml = _statusHtml(e.status);
+    var time = e.fired_at ? e.fired_at.replace('T', ' ').substring(0, 19) : '';
+    var actionHtml = '';
+    if (e.status === 'active') {
+      actionHtml = '<button class="btn btn-outline btn-sm" onclick="ackAlarm(' + e.id + ')" title="' + __t('page.dashboard.btn_acknowledge') + '"><i class="fas fa-check"></i></button>';
+    } else {
+      actionHtml = '<span class="text-muted fs-11">-</span>';
+    }
+    html += '<tr>' +
+      '<td class="mono fs-12">' + time + '</td>' +
+      '<td class="fs-12">' + _esc(e.source_name) + '</td>' +
+      '<td>' + sevHtml + '</td>' +
+      '<td class="fs-12 truncate" style="max-width:300px;" title="' + _escAttr(e.message) + '">' + _esc(e.message) + '</td>' +
+      '<td>' + statusHtml + '</td>' +
+      '<td class="text-center">' + actionHtml + '</td>' +
+      '</tr>';
+  }
+  $('#alarm-tbody').html(html);
+}
+
+function _severityHtml(sev) {
+  switch(sev) {
+    case 'critical': return '<span class="severity-critical"><i class="fas fa-circle-exclamation"></i> Critical</span>';
+    case 'warning': return '<span class="severity-warning"><i class="fas fa-triangle-exclamation"></i> Warning</span>';
+    default: return '<span class="severity-info"><i class="fas fa-circle-info"></i> Info</span>';
+  }
+}
+
+function _statusHtml(status) {
+  switch(status) {
+    case 'active': return '<span class="badge-status badge-error">' + __t('page.dashboard.alarm_status_active') + '</span>';
+    case 'acknowledged': return '<span class="badge-status badge-warning">' + __t('page.dashboard.alarm_status_acknowledged') + '</span>';
+    case 'resolved': return '<span class="badge-status badge-running">' + __t('page.dashboard.alarm_status_resolved') + '</span>';
+    default: return '<span class="badge-status">' + status + '</span>';
+  }
+}
+
+function ackAlarm(id) {
+  $.post('/api/alarm/events/' + id + '/ack', function(res) {
+    if (res.success) {
+      showToast(__t('page.dashboard.toast_alarm_acknowledged'), 'success');
+      loadAll();
+    }
+  });
+}
+
+/* ═══════════ 최근 에러 테이블 ═══════════ */
+function renderRecentErrors(errors) {
+  if (!errors || errors.length === 0) {
+    $('#error-tbody').html('<tr><td colspan="4" class="text-center text-muted py-24">' + __t('page.dashboard.no_recent_errors') + '</td></tr>');
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < errors.length; i++) {
+    var e = errors[i];
+    html += '<tr>' +
+      '<td class="mono fs-12">' + (e.timestamp || '-') + '</td>' +
+      '<td class="fs-12 fw-600">' + _esc(e.source) + '</td>' +
+      '<td class="fs-12"><span class="tag tag-blue">' + _esc(e.sourceType) + '</span></td>' +
+      '<td class="fs-12 truncate" style="max-width:400px;" title="' + _escAttr(e.error) + '">' + _esc(e.error) + '</td>' +
+      '</tr>';
+  }
+  $('#error-tbody').html(html);
+}
+
+/* ═══════════ 자동 새로고침 ═══════════ */
+function toggleAutoRefresh() {
+  if ($('#chk-auto-refresh').is(':checked')) { startAutoRefresh(); }
+  else { stopAutoRefresh(); }
+}
+function startAutoRefresh() {
+  stopAutoRefresh();
+  _refreshTimer = setInterval(loadAll, 30000);
+}
+function stopAutoRefresh() {
+  if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
+}
+
+/* ═══════════ 빠른 실행 ═══════════ */
+function openQuickAction() {
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.dashboard.label_select_action') + '</label>' +
+    '<select class="form-select" id="quick-action-select">' +
+    '<option value="">' + __t('page.dashboard.placeholder_select_action') + '</option>' +
+    '<option value="ack-all">' + __t('page.dashboard.action_ack_all') + '</option>' +
+    '<option value="evaluate">' + __t('page.dashboard.action_evaluate') + '</option>' +
+    '<option value="healthcheck">' + __t('page.dashboard.action_healthcheck') + '</option>' +
+    '</select></div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="executeQuickAction()">' + __t('common.run') + '</button>';
+  openModal(__t('page.dashboard.modal_quick_action'), body, footer);
+}
+
+function executeQuickAction() {
+  var action = $('#quick-action-select').val();
+  if (!action) { showToast(__t('page.dashboard.toast_select_action'), 'warning'); return; }
+  closeModal();
+
+  if (action === 'ack-all') {
+    $.post('/api/alarm/events/ack-all', function(res) {
+      if (res.success) {
+        showToast(__t('page.dashboard.toast_ack_all_success') + ' ' + (res.data.acknowledged || 0) + __t('page.dashboard.toast_ack_all_suffix'), 'success');
+        loadAll();
+      } else {
+        showToast(__t('common.error') + ': ' + (res.error ? res.error.message : ''), 'error');
+      }
+    });
+  } else if (action === 'evaluate') {
+    $.post('/api/alarm/evaluate', function(res) {
+      if (res.success) {
+        showToast(__t('page.dashboard.toast_evaluate_success') + ' (' + __t('common.add') + ' ' + (res.data.fired || 0) + __t('common.items') + ')', 'success');
+        loadAll();
+      }
+    });
+  } else if (action === 'healthcheck') {
+    $.post('/api/monitoring/healthcheck/run', function(res) {
+      if (res.success) {
+        showToast(__t('page.dashboard.toast_healthcheck_success') + ' (' + res.data.elapsed_ms + 'ms)', 'success');
+        loadAll();
+      }
+    });
+  }
+}
+
+/* ═══════════ 유틸 ═══════════ */
+function _esc(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function _escAttr(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ═══════════ 공지사항 ═══════════ */
+var _noticeEditId = null;
+
+function loadNotices() {
+  $.getJSON('/api/notice', function(res) {
+    if (!res.success) {
+      $('#notice-list-wrap').html('<div class="text-center text-muted py-16">' + __t('page.dashboard.notice_load_fail', '공지 로드 실패') + '</div>');
+      return;
+    }
+    var items = res.data || [];
+    if (items.length === 0) {
+      $('#notice-list-wrap').html('<div class="text-center text-muted py-16" style="font-size:13px;">' + __t('page.dashboard.notice_empty', '등록된 공지사항이 없습니다.') + '</div>');
+      $('#notice-count-badge').hide();
+      return;
+    }
+    $('#notice-count-badge').text(items.length + __t('common.items', '건')).show();
+
+    var isAdmin = (_userRole === 'admin');
+    var html = '<ul style="list-style:none;margin:0;padding:0;">';
+    for (var i = 0; i < items.length; i++) {
+      var n = items[i];
+      var catBadge = _noticeCatBadge(n.category);
+      var pinIcon  = n.isPinned ? '<i class="fas fa-thumbtack text-warning" style="margin-right:4px;" title="' + __t('page.dashboard.notice_pinned', '고정') + '"></i>' : '';
+      var dateStr  = n.createdAt ? n.createdAt.substring(0, 10) : '';
+      var adminBtns = '';
+      if (isAdmin) {
+        adminBtns = '<div style="flex-shrink:0;display:flex;gap:4px;">' +
+          '<button class="btn btn-outline btn-sm" style="padding:1px 7px;font-size:11px;" onclick="openNoticeEdit(' + n.id + ')" title="' + __t('common.edit', '수정') + '"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline btn-sm" style="padding:1px 7px;font-size:11px;color:var(--danger);" onclick="deleteNotice(' + n.id + ')" title="' + __t('common.delete', '삭제') + '"><i class="fas fa-trash"></i></button>' +
+          '</div>';
+      }
+      var bg = n.isPinned ? 'background:rgba(245,158,11,0.06);' : (i % 2 === 0 ? '' : 'background:var(--bg-secondary);');
+      html += '<li style="' + bg + 'padding:10px 18px;border-bottom:1px solid var(--border);">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+              pinIcon + catBadge +
+              '<span style="font-size:13px;font-weight:600;cursor:pointer;" onclick="openNoticeView(' + n.id + ')">' + _esc(n.title) + '</span>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">' +
+              _esc(n.author) + ' · ' + dateStr +
+            '</div>' +
+          '</div>' +
+          adminBtns +
+        '</div>' +
+      '</li>';
+    }
+    html += '</ul>';
+    $('#notice-list-wrap').html(html);
+  });
+}
+
+function _noticeCatBadge(cat) {
+  switch(cat) {
+    case 'urgent':      return '<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;">' + __t('page.dashboard.notice_cat_urgent', '긴급') + '</span>';
+    case 'maintenance': return '<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;">' + __t('page.dashboard.notice_cat_maintenance', '점검') + '</span>';
+    default:            return '<span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg-secondary);color:var(--text-secondary);border:1px solid var(--border);">' + __t('page.dashboard.notice_cat_general', '일반') + '</span>';
+  }
+}
+
+function openNoticeView(id) {
+  $.getJSON('/api/notice/' + id, function(res) {
+    if (!res.success) return;
+    var n = res.data;
+    var catBadge = _noticeCatBadge(n.category);
+    var pinLabel = n.isPinned ? ' <i class="fas fa-thumbtack text-warning"></i>' : '';
+    var dateStr  = n.createdAt ? n.createdAt.replace('T', ' ').substring(0, 16) : '';
+    var body = '<div style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+      catBadge + pinLabel +
+      '<span style="font-size:12px;color:var(--text-secondary);">' + _esc(n.author) + ' · ' + dateStr + '</span>' +
+    '</div>' +
+    '<div style="font-size:14px;line-height:1.7;white-space:pre-wrap;border-top:1px solid var(--border);padding-top:12px;">' + _esc(n.content) + '</div>';
+    openModal(_esc(n.title), body, '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close', '닫기') + '</button>', 'modal-lg');
+  });
+}
+
+function openNoticeWrite() {
+  _noticeEditId = null;
+  _openNoticeForm(null);
+}
+
+function openNoticeEdit(id) {
+  _noticeEditId = id;
+  $.getJSON('/api/notice/' + id, function(res) {
+    if (!res.success) { showToast(__t('common.load_failed', '로드 실패'), 'error'); return; }
+    _openNoticeForm(res.data);
+  });
+}
+
+function _openNoticeForm(n) {
+  var titleVal   = n ? _esc(n.title) : '';
+  var contentVal = n ? _esc(n.content) : '';
+  var cat        = n ? n.category : 'general';
+  var pinned     = n && n.isPinned;
+  var expires    = n && n.expiresAt ? n.expiresAt.substring(0, 10) : '';
+
+  var body =
+    '<div class="form-group">' +
+      '<label class="form-label">' + __t('page.dashboard.notice_title', '제목') + ' <span class="text-danger">*</span></label>' +
+      '<input type="text" class="form-control" id="n-title" value="' + titleVal + '" maxlength="200" placeholder="' + __t('page.dashboard.notice_title_ph', '공지 제목을 입력하세요') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label class="form-label">' + __t('page.dashboard.notice_category', '카테고리') + '</label>' +
+      '<select class="form-select" id="n-cat">' +
+        '<option value="general"'  + (cat === 'general'      ? ' selected' : '') + '>' + __t('page.dashboard.notice_cat_general', '일반') + '</option>' +
+        '<option value="maintenance"' + (cat === 'maintenance' ? ' selected' : '') + '>' + __t('page.dashboard.notice_cat_maintenance', '점검') + '</option>' +
+        '<option value="urgent"'   + (cat === 'urgent'       ? ' selected' : '') + '>' + __t('page.dashboard.notice_cat_urgent', '긴급') + '</option>' +
+      '</select>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label class="form-label">' + __t('page.dashboard.notice_content', '내용') + ' <span class="text-danger">*</span></label>' +
+      '<textarea class="form-control" id="n-content" rows="6" style="resize:vertical;" placeholder="' + __t('page.dashboard.notice_content_ph', '공지 내용을 입력하세요') + '">' + contentVal + '</textarea>' +
+    '</div>' +
+    '<div style="display:flex;gap:24px;">' +
+      '<div class="form-group" style="flex:1;">' +
+        '<label class="form-label">' + __t('page.dashboard.notice_expires', '만료일') + '</label>' +
+        '<input type="date" class="form-control" id="n-expires" value="' + expires + '">' +
+        '<div class="form-hint">' + __t('page.dashboard.notice_expires_hint', '비워두면 무기한 표시') + '</div>' +
+      '</div>' +
+      '<div class="form-group" style="padding-top:28px;">' +
+        '<label class="form-check-inline">' +
+          '<input type="checkbox" id="n-pinned"' + (pinned ? ' checked' : '') + '> ' +
+          __t('page.dashboard.notice_pin', '상단 고정') +
+        '</label>' +
+      '</div>' +
+    '</div>';
+
+  var modalTitle = _noticeEditId
+    ? __t('page.dashboard.notice_modal_edit', '공지 수정')
+    : __t('page.dashboard.notice_modal_write', '공지 작성');
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel', '취소') + '</button>' +
+    '<button class="btn btn-primary" onclick="submitNotice()">' + __t('common.save', '저장') + '</button>';
+  openModal(modalTitle, body, footer, 'modal-lg');
+}
+
+function submitNotice() {
+  var title   = $('#n-title').val().trim();
+  var content = $('#n-content').val().trim();
+  if (!title)   { showToast(__t('page.dashboard.notice_title_required', '제목을 입력하세요.'), 'warning'); return; }
+  if (!content) { showToast(__t('page.dashboard.notice_content_required', '내용을 입력하세요.'), 'warning'); return; }
+
+  var payload = {
+    title:     title,
+    content:   content,
+    category:  $('#n-cat').val(),
+    isPinned:  $('#n-pinned').is(':checked'),
+    expiresAt: $('#n-expires').val() || null
+  };
+
+  var url    = _noticeEditId ? '/api/notice/' + _noticeEditId : '/api/notice';
+  var method = _noticeEditId ? 'PUT' : 'POST';
+
+  $.ajax({
+    url: url, method: method, contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(res) {
+      if (!res.success) {
+        showToast((res.error && res.error.message) || __t('common.save_failed', '저장 실패'), 'error');
+        return;
+      }
+      closeModal();
+      var msg = _noticeEditId
+        ? __t('page.dashboard.notice_updated', '공지가 수정되었습니다.')
+        : __t('page.dashboard.notice_created', '공지가 등록되었습니다.');
+      showToast(msg, 'success');
+      loadNotices();
+    },
+    error: function() {
+      showToast(__t('common.save_failed', '저장 실패'), 'error');
+    }
+  });
+}
+
+function deleteNotice(id) {
+  if (!confirm(__t('page.dashboard.notice_confirm_delete', '공지를 삭제하시겠습니까?'))) return;
+  $.ajax({
+    url: '/api/notice/' + id, method: 'DELETE',
+    success: function(res) {
+      if (!res.success) {
+        showToast((res.error && res.error.message) || __t('common.delete_failed', '삭제 실패'), 'error');
+        return;
+      }
+      showToast(__t('page.dashboard.notice_deleted', '공지가 삭제되었습니다.'), 'success');
+      loadNotices();
+    },
+    error: function() {
+      showToast(__t('common.delete_failed', '삭제 실패'), 'error');
+    }
+  });
+}
+</script>
+{% endblock %}

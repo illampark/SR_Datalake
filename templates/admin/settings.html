@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.settings.title') }}{% endblock %}
+{% block page_title %}{{ t('page.settings.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.settings.breadcrumb_system') }}</li>
+<li>{{ t('page.settings.breadcrumb_settings') }}</li>
+{% endblock %}
+
+{% block content %}
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab-item active" data-tab="tab-general"><i class="fas fa-cog"></i> {{ t('page.settings.tab_general') }}</div>
+  <div class="tab-item" data-tab="tab-logging"><i class="fas fa-scroll"></i> {{ t('page.settings.tab_logging') }}</div>
+  <div class="tab-item" data-tab="tab-sysinfo"><i class="fas fa-server"></i> {{ t('page.settings.tab_sysinfo') }}</div>
+</div>
+
+<!-- ──── 탭 1: 일반 설정 ──── -->
+<div class="tab-content active" id="tab-general">
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-cog"></i> {{ t('page.settings.section_general_settings') }}</h3>
+      <button class="btn btn-primary btn-sm" onclick="saveGeneral()"><i class="fas fa-save"></i> {{ t('common.save') }}</button>
+    </div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.settings.label_system_name') }}</label>
+        <input type="text" id="cfg-systemName" class="form-control" style="max-width:500px;">
+        <span class="form-hint">{{ t('page.settings.hint_system_name') }}</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.settings.label_system_logo') }}</label>
+        <div class="d-flex align-center gap-16">
+          <div id="logo-preview" style="width:80px;height:80px;border:2px dashed var(--border);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;background:var(--body-bg);overflow:hidden;">
+            <i class="fas fa-network-wired" id="logo-icon" style="font-size:32px;color:var(--c-primary);"></i>
+            <img id="logo-img" src="" alt="{{ t('page.settings.alt_logo') }}" style="display:none;max-width:100%;max-height:100%;object-fit:contain;">
+          </div>
+          <div>
+            <input type="file" id="logo-file-input" accept=".png,.jpg,.jpeg,.svg,.gif,.webp" style="display:none;">
+            <button class="btn btn-outline btn-sm" onclick="$('#logo-file-input').click()"><i class="fas fa-upload"></i> {{ t('page.settings.btn_upload_logo') }}</button>
+            <button class="btn btn-outline btn-sm" id="btn-logo-remove" style="display:none;margin-left:8px;" onclick="removeLogo()"><i class="fas fa-trash"></i> {{ t('page.settings.btn_delete_logo') }}</button>
+            <div class="form-hint mt-8">{{ t('page.settings.hint_logo_format') }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_timezone') }}</label>
+          <select id="cfg-timezone" class="form-select" style="max-width:300px;">
+            <option value="Asia/Seoul">Asia/Seoul (UTC+09:00)</option>
+            <option value="Asia/Tokyo">Asia/Tokyo (UTC+09:00)</option>
+            <option value="Asia/Shanghai">Asia/Shanghai (UTC+08:00)</option>
+            <option value="US/Eastern">US/Eastern (UTC-05:00)</option>
+            <option value="US/Pacific">US/Pacific (UTC-08:00)</option>
+            <option value="Europe/London">Europe/London (UTC+00:00)</option>
+            <option value="UTC">UTC</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_date_format') }}</label>
+          <select id="cfg-dateFormat" class="form-select" style="max-width:300px;">
+            <option value="YYYY-MM-DD HH:mm:ss">YYYY-MM-DD HH:mm:ss</option>
+            <option value="YYYY/MM/DD HH:mm:ss">YYYY/MM/DD HH:mm:ss</option>
+            <option value="DD-MM-YYYY HH:mm:ss">DD-MM-YYYY HH:mm:ss</option>
+            <option value="MM/DD/YYYY HH:mm:ss">MM/DD/YYYY HH:mm:ss</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_admin_email') }}</label>
+          <input type="email" id="cfg-adminEmail" class="form-control" style="max-width:400px;">
+          <span class="form-hint">{{ t('page.settings.hint_admin_email') }}</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_page_size') }}</label>
+          <select id="cfg-pageSize" class="form-select" style="max-width:200px;">
+            <option value="10">10{{ t('common.items') }}</option>
+            <option value="20">20{{ t('common.items') }}</option>
+            <option value="50">50{{ t('common.items') }}</option>
+            <option value="100">100{{ t('common.items') }}</option>
+          </select>
+          <span class="form-hint">{{ t('page.settings.hint_page_size') }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ──── 탭 2: 로깅 설정 ──── -->
+<div class="tab-content" id="tab-logging">
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-scroll"></i> {{ t('page.settings.section_logging_settings') }}</h3>
+      <button class="btn btn-primary btn-sm" onclick="saveLogging()"><i class="fas fa-save"></i> {{ t('common.save') }}</button>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_log_level') }}</label>
+          <select id="cfg-logLevel" class="form-select" style="max-width:200px;">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <span class="form-hint">{{ t('page.settings.hint_log_level') }}</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_log_retention') }}</label>
+          <select id="cfg-logRetentionDays" class="form-select" style="max-width:200px;">
+            <option value="7">{{ t('page.settings.retention_7d') }}</option>
+            <option value="14">{{ t('page.settings.retention_14d') }}</option>
+            <option value="30">{{ t('page.settings.retention_30d') }}</option>
+            <option value="60">{{ t('page.settings.retention_60d') }}</option>
+            <option value="90">{{ t('page.settings.retention_90d') }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_log_file_size') }}</label>
+          <div class="d-flex align-center gap-8">
+            <input type="number" id="cfg-logMaxFileSizeMb" class="form-control" min="10" max="1000" style="max-width:120px;">
+            <span class="text-muted">MB</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.settings.label_log_file_count') }}</label>
+          <input type="number" id="cfg-logMaxFileCount" class="form-control" min="1" max="100" style="max-width:120px;">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-check"><input type="checkbox" id="cfg-logSendToDb"> {{ t('page.settings.label_log_to_db') }}</label>
+      </div>
+      <div class="form-group">
+        <label class="form-check"><input type="checkbox" id="cfg-logConsoleOutput"> {{ t('page.settings.label_console_output') }}</label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ──── 탭 3: 시스템 정보 ──── -->
+<div class="tab-content" id="tab-sysinfo">
+  <!-- 서버 정보 -->
+  <div class="card mb-24">
+    <div class="card-header">
+      <h3><i class="fas fa-server"></i> {{ t('page.settings.section_server_info') }}</h3>
+      <span class="badge-sm badge-warning">{{ t('page.settings.badge_readonly') }}</span>
+    </div>
+    <div class="card-body">
+      <div class="kv-list" id="server-info-list">
+        <div class="text-muted" style="padding:20px;text-align:center;">{{ t('common.loading') }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 서비스 연결 -->
+  <div class="card mb-24">
+    <div class="card-header">
+      <h3><i class="fas fa-plug"></i> {{ t('page.settings.section_service_connections') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="kv-list" id="service-info-list">
+        <div class="text-muted" style="padding:20px;text-align:center;">{{ t('common.loading') }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 환경 변수 -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-terminal"></i> {{ t('page.settings.section_environment_vars') }}</h3>
+      <span class="badge-sm badge-warning">{{ t('page.settings.badge_readonly') }}</span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr><th>{{ t('page.settings.th_var_name') }}</th><th>{{ t('page.settings.th_value') }}</th><th>{{ t('common.description') }}</th></tr>
+          </thead>
+          <tbody id="env-table-body">
+            <tr><td colspan="3" class="text-muted" style="text-align:center;">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/* ── 설정 로드 ── */
+function loadSettings() {
+  $.getJSON('/api/admin/settings', function(res) {
+    if (!res.success) return;
+    var s = res.data.settings;
+    $('#cfg-systemName').val(s.systemName);
+    $('#cfg-timezone').val(s.timezone);
+    $('#cfg-dateFormat').val(s.dateFormat);
+    $('#cfg-adminEmail').val(s.adminEmail);
+    $('#cfg-pageSize').val(s.pageSize);
+    $('#cfg-logLevel').val(s.logLevel);
+    $('#cfg-logRetentionDays').val(s.logRetentionDays);
+    $('#cfg-logMaxFileSizeMb').val(s.logMaxFileSizeMb);
+    $('#cfg-logMaxFileCount').val(s.logMaxFileCount);
+    $('#cfg-logSendToDb').prop('checked', s.logSendToDb === 'true');
+    $('#cfg-logConsoleOutput').prop('checked', s.logConsoleOutput === 'true');
+  });
+}
+
+/* ── 일반 설정 저장 ── */
+function saveGeneral() {
+  var payload = {
+    systemName: $('#cfg-systemName').val(),
+    timezone: $('#cfg-timezone').val(),
+    dateFormat: $('#cfg-dateFormat').val(),
+    adminEmail: $('#cfg-adminEmail').val(),
+    pageSize: $('#cfg-pageSize').val()
+  };
+  $.ajax({
+    url: '/api/admin/settings',
+    method: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(res) {
+      if (res.success) {
+        $('#sidebar-system-name').text(payload.systemName);
+        showToast(__t('page.settings.toast_settings_saved'), 'success');
+      } else showToast(res.error.message, 'error');
+    },
+    error: function() { showToast(__t('page.settings.toast_save_error'), 'error'); }
+  });
+}
+
+/* ── 로깅 설정 저장 ── */
+function saveLogging() {
+  var payload = {
+    logLevel: $('#cfg-logLevel').val(),
+    logRetentionDays: $('#cfg-logRetentionDays').val(),
+    logMaxFileSizeMb: $('#cfg-logMaxFileSizeMb').val(),
+    logMaxFileCount: $('#cfg-logMaxFileCount').val(),
+    logSendToDb: $('#cfg-logSendToDb').is(':checked') ? 'true' : 'false',
+    logConsoleOutput: $('#cfg-logConsoleOutput').is(':checked') ? 'true' : 'false'
+  };
+  $.ajax({
+    url: '/api/admin/settings',
+    method: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(res) {
+      if (res.success) showToast(__t('page.settings.toast_logging_saved'), 'success');
+      else showToast(res.error.message, 'error');
+    },
+    error: function() { showToast(__t('page.settings.toast_save_error'), 'error'); }
+  });
+}
+
+/* ── 시스템 정보 로드 ── */
+function loadSystemInfo() {
+  $.getJSON('/api/admin/system-info', function(res) {
+    if (!res.success) return;
+    var d = res.data;
+
+    /* 서버 정보 */
+    var html = '';
+    html += kvItem(__t('page.settings.info_hostname'), d.hostname);
+    html += kvItem(__t('page.settings.info_platform'), d.platform);
+    html += kvItem('Python', d.pythonVersion);
+    html += kvItem(__t('page.settings.info_framework'), '<span class="tag tag-blue">' + d.framework + '</span>');
+    html += kvItem('PID', d.pid);
+    html += kvItem(__t('page.settings.info_started_at'), d.startedAt);
+    html += kvItem(__t('page.settings.info_database'), '<span class="mono">' + escHtml(d.database.url) + '</span>');
+    html += kvItem(__t('page.settings.info_db_driver'), d.database.driver);
+    $('#server-info-list').html(html);
+
+    /* 서비스 연결 */
+    var svc = '';
+    svc += kvItem(__t('page.settings.info_mqtt_broker'), '<span class="mono">' + escHtml(d.services.mqtt) + '</span>');
+    svc += kvItem('Benthos API', '<span class="mono">' + escHtml(d.services.benthos) + '</span>');
+    svc += kvItem(__t('page.settings.info_minio_storage'), '<span class="mono">' + escHtml(d.services.minio) + '</span>');
+    $('#service-info-list').html(svc);
+
+    /* 환경 변수 */
+    var rows = '';
+    d.environment.forEach(function(e) {
+      rows += '<tr>'
+        + '<td class="mono fw-600">' + escHtml(e.key) + '</td>'
+        + '<td class="mono">' + escHtml(e.value) + '</td>'
+        + '<td class="text-muted">' + escHtml(e.desc) + '</td>'
+        + '</tr>';
+    });
+    $('#env-table-body').html(rows);
+  });
+}
+
+function kvItem(label, value) {
+  return '<div class="kv-item"><span class="kv-label">' + label + '</span><span class="kv-value">' + value + '</span></div>';
+}
+
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── 로고 관리 ── */
+function loadLogo() {
+  $.getJSON('/api/admin/logo', function(res) {
+    if (!res.success) return;
+    applyLogoPreview(res.data.logoUrl);
+  });
+}
+
+function applyLogoPreview(url) {
+  if (url) {
+    $('#logo-icon').hide();
+    $('#logo-img').attr('src', url + '?t=' + Date.now()).show();
+    $('#btn-logo-remove').show();
+  } else {
+    $('#logo-img').hide().attr('src', '');
+    $('#logo-icon').show();
+    $('#btn-logo-remove').hide();
+  }
+}
+
+function removeLogo() {
+  confirmAction(__t('page.settings.confirm_delete_logo'), function() {
+    $.ajax({
+      url: '/api/admin/logo',
+      method: 'DELETE',
+      success: function(res) {
+        if (res.success) {
+          applyLogoPreview('');
+          updateSidebarLogo('');
+          showToast(__t('page.settings.toast_logo_deleted'), 'success');
+        }
+      }
+    });
+  });
+}
+
+function updateSidebarLogo(url) {
+  if (url) {
+    $('#sidebar-logo-icon').hide();
+    if ($('#sidebar-logo-img').length) {
+      $('#sidebar-logo-img').attr('src', url + '?t=' + Date.now()).show();
+    } else {
+      $('#sidebar-logo-icon').after('<img id="sidebar-logo-img" src="' + url + '?t=' + Date.now() + '" alt="' + __t('page.settings.alt_logo') + '" style="width:28px;height:28px;object-fit:contain;">');
+    }
+  } else {
+    $('#sidebar-logo-img').remove();
+    $('#sidebar-logo-icon').show();
+  }
+}
+
+/* ── 초기 로드 ── */
+$(function() {
+  loadSettings();
+  loadLogo();
+
+  /* 파일 선택 시 업로드 */
+  $('#logo-file-input').on('change', function() {
+    var file = this.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast(__t('page.settings.toast_file_too_large'), 'error');
+      return;
+    }
+    var fd = new FormData();
+    fd.append('file', file);
+    $.ajax({
+      url: '/api/admin/logo',
+      method: 'POST',
+      data: fd,
+      processData: false,
+      contentType: false,
+      success: function(res) {
+        if (res.success) {
+          applyLogoPreview(res.data.logoUrl);
+          updateSidebarLogo(res.data.logoUrl);
+          showToast(__t('page.settings.toast_logo_uploaded'), 'success');
+        } else {
+          showToast(res.error.message, 'error');
+        }
+      },
+      error: function() { showToast(__t('page.settings.toast_upload_error'), 'error'); }
+    });
+    this.value = '';
+  });
+
+  /* 시스템 정보 탭 클릭 시 로드 */
+  var sysLoaded = false;
+  $(document).on('click', '.tab-item[data-tab="tab-sysinfo"]', function() {
+    if (!sysLoaded) { loadSystemInfo(); sysLoaded = true; }
+  });
+});
+</script>
+{% endblock %}

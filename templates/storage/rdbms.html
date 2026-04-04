@@ -1,0 +1,501 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.rdbms.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.rdbms.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.rdbms.breadcrumb_storage') }}</li>
+<li>{{ t('page.rdbms.breadcrumb_rdbms') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openDbSettings()"><i class="fas fa-cog"></i> {{ t('page.rdbms.btn_db_settings') }}</button>
+{% endblock %}
+
+{% block content %}
+<div class="grid-2 mb-24">
+  <!-- Connection Info -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-plug"></i> {{ t('page.rdbms.card_connection_info') }}</h3>
+      <span id="conn-badge" class="badge-status badge-stopped">{{ t('page.rdbms.badge_not_connected') }}</span>
+    </div>
+    <div class="card-body">
+      <div id="conn-info" class="kv-list">
+        <p class="text-muted fs-13"><i class="fas fa-info-circle"></i> {{ t('page.rdbms.no_rdbms_instance') }} <a href="#" onclick="openDbSettings(); return false;">{{ t('page.rdbms.link_db_settings') }}</a>{{ t('page.rdbms.link_add_here') }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Performance Stats -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-gauge-high"></i> {{ t('page.rdbms.card_performance') }}</h3>
+    </div>
+    <div class="card-body">
+      <div id="perf-info" class="kv-list mb-16">
+        <p class="text-muted fs-13"><i class="fas fa-info-circle"></i> {{ t('page.rdbms.label_select_instance') }}</p>
+      </div>
+      <div id="pool-bar" style="display:none">
+        <div class="d-flex align-center" style="justify-content:space-between">
+          <span class="fs-12 text-muted">{{ t('page.rdbms.label_pool_usage') }}</span>
+          <span id="pool-pct" class="fs-12 fw-600">0%</span>
+        </div>
+        <div class="progress mt-8">
+          <div id="pool-progress" class="progress-bar green" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Table List -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-table"></i> {{ t('page.rdbms.card_table_list') }}</h3>
+    <span id="table-count" class="badge-sm badge-primary">0{{ t('page.rdbms.badge_tables_count') }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.rdbms.th_table_name') }}</th>
+            <th>{{ t('common.description') }}</th>
+            <th>{{ t('page.rdbms.th_row_count') }}</th>
+            <th>{{ t('page.rdbms.th_size') }}</th>
+            <th>{{ t('page.rdbms.th_index_count') }}</th>
+            <th>{{ t('page.rdbms.th_last_updated') }}</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="table-body">
+          <tr><td colspan="7" class="text-center text-muted py-16">{{ t('page.rdbms.loading_data') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Slow Queries -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-clock"></i> {{ t('page.rdbms.card_slow_queries') }}</h3>
+    <span id="slow-count" class="badge-sm badge-warning">0{{ t('page.rdbms.badge_slow_count') }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.rdbms.th_query') }}</th>
+            <th>{{ t('page.rdbms.th_avg_time') }}</th>
+            <th>{{ t('page.rdbms.th_call_count') }}</th>
+            <th>{{ t('page.rdbms.th_affected_rows') }}</th>
+            <th>{{ t('page.rdbms.th_total_time') }}</th>
+          </tr>
+        </thead>
+        <tbody id="slow-body">
+          <tr><td colspan="5" class="text-center text-muted py-16">{{ t('page.rdbms.loading_data') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/storage/rdbms';
+var currentInst = null;
+
+$(function() { loadCurrentInstance(); });
+
+// ── Load first instance ──
+function loadCurrentInstance() {
+  $.getJSON(API, function(res) {
+    if (res.success && res.data && res.data.length > 0) {
+      currentInst = res.data[0];
+      renderConnectionInfo(currentInst);
+      loadPerformance(currentInst.id);
+      loadTables(currentInst.id);
+      loadSlowQueries(currentInst.id);
+    } else {
+      renderEmpty();
+    }
+  }).fail(function() { renderEmpty(); });
+}
+
+function renderEmpty() {
+  $('#conn-info').html('<p class="text-muted fs-13"><i class="fas fa-info-circle"></i> ' + __t('page.rdbms.no_rdbms_instance') + ' <a href="#" onclick="openDbSettings(); return false;">' + __t('page.rdbms.link_db_settings') + '</a>' + __t('page.rdbms.link_add_here') + '</p>');
+  $('#conn-badge').attr('class', 'badge-status badge-stopped').text(__t('page.rdbms.badge_not_connected'));
+  $('#perf-info').html('<p class="text-muted fs-13"><i class="fas fa-info-circle"></i> ' + __t('page.rdbms.label_select_instance') + '</p>');
+  $('#pool-bar').hide();
+  $('#table-body').html('<tr><td colspan="7" class="text-center text-muted py-16">' + __t('page.rdbms.no_instances_table') + '</td></tr>');
+  $('#table-count').text('0' + __t('page.rdbms.badge_tables_count'));
+  $('#slow-body').html('<tr><td colspan="5" class="text-center text-muted py-16">' + __t('page.rdbms.no_instances_table') + '</td></tr>');
+  $('#slow-count').text('0' + __t('page.rdbms.badge_slow_count'));
+}
+
+// ── Render connection info ──
+function renderConnectionInfo(inst) {
+  var badgeCls = inst.status === 'connected' ? 'badge-running' : (inst.status === 'error' ? 'badge-error' : 'badge-stopped');
+  var badgeTxt = inst.status === 'connected' ? __t('page.rdbms.badge_connected') : (inst.status === 'error' ? __t('page.rdbms.badge_error') : __t('page.rdbms.badge_not_connected'));
+  $('#conn-badge').attr('class', 'badge-status ' + badgeCls).text(badgeTxt);
+
+  var h = '';
+  h += kv(__t('page.rdbms.label_instance_name'), inst.name);
+  h += kv('DB Type', inst.db_type);
+  h += kv('Host', '<span class="mono">' + inst.host + '</span>');
+  h += kv('Port', '<span class="mono">' + inst.port + '</span>');
+  h += kv('Database', inst.database_name || '-');
+  h += kv('Schema', inst.schema_name || 'public');
+  h += kv('Character Set', inst.charset || 'UTF-8');
+  h += kv('Max Connections', inst.max_connections);
+  $('#conn-info').html(h);
+}
+
+function kv(label, value) {
+  return '<div class="kv-item"><span class="kv-label">' + label + '</span><span class="kv-value">' + value + '</span></div>';
+}
+
+// ── Load performance stats ──
+function loadPerformance(id) {
+  $.getJSON(API + '/' + id + '/performance', function(res) {
+    if (!res.success) return;
+    var p = res.data;
+    var h = '';
+    h += kv(__t('page.rdbms.kv_active_connections'), p.active_connections + ' <span class="fs-12 text-muted">/ ' + p.max_connections + ' (max)</span>');
+    h += kv(__t('page.rdbms.kv_idle_connections'), p.idle_connections);
+    h += kv(__t('page.rdbms.kv_slow_queries'), '<span class="' + (p.slow_queries_24h > 0 ? 'text-warning' : '') + '">' + p.slow_queries_24h + __t('page.rdbms.badge_slow_count') + '</span>');
+    h += kv(__t('page.rdbms.kv_avg_response'), p.avg_response_ms + ' ms');
+    h += kv(__t('page.rdbms.kv_cache_hit_rate'), '<span class="text-success">' + p.cache_hit_rate + '%</span>');
+    h += kv(__t('page.rdbms.kv_db_size'), p.db_size_display);
+    h += kv(__t('page.rdbms.kv_transactions'), fmtNum(p.tps));
+    h += kv(__t('page.rdbms.kv_lock_waits'), '<span class="' + (p.lock_waits > 0 ? 'text-warning' : 'text-success') + '">' + p.lock_waits + __t('page.rdbms.badge_slow_count') + '</span>');
+    h += kv('Uptime', p.uptime || '-');
+    $('#perf-info').html(h);
+
+    // Pool usage bar
+    var poolPct = p.max_connections > 0 ? Math.round((p.active_connections + p.idle_connections) / p.max_connections * 100) : 0;
+    var barColor = poolPct > 80 ? 'red' : (poolPct > 50 ? 'yellow' : 'green');
+    $('#pool-pct').text(poolPct + '%');
+    $('#pool-progress').css('width', poolPct + '%').attr('class', 'progress-bar ' + barColor);
+    $('#pool-bar').show();
+  });
+}
+
+// ── Load table list ──
+function loadTables(id) {
+  $.getJSON(API + '/' + id + '/tables', function(res) {
+    if (!res.success) return;
+    var tables = res.data;
+    $('#table-count').text(tables.length + __t('page.rdbms.badge_tables_count'));
+
+    if (tables.length === 0) {
+      $('#table-body').html('<tr><td colspan="7" class="text-center text-muted py-16">' + __t('page.rdbms.no_tables') + '</td></tr>');
+      return;
+    }
+
+    var h = '';
+    for (var i = 0; i < tables.length; i++) {
+      var t = tables[i];
+      h += '<tr>';
+      h += '<td class="mono fw-600">' + escHtml(t.table_name) + '</td>';
+      h += '<td>' + escHtml(t.description || '-') + '</td>';
+      h += '<td class="text-right mono">' + fmtNum(t.row_count) + '</td>';
+      h += '<td class="mono">' + (t.size_display || fmtBytes(t.size_bytes)) + '</td>';
+      h += '<td class="text-center">' + t.index_count + '</td>';
+      h += '<td class="mono fs-12">' + (t.last_updated ? t.last_updated.replace('T', ' ').substring(0, 19) : '-') + '</td>';
+      h += '<td>';
+      h += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.rdbms.btn_view_schema') + '" onclick="viewTableSchema(\'' + escAttr(t.table_name) + '\')"><i class="fas fa-eye"></i></button> ';
+      h += '</td>';
+      h += '</tr>';
+    }
+    $('#table-body').html(h);
+  }).fail(function() {
+    $('#table-body').html('<tr><td colspan="7" class="text-center text-muted py-16">' + __t('page.rdbms.cannot_load_tables') + '</td></tr>');
+  });
+}
+
+// ── Load slow queries ──
+function loadSlowQueries(id) {
+  $.getJSON(API + '/' + id + '/slow-queries', function(res) {
+    if (!res.success) return;
+    var queries = res.data;
+    $('#slow-count').text(queries.length + __t('page.rdbms.badge_slow_count'));
+
+    if (queries.length === 0) {
+      $('#slow-body').html('<tr><td colspan="5" class="text-center text-muted py-16">' + __t('page.rdbms.no_slow_queries') + '</td></tr>');
+      return;
+    }
+
+    var h = '';
+    for (var i = 0; i < queries.length; i++) {
+      var q = queries[i];
+      var timeClass = q.avg_time_ms > 1000 ? 'text-warning fw-600' : '';
+      h += '<tr>';
+      h += '<td class="mono fs-12 truncate" style="max-width:350px" title="' + escAttr(q.query) + '">' + escHtml(q.query) + '</td>';
+      h += '<td class="mono ' + timeClass + '">' + fmtMs(q.avg_time_ms) + '</td>';
+      h += '<td class="mono">' + fmtNum(q.calls) + '</td>';
+      h += '<td class="mono">' + fmtNum(q.rows) + '</td>';
+      h += '<td class="mono">' + fmtMs(q.total_time_ms) + '</td>';
+      h += '</tr>';
+    }
+    $('#slow-body').html(h);
+  }).fail(function() {
+    $('#slow-body').html('<tr><td colspan="5" class="text-center text-muted py-16">' + __t('page.rdbms.cannot_load_slow_queries') + '</td></tr>');
+  });
+}
+
+// ── DB Settings Modal (Create / Edit) ──
+function openDbSettings(data) {
+  var isEdit = data && data.id;
+  var d = data || {};
+
+  var body = '' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_instance_name_required') + '</label><input id="f-name" class="form-control" value="' + escAttr(d.name || '') + '" placeholder="' + __t('page.rdbms.placeholder_instance_name') + '"></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_db_type') + '</label>' +
+    '<select id="f-dbtype" class="form-control">' +
+    '<option value="PostgreSQL"' + (d.db_type === 'PostgreSQL' || !d.db_type ? ' selected' : '') + '>PostgreSQL</option>' +
+    '<option value="MySQL"' + (d.db_type === 'MySQL' ? ' selected' : '') + '>MySQL</option>' +
+    '<option value="Oracle"' + (d.db_type === 'Oracle' ? ' selected' : '') + '>Oracle</option>' +
+    '<option value="SQL Server"' + (d.db_type === 'SQL Server' ? ' selected' : '') + '>SQL Server</option>' +
+    '</select></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_charset') + '</label><input id="f-charset" class="form-control" value="' + escAttr(d.charset || 'UTF-8') + '"></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_host') + '</label><input id="f-host" class="form-control" value="' + escAttr(d.host || '') + '" placeholder="localhost"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_port') + '</label><input id="f-port" class="form-control" type="number" value="' + (d.port || 5432) + '"></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_database') + '</label><input id="f-dbname" class="form-control" value="' + escAttr(d.database_name || '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_schema') + '</label><input id="f-schema" class="form-control" value="' + escAttr(d.schema_name || 'public') + '"></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_username') + '</label><input id="f-user" class="form-control" value="' + escAttr(d.username || '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_password') + '</label><input id="f-pass" class="form-control" type="password" value="' + escAttr(d.password || '') + '" placeholder="' + (isEdit ? __t('page.rdbms.placeholder_password_edit') : '') + '"></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">Max Connections</label><input id="f-maxconn" class="form-control" type="number" value="' + (d.max_connections || 100) + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_connection_timeout') + '</label><input id="f-timeout" class="form-control" type="number" value="' + (d.connection_timeout || 30) + '"></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_pool_size') + '</label><input id="f-pool" class="form-control" type="number" value="' + (d.pool_size || 10) + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.rdbms.label_description') + '</label><input id="f-desc" class="form-control" value="' + escAttr(d.description || '') + '"></div>' +
+    '</div>' +
+    '<div id="test-result" style="display:none" class="mt-8 p-8 fs-12" style="border-radius:6px"></div>';
+
+  var footer = '';
+  if (isEdit) {
+    footer += '<button class="btn btn-outline text-danger" onclick="deleteInstance(' + d.id + ')" style="margin-right:auto"><i class="fas fa-trash"></i> ' + __t('common.delete') + '</button>';
+  }
+  footer += '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>';
+  footer += '<button class="btn btn-outline" onclick="testConnectionFromModal()"><i class="fas fa-plug"></i> ' + __t('page.rdbms.btn_connection_test') + '</button>';
+  footer += '<button class="btn btn-primary" onclick="saveInstance(' + (isEdit ? d.id : 'null') + ')">' + __t('common.save') + '</button>';
+
+  openModal((isEdit ? __t('page.rdbms.modal_db_edit') : __t('page.rdbms.modal_db_add')), body, footer, 'modal-lg');
+}
+
+function getFormData() {
+  return {
+    name: $('#f-name').val().trim(),
+    db_type: $('#f-dbtype').val(),
+    host: $('#f-host').val().trim(),
+    port: parseInt($('#f-port').val()) || 5432,
+    database_name: $('#f-dbname').val().trim(),
+    schema_name: $('#f-schema').val().trim() || 'public',
+    username: $('#f-user').val().trim(),
+    password: $('#f-pass').val(),
+    charset: $('#f-charset').val().trim() || 'UTF-8',
+    max_connections: parseInt($('#f-maxconn').val()) || 100,
+    connection_timeout: parseInt($('#f-timeout').val()) || 30,
+    pool_size: parseInt($('#f-pool').val()) || 10,
+    description: $('#f-desc').val().trim()
+  };
+}
+
+// ── Save (Create / Update) ──
+function saveInstance(id) {
+  var d = getFormData();
+  if (!d.name || !d.host) {
+    showToast(__t('page.rdbms.toast_required_fields'), 'warning');
+    return;
+  }
+
+  var isEdit = id !== null && id !== undefined;
+  if (isEdit && !d.password) delete d.password;  // 빈 패스워드는 전송하지 않음 (기존 값 유지)
+  $.ajax({
+    url: isEdit ? API + '/' + id : API,
+    method: isEdit ? 'PUT' : 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(res) {
+      if (res.success) {
+        closeModal();
+        showToast('DB ' + (isEdit ? __t('common.updated') : __t('common.created')), 'success');
+        loadCurrentInstance();
+      } else {
+        showToast(res.error ? res.error.message : __t('page.rdbms.toast_save_failed'), 'error');
+      }
+    },
+    error: function() { showToast(__t('page.rdbms.toast_server_error'), 'error'); }
+  });
+}
+
+// ── Delete instance ──
+function deleteInstance(id) {
+  confirmAction(__t('page.rdbms.confirm_delete_instance'), function() {
+    $.ajax({
+      url: API + '/' + id,
+      method: 'DELETE',
+      success: function(res) {
+        if (res.success) {
+          closeModal();
+          showToast(__t('page.rdbms.toast_instance_deleted'), 'success');
+          currentInst = null;
+          loadCurrentInstance();
+        } else {
+          showToast(res.error ? res.error.message : __t('page.rdbms.toast_delete_failed'), 'error');
+        }
+      },
+      error: function() { showToast(__t('page.rdbms.toast_server_error'), 'error'); }
+    });
+  });
+}
+
+// ── Test connection (from modal) ──
+function testConnectionFromModal() {
+  var d = getFormData();
+  if (!d.name || !d.host) {
+    showToast(__t('page.rdbms.toast_required_fields'), 'warning');
+    return;
+  }
+
+  // 인스턴스가 이미 존재하면 해당 id로 테스트, 아니면 먼저 임시 저장
+  if (currentInst && currentInst.id) {
+    // 먼저 폼 데이터로 업데이트 후 테스트
+    var updateData = $.extend({}, d);
+    if (!updateData.password) delete updateData.password;  // 빈 패스워드는 전송하지 않음
+    $.ajax({
+      url: API + '/' + currentInst.id,
+      method: 'PUT',
+      contentType: 'application/json',
+      data: JSON.stringify(updateData),
+      success: function() {
+        doTestConnection(currentInst.id);
+      },
+      error: function() { showToast(__t('page.rdbms.toast_save_failed'), 'error'); }
+    });
+  } else {
+    // 새 인스턴스면 먼저 생성 후 테스트
+    $.ajax({
+      url: API,
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify(d),
+      success: function(res) {
+        if (res.success) {
+          currentInst = res.data;
+          doTestConnection(res.data.id);
+        } else {
+          showToast(res.error ? res.error.message : __t('page.rdbms.toast_save_failed'), 'error');
+        }
+      },
+      error: function() { showToast(__t('page.rdbms.toast_server_error'), 'error'); }
+    });
+  }
+}
+
+function doTestConnection(id) {
+  var $r = $('#test-result');
+  $r.show().css({background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px'}).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.rdbms.test_connection_testing'));
+  $.ajax({
+    url: API + '/' + id + '/test',
+    method: 'POST',
+    success: function(res) {
+      if (res.success && res.data.connected) {
+        $r.css({background: '#f0fdf4', border: '1px solid #bbf7d0'}).html(
+          '<i class="fas fa-check-circle text-success"></i> ' + res.data.message +
+          ' (Latency: ' + res.data.latency_ms + 'ms)<br>' +
+          '<span class="text-muted">' + escHtml(res.data.version || '') + '</span>'
+        );
+      } else {
+        $r.css({background: '#fef2f2', border: '1px solid #fecaca'}).html(
+          '<i class="fas fa-times-circle text-danger"></i> ' + escHtml(res.data ? res.data.message : __t('page.rdbms.test_connection_failed'))
+        );
+      }
+    },
+    error: function() {
+      $r.css({background: '#fef2f2', border: '1px solid #fecaca'}).html(
+        '<i class="fas fa-times-circle text-danger"></i> ' + __t('page.rdbms.test_connection_server_error')
+      );
+    }
+  });
+}
+
+// ── View table schema ──
+function viewTableSchema(tableName) {
+  if (!currentInst) { showToast(__t('page.rdbms.toast_no_instance'), 'warning'); return; }
+
+  var body = '<p class="text-muted"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.rdbms.schema_loading') + '</p>';
+  openModal(tableName + __t('page.rdbms.modal_table_schema'), body, null, 'modal-lg');
+
+  $.getJSON(API + '/' + currentInst.id + '/tables/' + encodeURIComponent(tableName) + '/schema', function(res) {
+    if (!res.success) {
+      $('#modal-body').html('<p class="text-danger"><i class="fas fa-exclamation-circle"></i> ' + escHtml(res.error ? res.error.message : __t('page.rdbms.schema_query_failed')) + '</p>');
+      return;
+    }
+    var cols = res.data.columns;
+    var h = '<div class="table-wrapper"><table><thead><tr><th>' + __t('page.rdbms.th_column') + '</th><th>' + __t('page.rdbms.th_data_type') + '</th><th>Nullable</th><th>' + __t('page.rdbms.th_default') + '</th></tr></thead><tbody>';
+    for (var i = 0; i < cols.length; i++) {
+      var c = cols[i];
+      h += '<tr>';
+      h += '<td class="mono">' + escHtml(c.column_name) + '</td>';
+      h += '<td class="mono">' + escHtml(c.data_type) + '</td>';
+      h += '<td>' + (c.nullable ? 'YES' : 'NO') + '</td>';
+      h += '<td class="mono fs-12">' + escHtml(c.default || '-') + '</td>';
+      h += '</tr>';
+    }
+    h += '</tbody></table></div>';
+    $('#modal-body').html(h);
+  }).fail(function() {
+    $('#modal-body').html('<p class="text-danger"><i class="fas fa-exclamation-circle"></i> ' + __t('page.rdbms.schema_cannot_load') + '</p>');
+  });
+}
+
+// ── Refresh all ──
+function refreshAll() {
+  if (!currentInst) {
+    loadCurrentInstance();
+    return;
+  }
+  showToast(__t('page.rdbms.toast_refreshing_data'), 'info');
+  // Test connection first, then reload
+  $.ajax({
+    url: API + '/' + currentInst.id + '/test',
+    method: 'POST',
+    success: function(res) {
+      if (res.success) {
+        loadCurrentInstance();
+        showToast(__t('page.rdbms.toast_refresh_complete'), 'success');
+      }
+    },
+    error: function() {
+      loadCurrentInstance();
+    }
+  });
+}
+
+// ── Helpers ──
+function escHtml(s) { return $('<span>').text(s || '').html(); }
+function escAttr(s) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtMs(ms) {
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+  return ms.toFixed(1) + 'ms';
+}
+</script>
+{% endblock %}

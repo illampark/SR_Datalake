@@ -1,0 +1,655 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.file_collector.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.file_collector.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('nav.data_collection') }}</a></li>
+<li>{{ t('page.file_collector.breadcrumb_connector') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').toggle();if($('#crossSearchPanel').is(':visible'))loadCrossSearch()"><i class="fas fa-search-plus"></i> {{ t('page.file_collector.btn_cross_search') }}</button>
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.file_collector.btn_add_collector') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Cross-Connector Tag Search (UC-1, UC-5) -->
+<div class="card" id="crossSearchPanel" style="display:none;margin-bottom:16px;">
+  <div class="card-header">
+    <h3><i class="fas fa-search-plus"></i> {{ t('page.opcua.cross_search_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body">
+    <div class="d-flex gap-8 align-center" style="margin-bottom:12px;flex-wrap:wrap;">
+      <input type="text" class="form-control" id="cross-q" placeholder="{{ t('page.opcua.cross_search_placeholder') }}" style="flex:1;min-width:200px;padding:6px 10px;" onkeydown="if(event.key==='Enter')loadCrossSearch()">
+      <select class="form-select" id="cross-type" style="width:auto;min-width:140px;padding:6px 10px;">
+        <option value="">{{ t('page.opcua.cross_filter_all') }}</option>
+        <option value="opcua">OPC-UA</option>
+        <option value="opcda">OPC-DA</option>
+        <option value="modbus">Modbus</option>
+        <option value="mqtt">MQTT</option>
+        <option value="api">REST API</option>
+        <option value="file">{{ t('page.opcua.cross_filter_file') }}</option>
+        <option value="db">DB</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="loadCrossSearch()"><i class="fas fa-search"></i> {{ t('common.search') }}</button>
+      <button class="btn btn-outline btn-sm" onclick="loadPatterns()"><i class="fas fa-tags"></i> {{ t('page.opcua.cross_naming_pattern') }}</button>
+    </div>
+    <div class="table-wrapper" style="max-height:350px;overflow-y:auto;">
+      <table>
+        <thead><tr>
+          <th>{{ t('page.opcua.cross_th_tag_name') }}</th><th>{{ t('page.opcua.cross_th_connector') }}</th><th>{{ t('page.opcua.cross_th_connector_name') }}</th><th>{{ t('page.opcua.cross_th_value_range') }}</th><th>{{ t('page.opcua.cross_th_avg') }}</th><th>{{ t('page.opcua.cross_th_quality') }}</th><th>{{ t('page.opcua.cross_th_pipeline') }}</th><th>{{ t('page.opcua.cross_th_samples') }}</th>
+        </tr></thead>
+        <tbody id="crossSearchTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:30px">{{ t('page.opcua.cross_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="patternResults" style="display:none;margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.file_collector.stat_total_collectors') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-file-import"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.file_collector.stat_running') }}</h4>
+      <div class="stat-value" id="stat-running">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-play"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.file_collector.stat_collected_files') }}</h4>
+      <div class="stat-value" id="stat-files">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-file-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.file_collector.stat_error_count') }}</h4>
+      <div class="stat-value" id="stat-errors">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-triangle-exclamation"></i></div>
+  </div>
+</div>
+
+<!-- Collector Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.file_collector.collector_list') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('page.opcua.filter_status_label') }}</label>
+        <select class="form-select" id="filter-status" onchange="loadCollectors()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="running">{{ t('page.opcua.filter_running') }}</option>
+          <option value="stopped">{{ t('page.opcua.filter_stopped') }}</option>
+          <option value="error">{{ t('page.opcua.filter_error') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="collector-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.file_collector.th_collector_name') }}</th>
+            <th>{{ t('page.file_collector.th_sftp_server') }}</th>
+            <th>{{ t('page.file_collector.th_watch_path') }}</th>
+            <th>{{ t('page.file_collector.th_file_pattern') }}</th>
+            <th>{{ t('page.file_collector.th_collect_mode') }}</th>
+            <th>{{ t('page.file_collector.th_processed_files') }}</th>
+            <th>{{ t('page.opcua.th_status') }}</th>
+            <th>{{ t('page.file_collector.th_last_collection') }}</th>
+            <th>{{ t('page.opcua.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="collector-tbody">
+          <tr><td colspan="9" class="text-center text-muted" style="padding:40px">{{ t('page.opcua.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/connectors/file';
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+var modeBadge = {
+  watch: '<span class="badge-sm badge-primary"><i class="fas fa-eye"></i> Watch</span>',
+  poll:  '<span class="badge-sm badge-warning"><i class="fas fa-clock"></i> Poll</span>',
+};
+
+var statusBadge = {
+  running: '<span class="badge-status badge-running">' + __t('common.running') + '</span>',
+  stopped: '<span class="badge-status badge-stopped">' + __t('common.stopped') + '</span>',
+  error:   '<span class="badge-status badge-error">' + __t('common.error') + '</span>',
+};
+
+/* ── Summary ── */
+function loadSummary() {
+  $.getJSON(API + '/summary', function(r) {
+    if (!r.success) return;
+    var d = r.data;
+    $('#stat-total').text(fmt(d.totalCollectors));
+    $('#stat-running').text(fmt(d.runningCollectors));
+    $('#stat-files').text(fmt(d.totalFileCount));
+    $('#stat-errors').text(fmt(d.totalErrors));
+  });
+}
+
+/* ── List ── */
+function loadCollectors() {
+  var params = {};
+  var st = $('#filter-status').val(); if (st) params.status = st;
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var items = r.data;
+    var $tb = $('#collector-tbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="9" class="text-center text-muted" style="padding:40px">' + __t('page.file_collector.no_collectors') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(c) {
+      var patterns = c.filePatterns || [];
+      var patternHtml = patterns.length
+        ? patterns.map(function(p){ return '<span class="tag tag-blue">' + escHtml(p) + '</span>'; }).join(' ')
+        : '<span class="text-muted">-</span>';
+
+      var actionBtns = '';
+      if (c.status === 'running') {
+        actionBtns =
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.stop') + '" onclick="stopCollector('+c.id+')"><i class="fas fa-stop"></i></button>' +
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.refresh') + '" onclick="restartCollector('+c.id+')"><i class="fas fa-redo"></i></button>';
+      } else {
+        actionBtns = '<button class="btn btn-success btn-sm" title="' + __t('common.start') + '" onclick="startCollector('+c.id+')"><i class="fas fa-play"></i></button>';
+      }
+      actionBtns +=
+        '<button class="btn btn-outline btn-sm" title="' + __t('page.file_collector.btn_path_test') + '" onclick="testCollector('+c.id+')"><i class="fas fa-folder-open"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteCollector('+c.id+',\''+escAttr(c.name)+'\')"><i class="fas fa-trash text-danger"></i></button>';
+
+      var modeInfo = (modeBadge[c.collectMode] || escHtml(c.collectMode));
+      if (c.collectMode === 'poll') modeInfo += '<div class="fs-11 text-muted">' + c.pollInterval + __t('page.file_collector.poll_interval_suffix') + '</div>';
+      else modeInfo += '<div class="fs-11 text-muted">' + __t('page.file_collector.realtime_watch') + '</div>';
+      var storageModeTag = c.storageMode === 'direct'
+        ? '<span class="tag tag-purple" style="font-size:10px;">Direct</span>'
+        : '<span class="tag tag-blue" style="font-size:10px;">Parse</span>';
+
+      var pathSub = c.recursive ? __t('page.file_collector.subdirectory_included') : __t('page.file_collector.current_dir_only');
+      if (c.modifiedOnly) pathSub += ' · ' + __t('page.file_collector.modified_only_suffix');
+
+      var sftpInfo = escHtml((c.sftpUsername || '') + '@' + (c.sftpHost || 'localhost') + ':' + (c.sftpPort || 22));
+      var authLabel = c.sftpAuthType === 'key' ? 'SSH Key' : 'Password';
+
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(c.name) + ' ' + storageModeTag + '</div>' +
+          '<div class="fs-11 text-muted">' + escHtml(c.description || '') + '</div></td>' +
+        '<td><div class="mono fs-12">' + sftpInfo + '</div>' +
+          '<div class="fs-11 text-muted">' + authLabel + '</div></td>' +
+        '<td><div class="mono truncate" title="' + escAttr(c.watchPath) + '">' + escHtml(c.watchPath) + '</div>' +
+          '<div class="fs-11 text-muted">' + pathSub + '</div></td>' +
+        '<td><div class="d-flex gap-8" style="flex-wrap:wrap">' + patternHtml + '</div></td>' +
+        '<td>' + modeInfo + '</td>' +
+        '<td><div class="fw-600">' + fmt(c.fileCount) + __t('page.file_collector.count_suffix') + '</div>' +
+          '<div class="fs-11 text-muted">' + __t('page.file_collector.error_count_prefix') + fmt(c.errorCount) + __t('page.file_collector.count_suffix') + '</div></td>' +
+        '<td>' + (statusBadge[c.status] || escHtml(c.status)) + '</td>' +
+        '<td>' +
+          (c.lastFileAt ? '<div class="mono fs-11">' + c.lastFileAt.replace('T',' ').slice(0,19) + '</div>' : '<span class="text-muted">-</span>') +
+          (c.lastFileName ? '<div class="fs-11 text-muted truncate" title="' + escAttr(c.lastFileName) + '">' + escHtml(c.lastFileName) + '</div>' : '') +
+        '</td>' +
+        '<td><div class="d-flex gap-8">' + actionBtns + '</div></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+/* ── Control ── */
+function startCollector(id) {
+  showToast(__t('page.file_collector.toast_collector_starting'), 'info');
+  $.post(API + '/' + id + '/start', function(r) {
+    showToast(r.success ? __t('page.file_collector.toast_collector_started') : (r.error && r.error.message) || __t('page.opcua.toast_start_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_start_fail'), 'error');
+  });
+}
+function stopCollector(id) {
+  confirmAction(__t('page.file_collector.confirm_stop_collector'), function() {
+    $.post(API + '/' + id + '/stop', function(r) {
+      showToast(r.success ? __t('page.file_collector.toast_collector_stopped') : __t('page.opcua.toast_stop_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    });
+  });
+}
+function restartCollector(id) {
+  showToast(__t('page.opcua.toast_restarting'), 'info');
+  $.post(API + '/' + id + '/restart', function(r) {
+    showToast(r.success ? __t('page.opcua.toast_restarted') : __t('page.opcua.toast_restart_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  });
+}
+function testCollector(id) {
+  showToast(__t('page.file_collector.toast_sftp_path_testing'), 'info');
+  $.post(API + '/' + id + '/test', function(r) {
+    if (r.success && r.data) {
+      var d = r.data;
+      var msg = d.message;
+      if (d.matchingFiles != null) msg += ' | ' + __t('page.file_collector.test_matching_files') + d.matchingFiles + __t('common.ea');
+      if (d.sampleFiles && d.sampleFiles.length) msg += ' (' + d.sampleFiles.slice(0,5).join(', ') + ')';
+      showToast(msg, d.success ? 'success' : 'error');
+    }
+  });
+}
+function deleteCollector(id, name) {
+  confirmAction(name + __t('page.file_collector.confirm_delete_collector'), function() {
+    $.ajax({ url: API + '/' + id, type: 'DELETE', success: function(r) {
+      showToast(r.success ? __t('page.file_collector.toast_collector_deleted') : __t('page.opcua.toast_delete_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    }});
+  });
+}
+
+/* ── Modals ── */
+function toggleModeFields() {
+  var mode = $('#f-mode').val();
+  $('#poll-interval-group').toggle(mode === 'poll');
+}
+function togglePostAction() {
+  var action = $('#f-postaction').val();
+  $('#archive-path-group').toggle(action === 'move');
+}
+function toggleAuthType() {
+  var authType = $('#f-authtype').val();
+  $('#sftp-password-group').toggle(authType === 'password');
+  $('#sftp-keypath-group').toggle(authType === 'key');
+}
+function toggleStorageMode() {
+  var mode = $('#f-storage-mode').val();
+  $('#direct-mode-group').toggle(mode === 'direct');
+}
+
+function openAddModal() {
+  var body =
+    '<form id="file-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.file_collector.form_collector_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="' + __t('page.file_collector.placeholder_name_example') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_description') + '</label>' +
+    '  <input type="text" class="form-control" id="f-desc" placeholder="' + __t('page.file_collector.form_desc_placeholder') + '">' +
+    '</div>' +
+    '<hr style="margin:12px 0;border-color:#e2e8f0">' +
+    '<h4 style="margin:0 0 12px;font-size:14px;color:#475569"><i class="fas fa-server"></i> ' + __t('page.file_collector.section_sftp') + '</h4>' +
+    '<div class="form-row">' +
+    '  <div class="form-group" style="flex:2">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_sftp_host') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-sftp-host" value="localhost" placeholder="' + __t('page.file_collector.form_host_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group" style="flex:1">' +
+    '    <label class="form-label">' + __t('common.port') + '</label>' +
+    '    <input type="number" class="form-control" id="f-sftp-port" value="22" min="1" max="65535">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_sftp_username') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-sftp-user" placeholder="' + __t('page.file_collector.form_sftp_username_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_auth_type') + '</label>' +
+    '    <select class="form-select" id="f-authtype" onchange="toggleAuthType()">' +
+    '      <option value="password" selected>' + __t('page.file_collector.form_auth_password') + '</option>' +
+    '      <option value="key">' + __t('page.file_collector.form_auth_sshkey') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group" id="sftp-password-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_password') + '</label>' +
+    '  <input type="password" class="form-control" id="f-sftp-pass" placeholder="' + __t('page.file_collector.form_sftp_password_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group" id="sftp-keypath-group" style="display:none">' +
+    '  <label class="form-label">' + __t('page.file_collector.form_ssh_key_path') + '</label>' +
+    '  <input type="text" class="form-control" id="f-sftp-keypath" placeholder="/home/user/.ssh/id_rsa">' +
+    '</div>' +
+    '<hr style="margin:12px 0;border-color:#e2e8f0">' +
+    '<h4 style="margin:0 0 12px;font-size:14px;color:#475569"><i class="fas fa-folder-tree"></i> ' + __t('page.file_collector.section_file_collection') + '</h4>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.file_collector.form_watch_path') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-path" placeholder="/data/path/to/watch/">' +
+    '  <div class="form-hint">' + __t('page.file_collector.form_watch_path_hint') + '</div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_file_patterns') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-patterns" placeholder="' + __t('page.file_collector.form_file_patterns_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_parser_type') + '</label>' +
+    '    <select class="form-select" id="f-parser">' +
+    '      <option value="line" selected>' + __t('page.file_collector.form_parser_line') + '</option>' +
+    '      <option value="csv">CSV</option>' +
+    '      <option value="json">JSON</option>' +
+    '      <option value="regex">' + __t('page.file_collector.form_parser_regex') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_include_subdirs') + '</label>' +
+    '    <select class="form-select" id="f-recursive">' +
+    '      <option value="true" selected>' + __t('page.file_collector.form_include') + '</option>' +
+    '      <option value="false">' + __t('page.file_collector.form_exclude') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_modified_files_only') + '</label>' +
+    '    <select class="form-select" id="f-modified">' +
+    '      <option value="true" selected>' + __t('page.file_collector.form_modified_only') + '</option>' +
+    '      <option value="false">' + __t('page.file_collector.form_all_files') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_collect_mode') + '</label>' +
+    '    <select class="form-select" id="f-mode" onchange="toggleModeFields()">' +
+    '      <option value="poll" selected>' + __t('page.file_collector.form_collect_poll') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group" id="poll-interval-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_polling_interval_sec') + '</label>' +
+    '    <input type="number" class="form-control" id="f-interval" value="30" min="5">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_encoding') + '</label>' +
+    '    <select class="form-select" id="f-encoding">' +
+    '      <option value="utf-8" selected>UTF-8</option>' +
+    '      <option value="euc-kr">EUC-KR</option>' +
+    '      <option value="cp949">CP949</option>' +
+    '      <option value="iso-8859-1">ISO-8859-1</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_post_action') + '</label>' +
+    '    <select class="form-select" id="f-postaction" onchange="togglePostAction()">' +
+    '      <option value="none" selected>' + __t('page.file_collector.form_post_keep') + '</option>' +
+    '      <option value="move">' + __t('page.file_collector.form_post_move') + '</option>' +
+    '      <option value="delete">' + __t('common.delete') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group" id="archive-path-group" style="display:none">' +
+    '  <label class="form-label">' + __t('page.file_collector.form_archive_path') + '</label>' +
+    '  <input type="text" class="form-control" id="f-archive" placeholder="/data/archive/">' +
+    '</div>' +
+    '<hr style="margin:12px 0;border-color:#e2e8f0">' +
+    '<h4 style="margin:0 0 12px;font-size:14px;color:#475569"><i class="fas fa-database"></i> ' + __t('page.file_collector.section_storage_mode') + '</h4>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.file_collector.form_storage_mode') + '</label>' +
+    '    <select class="form-select" id="f-storage-mode" onchange="toggleStorageMode()">' +
+    '      <option value="parse" selected>' + __t('page.file_collector.form_storage_parse_mqtt') + '</option>' +
+    '      <option value="direct">' + __t('page.file_collector.form_storage_direct_minio') + '</option>' +
+    '    </select>' +
+    '    <div class="form-hint">' + __t('page.file_collector.form_storage_direct_hint') + '</div>' +
+    '  </div>' +
+    '</div>' +
+    '<div id="direct-mode-group" style="display:none">' +
+    '  <div class="form-row">' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('page.file_collector.form_target_bucket') + '</label>' +
+    '      <select class="form-select" id="f-target-bucket">' +
+    '        <option value="sdl-files" selected>sdl-files</option>' +
+    '        <option value="sdl-archive">sdl-archive</option>' +
+    '        <option value="sdl-backup">sdl-backup</option>' +
+    '      </select>' +
+    '    </div>' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('page.file_collector.form_path_prefix') + '</label>' +
+    '      <input type="text" class="form-control" id="f-target-prefix" value="raw/{collector_id}/{date}/" placeholder="raw/{collector_id}/{date}/">' +
+    '      <div class="form-hint">' + __t('page.file_collector.form_path_prefix_hint') + '</div>' +
+    '    </div>' +
+    '  </div>' +
+    '</div>' +
+    '</form>';
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-outline" onclick="testSftpConnection()"><i class="fas fa-server"></i> ' + __t('page.file_collector.btn_sftp_test') + '</button>' +
+    '<button class="btn btn-outline" onclick="testPathDirect()"><i class="fas fa-folder-open"></i> ' + __t('page.file_collector.btn_path_test_modal') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveCollector()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+  openModal(__t('page.file_collector.modal_add_title'), body, footer, 'modal-lg');
+}
+
+function _collectForm() {
+  var patternsRaw = ($('#f-patterns').val() || '').trim();
+  var patterns = patternsRaw ? patternsRaw.split(',').map(function(p){ return p.trim(); }).filter(Boolean) : [];
+  return {
+    name: $('#f-name').val().trim(),
+    description: $('#f-desc').val().trim(),
+    sftpHost: $('#f-sftp-host').val().trim() || 'localhost',
+    sftpPort: parseInt($('#f-sftp-port').val()) || 22,
+    sftpUsername: $('#f-sftp-user').val().trim(),
+    sftpPassword: $('#f-sftp-pass').val(),
+    sftpAuthType: $('#f-authtype').val(),
+    sftpKeyPath: $('#f-sftp-keypath').val().trim(),
+    watchPath: $('#f-path').val().trim(),
+    filePatterns: patterns,
+    recursive: $('#f-recursive').val() === 'true',
+    modifiedOnly: $('#f-modified').val() === 'true',
+    collectMode: $('#f-mode').val(),
+    pollInterval: parseInt($('#f-interval').val()) || 30,
+    encoding: $('#f-encoding').val(),
+    postAction: $('#f-postaction').val(),
+    archivePath: $('#f-archive').val() ? $('#f-archive').val().trim() : '',
+    parserType: $('#f-parser').val(),
+    storageMode: $('#f-storage-mode').val() || 'parse',
+    targetBucket: $('#f-target-bucket').val() || 'sdl-files',
+    targetPathPrefix: ($('#f-target-prefix').val() || '').trim() || 'raw/{collector_id}/{date}/',
+  };
+}
+
+function saveCollector() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.file_collector.validate_collector_name'), 'error'); return; }
+  if (!d.sftpUsername) { showToast(__t('page.file_collector.validate_sftp_username'), 'error'); return; }
+  if (!d.watchPath) { showToast(__t('page.file_collector.validate_watch_path'), 'error'); return; }
+
+  $.ajax({ url: API, type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.file_collector.toast_collector_registered'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_register_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_register_fail'), 'error');
+    }
+  });
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.file_collector.toast_collector_query_fail'), 'error'); return; }
+    var c = r.data;
+
+    openAddModal();
+    setTimeout(function() {
+      $('#f-name').val(c.name).prop('readonly', true).css('background','#f1f5f9');
+      $('#f-desc').val(c.description);
+      $('#f-sftp-host').val(c.sftpHost || 'localhost');
+      $('#f-sftp-port').val(c.sftpPort || 22);
+      $('#f-sftp-user').val(c.sftpUsername || '');
+      $('#f-authtype').val(c.sftpAuthType || 'password');
+      toggleAuthType();
+      $('#f-sftp-keypath').val(c.sftpKeyPath || '');
+      $('#f-path').val(c.watchPath);
+      $('#f-patterns').val((c.filePatterns || []).join(', '));
+      $('#f-parser').val(c.parserType);
+      $('#f-recursive').val(String(c.recursive));
+      $('#f-modified').val(String(c.modifiedOnly));
+      $('#f-mode').val(c.collectMode);
+      toggleModeFields();
+      $('#f-interval').val(c.pollInterval);
+      $('#f-encoding').val(c.encoding);
+      $('#f-postaction').val(c.postAction);
+      togglePostAction();
+      $('#f-archive').val(c.archivePath);
+      $('#f-storage-mode').val(c.storageMode || 'parse');
+      $('#f-target-bucket').val(c.targetBucket || 'sdl-files');
+      $('#f-target-prefix').val(c.targetPathPrefix || 'raw/{collector_id}/{date}/');
+      toggleStorageMode();
+
+      $('.modal-title').text(__t('page.file_collector.modal_edit_title') + c.name);
+      window._editId = id;
+      $('.modal-footer .btn-primary').removeAttr('onclick').off('click').on('click', function() { updateCollector(id); });
+    }, 100);
+  });
+}
+
+function updateCollector(id) {
+  var d = _collectForm();
+  if (!d.sftpPassword) delete d.sftpPassword;  // 빈 패스워드는 전송하지 않음 (기존 값 유지)
+  $.ajax({ url: API + '/' + id, type: 'PUT', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.file_collector.toast_collector_updated'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_update_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_update_fail'), 'error');
+    }
+  });
+}
+
+function testSftpConnection() {
+  var d = _collectForm();
+  if (!d.sftpUsername) { showToast(__t('page.file_collector.validate_sftp_username'), 'error'); return; }
+  showToast(__t('page.file_collector.toast_sftp_testing'), 'info');
+  $.ajax({ url: API + '/test-sftp', type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success && r.data) {
+        var info = r.data;
+        var msg = info.message;
+        if (info.cwd) msg += ' (CWD: ' + info.cwd + ')';
+        showToast(msg, info.success ? 'success' : 'error');
+      }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.file_collector.toast_sftp_fail'), 'error');
+    }
+  });
+}
+
+function testPathDirect() {
+  var d = _collectForm();
+  if (!d.sftpUsername) { showToast(__t('page.file_collector.validate_sftp_username'), 'error'); return; }
+  if (!d.watchPath) { showToast(__t('page.file_collector.validate_watch_path'), 'error'); return; }
+  showToast(__t('page.file_collector.toast_sftp_path_testing'), 'info');
+  $.ajax({ url: API + '/test-path', type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success && r.data) {
+        var info = r.data;
+        var msg = info.message;
+        if (info.matchingFiles != null) msg += ' | ' + __t('page.file_collector.test_matching_files') + info.matchingFiles + __t('common.ea');
+        if (info.sampleFiles && info.sampleFiles.length) {
+          msg += ' (' + info.sampleFiles.slice(0,5).map(function(f){ return f.name || f; }).join(', ') + ')';
+        }
+        showToast(msg, info.success ? 'success' : 'error');
+      }
+    },
+    error: function() { showToast(__t('page.file_collector.toast_path_test_fail'), 'error'); }
+  });
+}
+
+/* ── Refresh ── */
+function refreshAll() { loadSummary(); loadCollectors(); }
+
+/* ── Cross-Connector Tag Search (UC-1, UC-5) ── */
+function loadCrossSearch() {
+  var params = { size: 100, active: 'true' };
+  var q = ($('#cross-q').val() || '').trim();
+  var ct = $('#cross-type').val();
+  if (q) params.q = q;
+  if (ct) params.connector_type = ct;
+
+  var $tb = $('#crossSearchTbody').html('<tr><td colspan="8" class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.opcua.cross_searching') + '</td></tr>');
+  $('#patternResults').hide();
+
+  $.getJSON('/api/metadata/search/unified', params, function(r) {
+    if (!r.success || !r.data) return;
+    var items = r.data.items || [];
+    $tb = $('#crossSearchTbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:30px">' + __t('page.opcua.cross_no_results') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(t) {
+      var pipeStatus = t.pipelineLinked
+        ? '<span class="badge-status badge-running" style="font-size:11px">' + t.pipelines.length + __t('common.ea') + '</span>'
+        : '<span class="badge-status badge-stopped" style="font-size:11px">' + __t('page.opcua.cross_pipe_none') + '</span>';
+      var range = (t.minObserved != null && t.maxObserved != null)
+        ? t.minObserved + '~' + t.maxObserved : '-';
+      $tb.append(
+        '<tr>' +
+        '<td class="fw-600">' + escHtml(t.tagName) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(t.connectorLabel || t.connectorType) + '</span> <span class="mono text-muted fs-11">#' + t.connectorId + '</span></td>' +
+        '<td class="fs-12">' + escHtml(t.connectorName || '-') + '</td>' +
+        '<td class="mono fs-12">' + range + '</td>' +
+        '<td class="mono fs-12">' + (t.avgObserved != null ? Number(t.avgObserved).toFixed(1) : '-') + '</td>' +
+        '<td>' + (t.qualityScore != null ? '<span class="badge-sm ' + (t.qualityScore >= 80 ? 'badge-success' : 'badge-danger') + '">' + t.qualityScore + '</span>' : '-') + '</td>' +
+        '<td>' + pipeStatus + '</td>' +
+        '<td class="mono fs-12">' + (t.sampleCount || 0) + '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function loadPatterns() {
+  var ct = $('#cross-type').val();
+  var params = ct ? { connector_type: ct } : {};
+  var $el = $('#patternResults').show().html('<div class="text-center text-muted" style="padding:16px"><i class="fas fa-spinner fa-spin"></i></div>');
+
+  $.getJSON('/api/metadata/search/patterns', params, function(r) {
+    if (!r.success || !r.data) return;
+    var patterns = r.data.patterns || [];
+    var html = '<div class="fw-600 fs-12 mb-8"><i class="fas fa-tags"></i> ' + __t('page.opcua.cross_pattern_title') + ' (' + r.data.totalTags + __t('page.opcua.cross_pattern_count_suffix') + ')</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+    patterns.forEach(function(p) {
+      html += '<div style="background:var(--bg-secondary);border-radius:6px;padding:6px 12px;border:1px solid var(--border);">' +
+        '<span class="fw-600">' + escHtml(p.prefix) + '_*</span>' +
+        ' <span class="badge-sm badge-primary">' + p.count + __t('common.ea') + '</span>' +
+        '<div class="fs-11 text-muted" style="margin-top:2px;">' + p.sampleTags.slice(0,3).map(function(t){return escHtml(t)}).join(', ') + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    $el.html(html);
+  });
+}
+
+$(document).ready(function() { refreshAll(); });
+</script>
+{% endblock %}

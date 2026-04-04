@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.ext_tsdb.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.ext_tsdb.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('page.ext_tsdb.breadcrumb_integration') }}</a></li>
+<li>{{ t('page.ext_tsdb.breadcrumb_current') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.ext_tsdb.btn_add_connection') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_tsdb.stat_total_connections') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-database"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_tsdb.stat_active') }}</h4>
+      <div class="stat-value" id="stat-active">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_tsdb.stat_connected') }}</h4>
+      <div class="stat-value" id="stat-connected">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-plug-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_tsdb.stat_error') }}</h4>
+      <div class="stat-value" id="stat-error">-</div>
+    </div>
+    <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
+  </div>
+</div>
+
+<!-- Connection List Table -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header">
+    <h3><i class="fas fa-list"></i> {{ t('page.ext_tsdb.table_title') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('common.search') }}:</label>
+        <input type="text" class="form-control" id="filter-search" placeholder="{{ t('page.ext_tsdb.placeholder_search') }}" oninput="loadList()">
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.ext_tsdb.th_name') }}</th>
+            <th>{{ t('page.ext_tsdb.th_host') }}</th>
+            <th>{{ t('page.ext_tsdb.th_db_type') }}</th>
+            <th>{{ t('page.ext_tsdb.th_status') }}</th>
+            <th>{{ t('page.ext_tsdb.th_enabled') }}</th>
+            <th>{{ t('page.ext_tsdb.th_last_tested') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connTbody">
+          <tr><td colspan="7" class="text-center text-muted" style="padding:40px">{{ t('page.ext_tsdb.td_loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="pagination" style="padding:12px 16px;display:flex;justify-content:center;gap:4px;"></div>
+  </div>
+</div>
+
+<!-- Detail Panel -->
+<div class="card hidden" id="detailPanel">
+  <div class="card-header">
+    <h3><i class="fas fa-info-circle"></i> <span id="detail-name">{{ t('page.ext_tsdb.detail_title') }}</span></h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#detailPanel').addClass('hidden')"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body">
+    <div class="kv-list" id="detail-body"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/integration';
+var CONN_TYPE = 'tsdb';
+var _currentPage = 1;
+var _editId = null;
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+function statusBadge(s) {
+  var map = {connected:'badge-running', error:'badge-error', unknown:'badge-stopped'};
+  var label = {connected:__t('page.ext_tsdb.badge_connected'), error:__t('page.ext_tsdb.badge_error'), unknown:__t('page.ext_tsdb.badge_unknown')};
+  return '<span class="badge-status '+(map[s]||'badge-stopped')+'">'+(label[s]||s)+'</span>';
+}
+
+/* ── Stats ── */
+function loadStats(data) {
+  if (!data) return;
+  $('#stat-total').text(fmt(data.total));
+  $('#stat-active').text(fmt(data.activeCount));
+  $('#stat-connected').text(fmt(data.connectedCount));
+  $('#stat-error').text(fmt(data.errorCount));
+}
+
+/* ── List ── */
+function loadList(page) {
+  if (page) _currentPage = page;
+  var search = ($('#filter-search').val() || '').trim();
+  var params = { type: CONN_TYPE, page: _currentPage, size: 20 };
+  if (search) params.search = search;
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var data = r.data;
+    var items = data.items || [];
+    loadStats(data);
+
+    var $tb = $('#connTbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.ext_tsdb.td_no_data') + '</td></tr>');
+      $('#pagination').empty();
+      return;
+    }
+
+    items.forEach(function(c) {
+      var cfg = c.config || {};
+      $tb.append(
+        '<tr style="cursor:pointer" onclick="showDetail(' + c.id + ')">' +
+        '<td><div class="fw-600">' + escHtml(c.name) + '</div>' +
+          (c.description ? '<div class="fs-11 text-muted">' + escHtml(c.description) + '</div>' : '') + '</td>' +
+        '<td class="mono">' + escHtml(c.host) + ':' + (c.port || '') + '</td>' +
+        '<td>' + dbTypeBadge(c.connectionType) + '</td>' +
+        '<td>' + statusBadge(c.status) + '</td>' +
+        '<td>' + (c.enabled ? '<span class="badge-sm badge-success">' + __t('page.ext_tsdb.badge_active') + '</span>' : '<span class="badge-sm badge-warning">' + __t('page.ext_tsdb.badge_inactive') + '</span>') + '</td>' +
+        '<td>' + (c.lastTestedAt ? '<span class="mono fs-12">' + c.lastTestedAt.replace('T',' ').slice(0,19) + '</span>' : '<span class="text-muted">-</span>') + '</td>' +
+        '<td>' +
+          '<div class="d-flex gap-8" onclick="event.stopPropagation()">' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + c.id + ')"><i class="fas fa-pen"></i></button>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.test_connection') + '" onclick="testConn(' + c.id + ')"><i class="fas fa-plug"></i></button>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteConn(' + c.id + ')"><i class="fas fa-trash text-danger"></i></button>' +
+          '</div>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+
+    // Pagination
+    var totalPages = Math.ceil((data.total || 0) / 20);
+    var $pg = $('#pagination').empty();
+    if (totalPages > 1) {
+      for (var i = 1; i <= totalPages; i++) {
+        $pg.append('<button class="btn btn-sm ' + (i === _currentPage ? 'btn-primary' : 'btn-outline') + '" onclick="loadList(' + i + ')">' + i + '</button>');
+      }
+    }
+  });
+}
+
+function dbTypeBadge(type) {
+  var map = {
+    InfluxDB:    '<span class="tag tag-blue">InfluxDB</span>',
+    TimescaleDB: '<span class="tag tag-green">TimescaleDB</span>'
+  };
+  return map[type] || '<span class="tag">' + escHtml(type || '-') + '</span>';
+}
+
+/* ── Detail Panel ── */
+function showDetail(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.ext_tsdb.toast_detail_failed'), 'error'); return; }
+    var c = r.data;
+    var cfg = c.config || {};
+    $('#detail-name').text(c.name);
+    var html =
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_name') + '</span><span class="kv-value fw-600">' + escHtml(c.name) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_host') + '</span><span class="kv-value mono">' + escHtml(c.host) + ':' + (c.port || '') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_db_type') + '</span><span class="kv-value">' + dbTypeBadge(c.connectionType) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_database') + '</span><span class="kv-value mono">' + escHtml(c.databaseName || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_username') + '</span><span class="kv-value mono">' + escHtml(c.username || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Organization</span><span class="kv-value mono">' + escHtml(cfg.org || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">API Token</span><span class="kv-value mono">' + (cfg.token ? '********' : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Bucket</span><span class="kv-value mono">' + escHtml(cfg.bucket || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_retention_policy') + '</span><span class="kv-value">' + escHtml(cfg.retention || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_status') + '</span><span class="kv-value">' + statusBadge(c.status) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_enabled') + '</span><span class="kv-value">' + (c.enabled ? '<span class="badge-sm badge-success">' + __t('page.ext_tsdb.badge_active') + '</span>' : '<span class="badge-sm badge-warning">' + __t('page.ext_tsdb.badge_inactive') + '</span>') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_last_tested') + '</span><span class="kv-value mono">' + (c.lastTestedAt ? c.lastTestedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_description') + '</span><span class="kv-value">' + escHtml(c.description || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_created_at') + '</span><span class="kv-value mono">' + (c.createdAt ? c.createdAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_tsdb.label_updated_at') + '</span><span class="kv-value mono">' + (c.updatedAt ? c.updatedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>';
+    $('#detail-body').html(html);
+    $('#detailPanel').removeClass('hidden');
+  });
+}
+
+/* ── Modal: Add ── */
+function _buildFormHtml(data) {
+  var c = data || {};
+  var cfg = c.config || {};
+  return '<div class="form-group"><label>' + __t('page.ext_tsdb.form_label_name_required') + '</label><input type="text" class="form-control" id="f-name" value="' + escHtml(c.name || '') + '"></div>' +
+    '<div class="form-group"><label>' + __t('page.ext_tsdb.form_label_db_type_required') + '</label>' +
+      '<select class="form-select" id="f-connType">' +
+        '<option value="InfluxDB"' + (c.connectionType === 'InfluxDB' ? ' selected' : '') + '>InfluxDB</option>' +
+        '<option value="TimescaleDB"' + (c.connectionType === 'TimescaleDB' ? ' selected' : '') + '>TimescaleDB</option>' +
+      '</select></div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group"><label>' + __t('page.ext_tsdb.form_label_host_required') + '</label><input type="text" class="form-control" id="f-host" placeholder="' + __t('page.ext_tsdb.form_placeholder_host') + '" value="' + escHtml(c.host || '') + '"></div>' +
+    '  <div class="form-group"><label>' + __t('page.ext_tsdb.form_label_port') + '</label><input type="number" class="form-control" id="f-port" value="' + (c.port || 8086) + '"></div>' +
+    '</div>' +
+    '<div class="form-group"><label>' + __t('page.ext_tsdb.form_label_database') + '</label><input type="text" class="form-control" id="f-dbname" placeholder="' + __t('page.ext_tsdb.form_placeholder_database') + '" value="' + escHtml(c.databaseName || '') + '"></div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group"><label>' + __t('page.ext_tsdb.form_label_username') + '</label><input type="text" class="form-control" id="f-user" value="' + escHtml(c.username || '') + '"></div>' +
+    '  <div class="form-group"><label>' + __t('page.ext_tsdb.form_label_password') + '</label><input type="password" class="form-control" id="f-pass" placeholder="' + (c.id ? __t('page.ext_tsdb.form_placeholder_password_edit') : '') + '"></div>' +
+    '</div>' +
+    '<div class="form-group"><label>Organization</label><input type="text" class="form-control" id="f-org" placeholder="InfluxDB 2.x Organization" value="' + escHtml(cfg.org || '') + '"></div>' +
+    '<div class="form-group"><label>API Token</label><input type="text" class="form-control" id="f-token" placeholder="InfluxDB API Token" value="' + escHtml(cfg.token || '') + '"></div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group"><label>Bucket</label><input type="text" class="form-control" id="f-bucket" placeholder="Bucket" value="' + escHtml(cfg.bucket || '') + '"></div>' +
+    '  <div class="form-group"><label>' + __t('page.ext_tsdb.form_label_retention_policy') + '</label><input type="text" class="form-control" id="f-retention" placeholder="' + __t('page.ext_tsdb.form_placeholder_retention') + '" value="' + escHtml(cfg.retention || '30d') + '"></div>' +
+    '</div>' +
+    '<div class="form-group"><label>' + __t('page.ext_tsdb.form_label_description') + '</label><textarea class="form-control" id="f-desc" rows="2" placeholder="' + __t('page.ext_tsdb.form_placeholder_description') + '">' + escHtml(c.description || '') + '</textarea></div>' +
+    '<div class="form-group"><div class="form-check"><input type="checkbox" id="f-enabled"' + (c.id ? (c.enabled ? ' checked' : '') : ' checked') + '><label for="f-enabled">' + __t('page.ext_tsdb.form_label_enabled') + '</label></div></div>';
+}
+
+function _collectForm() {
+  var password = $('#f-pass').val();
+  var data = {
+    name: $('#f-name').val().trim(),
+    connection_type: CONN_TYPE,
+    host: $('#f-host').val().trim(),
+    port: parseInt($('#f-port').val()) || 8086,
+    database_name: $('#f-dbname').val().trim(),
+    username: $('#f-user').val().trim(),
+    config: {
+      db_type: $('#f-connType').val(),
+      org: $('#f-org').val().trim(),
+      token: $('#f-token').val().trim(),
+      bucket: $('#f-bucket').val().trim(),
+      retention: $('#f-retention').val().trim() || '30d'
+    },
+    description: $('#f-desc').val().trim(),
+    enabled: $('#f-enabled').is(':checked')
+  };
+  if (password) data.password = password;
+  return data;
+}
+
+function openAddModal() {
+  _editId = null;
+  var formHtml = _buildFormHtml({});
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnection()">' + __t('common.save') + '</button>';
+  openModal(__t('page.ext_tsdb.modal_add_title'), formHtml, footer, 'modal-lg');
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.ext_tsdb.toast_connection_info_failed'), 'error'); return; }
+    _editId = id;
+    var formHtml = _buildFormHtml(r.data);
+    var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="saveConnection()">' + __t('common.save') + '</button>';
+    openModal(__t('page.ext_tsdb.modal_edit_title_prefix') + ' - ' + r.data.name, formHtml, footer, 'modal-lg');
+  });
+}
+
+/* ── Save (Create / Update) ── */
+function saveConnection() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.ext_tsdb.toast_name_required'), 'error'); return; }
+  if (!d.host) { showToast(__t('page.ext_tsdb.toast_host_required'), 'error'); return; }
+
+  if (_editId) {
+    // Update
+    $.ajax({
+      url: API + '/' + _editId,
+      type: 'PUT',
+      contentType: 'application/json',
+      data: JSON.stringify(d),
+      success: function(r) {
+        if (r.success) { closeModal(); showToast(__t('page.ext_tsdb.toast_connection_updated'), 'success'); refreshAll(); }
+        else { showToast((r.error && r.error.message) || __t('page.ext_tsdb.toast_update_failed'), 'error'); }
+      },
+      error: function(xhr) {
+        var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_tsdb.toast_update_failed'), 'error');
+      }
+    });
+  } else {
+    // Create
+    $.ajax({
+      url: API,
+      type: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify(d),
+      success: function(r) {
+        if (r.success) { closeModal(); showToast(__t('page.ext_tsdb.toast_connection_added'), 'success'); refreshAll(); }
+        else { showToast((r.error && r.error.message) || __t('page.ext_tsdb.toast_add_failed'), 'error'); }
+      },
+      error: function(xhr) {
+        var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_tsdb.toast_add_failed'), 'error');
+      }
+    });
+  }
+}
+
+/* ── Delete ── */
+function deleteConn(id) {
+  confirmAction(__t('page.ext_tsdb.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id,
+      type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.ext_tsdb.toast_connection_deleted') : __t('page.ext_tsdb.toast_delete_failed'), r.success ? 'success' : 'error');
+        refreshAll();
+      },
+      error: function() { showToast(__t('page.ext_tsdb.toast_delete_failed'), 'error'); }
+    });
+  });
+}
+
+/* ── Test Connection ── */
+function testConn(id) {
+  showToast(__t('page.ext_tsdb.toast_testing_connection'), 'info');
+  $.ajax({
+    url: API + '/' + id + '/test',
+    type: 'POST',
+    success: function(r) {
+      if (r.success && r.data) {
+        showToast(r.data.message || __t('page.ext_tsdb.toast_test_complete'), r.data.success ? 'success' : 'error');
+      } else {
+        showToast((r.error && r.error.message) || __t('page.ext_tsdb.toast_test_failed'), 'error');
+      }
+      refreshAll();
+    },
+    error: function() { showToast(__t('page.ext_tsdb.toast_connection_test_failed'), 'error'); }
+  });
+}
+
+/* ── Refresh ── */
+function refreshAll() {
+  loadList();
+}
+
+$(document).ready(function() {
+  refreshAll();
+});
+</script>
+{% endblock %}

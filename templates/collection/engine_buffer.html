@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.engine_buffer.title') }}{% endblock %}
+{% block page_title %}{{ t('page.engine_buffer.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.data_collection') }}</li>
+<li>{{ t('nav.collection_engine') }}</li>
+<li>{{ t('page.engine_buffer.breadcrumb_buffer') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stat Cards -->
+<div class="stat-grid mb-24">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_buffer.stat_sink_buffer') }}</h4>
+      <div class="stat-value" id="stat-sink-count">-</div>
+      <div class="stat-change" id="stat-sink-sub">{{ t('page.engine_buffer.stat_sink_buffer_sub') }}</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-database"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_buffer.stat_buffer_pending') }}</h4>
+      <div class="stat-value" id="stat-sink-items">-</div>
+      <div class="stat-change" id="stat-sink-items-sub">{{ t('page.engine_buffer.stat_buffer_pending_sub') }}</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-hourglass-half"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_buffer.stat_agg_buffer') }}</h4>
+      <div class="stat-value" id="stat-agg-count">-</div>
+      <div class="stat-change" id="stat-agg-sub">{{ t('page.engine_buffer.stat_agg_sub') }}</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-calculator"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_buffer.stat_anomaly_window') }}</h4>
+      <div class="stat-value" id="stat-window-count">-</div>
+      <div class="stat-change" id="stat-window-sub">{{ t('page.engine_buffer.stat_anomaly_sub') }}</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-chart-line"></i></div>
+  </div>
+</div>
+
+<!-- Sink Buffers Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-database"></i> {{ t('page.engine_buffer.sink_buffer_title') }}</h3>
+    <button class="btn btn-primary btn-sm" id="btn-flush-all"><i class="fas fa-paper-plane"></i> {{ t('page.engine_buffer.btn_flush_all') }}</button>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.engine_buffer.th_buffer_key') }}</th>
+            <th>{{ t('page.engine_buffer.th_sink_type') }}</th>
+            <th>{{ t('page.engine_buffer.th_pending_count') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="sink-tbody">
+          <tr><td colspan="4" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Aggregation & Anomaly Window (side-by-side) -->
+<div class="grid-2 mb-24">
+  <!-- Aggregation Buffers -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-calculator"></i> {{ t('page.engine_buffer.agg_buffer_title') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.engine_buffer.th_buffer_key') }}</th>
+              <th>{{ t('page.engine_buffer.th_value_count') }}</th>
+              <th>{{ t('page.engine_buffer.th_received_count') }}</th>
+              <th>{{ t('page.engine_buffer.th_window_start') }}</th>
+            </tr>
+          </thead>
+          <tbody id="agg-tbody">
+            <tr><td colspan="4" class="text-center text-muted" style="padding:24px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Anomaly Window Cache -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-chart-line"></i> {{ t('page.engine_buffer.anomaly_cache_title') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.engine_buffer.th_cache_key') }}</th>
+              <th>{{ t('page.engine_buffer.th_current_size') }}</th>
+              <th>{{ t('page.engine_buffer.th_max_size') }}</th>
+            </tr>
+          </thead>
+          <tbody id="window-tbody">
+            <tr><td colspan="3" class="text-center text-muted" style="padding:24px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Last Updated -->
+<div style="text-align:right;font-size:12px;color:var(--text-muted);padding:4px 0;">
+  {{ t('page.engine_status.last_updated') }}<span id="last-updated">-</span>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/engine/buffer';
+var _data = null;
+
+/* ── Sink type badge config ── */
+var SINK_TYPE_MAP = {
+  'tsdb':    { label: __t('page.engine_buffer.sink_type_tsdb'),     cls: 'tag-blue' },
+  'rdbms':   { label: __t('page.engine_buffer.sink_type_rdbms'),     cls: 'tag-green' },
+  'file':    { label: __t('page.engine_buffer.sink_type_file'),  cls: 'tag-cyan' },
+  'unknown': { label: __t('page.engine_buffer.sink_type_unknown'),         cls: 'tag-yellow' }
+};
+
+/* ── Helpers ── */
+function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+/* ── Load All ── */
+function loadAll() {
+  $.getJSON(API, function(res) {
+    if (!res.success) { showToast(__t('page.engine_buffer.toast_load_fail') + (res.error && res.error.message || ''), 'error'); return; }
+    _data = res.data;
+    renderSummary();
+    renderSinkBuffers();
+    renderAggBuffers();
+    renderWindowCache();
+    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+  }).fail(function() {
+    showToast(__t('page.engine_buffer.toast_load_api_fail'), 'error');
+  });
+}
+
+/* ── Summary Cards ── */
+function renderSummary() {
+  var s = _data.summary;
+  $('#stat-sink-count').text(s.sinkBufferCount);
+  $('#stat-sink-items').text(fmtNum(s.sinkBufferItems));
+  $('#stat-sink-items-sub').text(s.sinkBufferItems > 0 ? __t('page.engine_buffer.stat_buffer_pending_sub') : __t('page.engine_buffer.flush_no_pending'));
+  $('#stat-agg-count').text(s.aggBufferCount);
+  $('#stat-agg-sub').text(fmtNum(s.aggBufferItems) + __t('page.engine_buffer.values_collecting_suffix'));
+  $('#stat-window-count').text(s.windowCacheCount);
+  $('#stat-window-sub').text(fmtNum(s.windowCacheItems) + __t('page.engine_buffer.values_caching_suffix'));
+}
+
+/* ── Sink Buffer Table ── */
+function renderSinkBuffers() {
+  var buffers = _data.sinkBuffers || {};
+  var keys = Object.keys(buffers);
+  var html = '';
+
+  if (keys.length === 0) {
+    html = '<tr><td colspan="4" class="text-center text-muted" style="padding:32px">' + __t('page.engine_buffer.no_sink_buffers') + '</td></tr>';
+  } else {
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var buf = buffers[key];
+      var typeInfo = SINK_TYPE_MAP[buf.type] || SINK_TYPE_MAP['unknown'];
+      html += '<tr>' +
+        '<td class="mono" style="font-size:12px">' + escHtml(key) + '</td>' +
+        '<td><span class="tag ' + typeInfo.cls + '">' + typeInfo.label + '</span></td>' +
+        '<td class="mono fw-600">' + fmtNum(buf.count) + '</td>' +
+        '<td><button class="btn btn-outline btn-sm" onclick="flushSingle(\'' + escHtml(key).replace(/'/g, "\\'") + '\')"><i class="fas fa-paper-plane"></i> ' + __t('page.engine_buffer.btn_flush') + '</button></td>' +
+        '</tr>';
+    }
+  }
+  $('#sink-tbody').html(html);
+}
+
+/* ── Aggregation Buffer Table ── */
+function renderAggBuffers() {
+  var buffers = _data.aggBuffers || {};
+  var keys = Object.keys(buffers);
+  var html = '';
+
+  if (keys.length === 0) {
+    html = '<tr><td colspan="4" class="text-center text-muted" style="padding:24px">' + __t('page.engine_buffer.no_agg_buffers') + '</td></tr>';
+  } else {
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var buf = buffers[key];
+      var started = buf.startedAt ? new Date(buf.startedAt).toLocaleString('ko-KR') : '-';
+      html += '<tr>' +
+        '<td class="mono" style="font-size:12px">' + escHtml(key) + '</td>' +
+        '<td class="mono">' + fmtNum(buf.valuesCount) + '</td>' +
+        '<td class="mono">' + fmtNum(buf.count) + '</td>' +
+        '<td style="font-size:12px">' + started + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#agg-tbody').html(html);
+}
+
+/* ── Window Cache Table ── */
+function renderWindowCache() {
+  var cache = _data.windowCache || {};
+  var keys = Object.keys(cache);
+  var html = '';
+
+  if (keys.length === 0) {
+    html = '<tr><td colspan="3" class="text-center text-muted" style="padding:24px">' + __t('page.engine_buffer.no_window_cache') + '</td></tr>';
+  } else {
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var w = cache[key];
+      html += '<tr>' +
+        '<td class="mono" style="font-size:12px">' + escHtml(key) + '</td>' +
+        '<td class="mono">' + fmtNum(w.size) + '</td>' +
+        '<td class="mono">' + (w.maxlen !== null ? fmtNum(w.maxlen) : '-') + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#window-tbody').html(html);
+}
+
+/* ── Flush All ── */
+$('#btn-flush-all').on('click', function() {
+  confirmAction(__t('page.engine_buffer.confirm_flush_all') + '<br><small class="text-muted">' + __t('page.engine_buffer.confirm_flush_all_sub') + '</small>', function() {
+    $.ajax({
+      url: API + '/flush',
+      method: 'POST',
+      contentType: 'application/json',
+      data: '{}',
+      success: function(res) {
+        if (res.success) {
+          showToast(res.data.message + ' (' + fmtNum(res.data.flushedItems) + __t('page.engine_buffer.count_suffix') + ')', 'success');
+          loadAll();
+        } else {
+          showToast(__t('page.engine_buffer.toast_flush_fail') + (res.error && res.error.message || ''), 'error');
+        }
+      },
+      error: function() { showToast(__t('page.engine_buffer.toast_load_api_fail'), 'error'); }
+    });
+  });
+});
+
+/* ── Flush Single ── */
+function flushSingle(bufferKey) {
+  confirmAction('<code>' + escHtml(bufferKey) + '</code>' + __t('page.engine_buffer.confirm_flush_single'), function() {
+    $.ajax({
+      url: API + '/flush/' + encodeURIComponent(bufferKey),
+      method: 'POST',
+      contentType: 'application/json',
+      data: '{}',
+      success: function(res) {
+        if (res.success) {
+          showToast(res.data.message + ' (' + fmtNum(res.data.flushedItems) + __t('page.engine_buffer.count_suffix') + ')', 'success');
+          loadAll();
+        } else {
+          showToast(__t('page.engine_buffer.toast_flush_fail') + (res.error && res.error.message || ''), 'error');
+        }
+      },
+      error: function() { showToast(__t('page.engine_buffer.toast_load_api_fail'), 'error'); }
+    });
+  });
+}
+
+/* ── Init ── */
+$(function() { loadAll(); });
+</script>
+{% endblock %}

@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.script.title') }}{% endblock %}
+{% block page_title %}{{ t('page.script.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.normalize.breadcrumb_module') }}</li>
+<li>{{ t('page.script.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadRules()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.script.modal_add_title') }}</button>
+{% endblock %}
+
+{% block content %}
+<div class="grid-4 mb-24">
+  <div class="stat-card">
+    <div class="stat-value" id="stat-total">0</div>
+    <div class="stat-label">{{ t('page.script.stat_total_scripts') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-primary" id="stat-python">0</div>
+    <div class="stat-label">Python</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-success" id="stat-short">0</div>
+    <div class="stat-label">{{ t('page.script.stat_short') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-warning" id="stat-long">0</div>
+    <div class="stat-label">{{ t('page.script.stat_long') }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-terminal"></i> {{ t('page.script.table_title') }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.script.form_script_name') }}</th>
+            <th>{{ t('page.script.form_language') }}</th>
+            <th>{{ t('page.script.th_description') }}</th>
+            <th>{{ t('page.script.th_code_preview') }}</th>
+            <th>{{ t('page.script.th_timeout') }}</th>
+            <th>{{ t('page.script.th_created_at') }}</th>
+            <th style="width:120px">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="rules-tbody">
+          <tr><td colspan="7" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-24">
+  <div class="card-header">
+    <h3><i class="fas fa-link"></i> {{ t('page.script.linkage_title') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-hint" style="font-size:13px;line-height:1.8;">
+      {{ t('page.script.linkage_desc') }}<br>
+      <span class="mono" style="font-size:12px;">{{ t('page.script.linkage_path') }}</span><br>
+      <b>{{ t('page.script.linkage_variables') }}</b>: <code>message</code>, <code>value</code>, <code>math</code>. {{ t('page.script.form_code_hint') }}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+var API = '/api/pipeline/modules/script-configs';
+
+function loadRules() {
+  $.getJSON(API, function(r) {
+    if (!r.success) return;
+    var rules = r.data || [];
+
+    $('#stat-total').text(rules.length);
+    $('#stat-python').text(rules.filter(function(x){ return (x.language || 'python') === 'python'; }).length);
+    $('#stat-short').text(rules.filter(function(x){ return (x.code || '').split('\n').length <= 5; }).length);
+    $('#stat-long').text(rules.filter(function(x){ return (x.code || '').split('\n').length > 5; }).length);
+
+    var $tb = $('#rules-tbody').empty();
+    if (!rules.length) {
+      $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' +
+        '<i class="fas fa-inbox" style="font-size:24px;display:block;margin-bottom:8px;"></i>' +
+        __t('page.script.empty_message') + '</td></tr>');
+      return;
+    }
+    rules.forEach(function(rule) {
+      var preview = (rule.code || '').replace(/\n/g, ' ');
+      if (preview.length > 50) preview = preview.substring(0, 50) + '...';
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(rule.name) + '</div></td>' +
+        '<td><span class="tag tag-blue">' + escHtml((rule.language || 'python').charAt(0).toUpperCase() + (rule.language || 'python').slice(1)) + '</span></td>' +
+        '<td class="fs-12">' + escHtml(rule.description || '-') + '</td>' +
+        '<td class="mono fs-11" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(preview || '-') + '</td>' +
+        '<td class="mono">' + (rule.timeout || 5) + __t('page.script.timeout_unit') + '</td>' +
+        '<td class="fs-12 mono">' + (rule.createdAt ? rule.createdAt.replace('T',' ').slice(0,16) : '-') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + rule.id + ')"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteRule(' + rule.id + ',\'' + escAttr(rule.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function _formHtml(c) {
+  c = c || {};
+  return '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.script.form_script_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" value="' + escAttr(c.name || '') + '" placeholder="' + __t('page.script.form_script_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.script.th_description') + '</label>' +
+    '  <input type="text" class="form-control" id="f-description" value="' + escAttr(c.description || '') + '" placeholder="' + __t('page.script.form_description_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.script.form_language') + '</label>' +
+    '    <select class="form-select" id="f-language">' +
+    '      <option value="python"' + ((c.language || 'python') === 'python' ? ' selected' : '') + '>Python</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.script.form_timeout') + '</label>' +
+    '    <input type="number" class="form-control" id="f-timeout" value="' + (c.timeout || 5) + '" min="1" max="60">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.script.form_code') + '</label>' +
+    '  <textarea class="form-control mono" id="f-code" rows="10" style="font-size:12px;font-family:monospace;" ' +
+    '  placeholder="# message, value variables available\nvalue = message[\'value\'] * 2\nmessage[\'value\'] = value">' +
+    escHtml(c.code || '') + '</textarea>' +
+    '  <span class="form-hint">' + __t('page.script.form_code_hint') + '</span>' +
+    '</div>';
+}
+
+function _collectForm() {
+  return {
+    name: $('#f-name').val().trim(),
+    description: $('#f-description').val().trim(),
+    language: $('#f-language').val(),
+    timeout: parseInt($('#f-timeout').val()) || 5,
+    code: $('#f-code').val() || ''
+  };
+}
+
+function openAddModal() {
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveRule()"><i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.script.modal_add_title'), _formHtml({}), footer, 'modal-lg');
+}
+
+function saveRule() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.script.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API, type: 'POST', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.script.toast_added'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.script.toast_load_fail'), 'error'); return; }
+    var rule = r.data;
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="updateRule(' + id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+    openModal(__t('page.script.modal_edit_title') + ' — ' + escHtml(rule.name), _formHtml(rule), footer, 'modal-lg');
+  });
+}
+
+function updateRule(id) {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.script.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API + '/' + id, type: 'PUT', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.script.toast_updated'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function deleteRule(id, name) {
+  confirmAction('"' + name + '" ' + __t('page.script.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.script.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        loadRules();
+      }
+    });
+  });
+}
+
+$(document).ready(function() { loadRules(); });
+</script>
+{% endblock %}

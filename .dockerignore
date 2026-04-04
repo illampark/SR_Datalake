@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.DS_Store
+docs/
+tests/
+minio_data/
+data/
+deploy/
+install/
+*.tar
+*.tar.gz
+*.md

@@ -1,0 +1,687 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.db_connector.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.db_connector.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('nav.data_collection') }}</a></li>
+<li>{{ t('page.db_connector.breadcrumb_connector') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').toggle();if($('#crossSearchPanel').is(':visible'))loadCrossSearch()"><i class="fas fa-search-plus"></i> {{ t('page.opcua.btn_cross_search') }}</button>
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.db_connector.btn_add_connector') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Cross-Connector Tag Search (UC-1, UC-5) -->
+<div class="card" id="crossSearchPanel" style="display:none;margin-bottom:16px;">
+  <div class="card-header">
+    <h3><i class="fas fa-search-plus"></i> {{ t('page.opcua.cross_search_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body">
+    <div class="d-flex gap-8 align-center" style="margin-bottom:12px;flex-wrap:wrap;">
+      <input type="text" class="form-control" id="cross-q" placeholder="{{ t('page.opcua.cross_search_placeholder') }}" style="flex:1;min-width:200px;padding:6px 10px;" onkeydown="if(event.key==='Enter')loadCrossSearch()">
+      <select class="form-select" id="cross-type" style="width:auto;min-width:140px;padding:6px 10px;">
+        <option value="">{{ t('page.opcua.cross_filter_all') }}</option>
+        <option value="opcua">OPC-UA</option>
+        <option value="opcda">OPC-DA</option>
+        <option value="modbus">Modbus</option>
+        <option value="mqtt">MQTT</option>
+        <option value="api">REST API</option>
+        <option value="file">{{ t('page.opcua.cross_filter_file') }}</option>
+        <option value="db">DB</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="loadCrossSearch()"><i class="fas fa-search"></i> {{ t('common.search') }}</button>
+      <button class="btn btn-outline btn-sm" onclick="loadPatterns()"><i class="fas fa-tags"></i> {{ t('page.opcua.cross_naming_pattern') }}</button>
+    </div>
+    <div class="table-wrapper" style="max-height:350px;overflow-y:auto;">
+      <table>
+        <thead><tr>
+          <th>{{ t('page.opcua.cross_th_tag_name') }}</th><th>{{ t('page.opcua.cross_th_connector') }}</th><th>{{ t('page.opcua.cross_th_connector_name') }}</th><th>{{ t('page.opcua.cross_th_value_range') }}</th><th>{{ t('page.opcua.cross_th_avg') }}</th><th>{{ t('page.opcua.cross_th_quality') }}</th><th>{{ t('page.opcua.cross_th_pipeline') }}</th><th>{{ t('page.opcua.cross_th_samples') }}</th>
+        </tr></thead>
+        <tbody id="crossSearchTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:30px">{{ t('page.opcua.cross_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="patternResults" style="display:none;margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.opcua.stat_total_connectors') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-database"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.db_connector.stat_running') }}</h4>
+      <div class="stat-value" id="stat-running">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-play"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.db_connector.stat_collected_rows') }}</h4>
+      <div class="stat-value" id="stat-rows">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-table"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.db_connector.stat_monitoring_tables') }}</h4>
+      <div class="stat-value" id="stat-tables">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-list-check"></i></div>
+  </div>
+</div>
+
+<!-- Benthos Engine Status -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-body" style="padding:10px 16px;display:flex;align-items:center;gap:12px">
+    <span class="fw-600" style="font-size:13px"><i class="fas fa-microchip"></i> {{ t('page.opcua.benthos_engine') }}</span>
+    <span id="benthos-badge" class="badge-status badge-stopped">{{ t('page.opcua.benthos_checking') }}</span>
+  </div>
+</div>
+
+<!-- Connector Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.opcua.connector_list') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('page.db_connector.filter_db_type_label') }}</label>
+        <select class="form-select" id="filter-dbtype" onchange="loadConnectors()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="oracle">Oracle</option>
+          <option value="mssql">MS SQL</option>
+          <option value="postgresql">PostgreSQL</option>
+          <option value="mysql">MySQL / MariaDB</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>{{ t('page.opcua.filter_status_label') }}</label>
+        <select class="form-select" id="filter-status" onchange="loadConnectors()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="running">{{ t('page.opcua.filter_running') }}</option>
+          <option value="stopped">{{ t('page.opcua.filter_stopped') }}</option>
+          <option value="error">{{ t('page.opcua.filter_error') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="connector-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.opcua.th_connector_name') }}</th>
+            <th>{{ t('page.db_connector.th_db_type') }}</th>
+            <th>{{ t('common.host') }}</th>
+            <th>{{ t('page.db_connector.th_database') }}</th>
+            <th>{{ t('page.db_connector.th_collect_mode') }}</th>
+            <th>{{ t('page.opcua.th_status') }}</th>
+            <th>{{ t('page.opcua.th_last_collection') }}</th>
+            <th>{{ t('page.opcua.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connector-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('page.opcua.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/connectors/db';
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+var dbTypeBadge = {
+  oracle:     '<span class="badge-sm" style="background:#fef2f2;color:#dc2626"><i class="fas fa-database"></i> Oracle</span>',
+  mssql:      '<span class="badge-sm" style="background:#eff6ff;color:#2563eb"><i class="fas fa-database"></i> MS SQL</span>',
+  postgresql: '<span class="badge-sm" style="background:#f0fdf4;color:#16a34a"><i class="fas fa-database"></i> PostgreSQL</span>',
+  mysql:      '<span class="badge-sm" style="background:#fefce8;color:#ca8a04"><i class="fas fa-database"></i> MySQL</span>',
+  mariadb:    '<span class="badge-sm" style="background:#fefce8;color:#ca8a04"><i class="fas fa-database"></i> MariaDB</span>',
+};
+
+var modeBadge = {
+  polling: '<span class="badge-sm badge-warning"><i class="fas fa-clock"></i> Polling</span>',
+  cdc:     '<span class="badge-sm badge-primary"><i class="fas fa-clock-rotate-left"></i> CDC</span>',
+  trigger: '<span class="badge-sm badge-info"><i class="fas fa-bolt"></i> Trigger</span>',
+};
+
+var statusBadge = {
+  running: '<span class="badge-status badge-running">' + __t('common.running') + '</span>',
+  stopped: '<span class="badge-status badge-stopped">' + __t('common.stopped') + '</span>',
+  error:   '<span class="badge-status badge-error">' + __t('common.error') + '</span>',
+};
+
+/* ── Summary ── */
+function loadSummary() {
+  $.getJSON(API + '/summary', function(r) {
+    if (!r.success) return;
+    var d = r.data;
+    $('#stat-total').text(fmt(d.totalConnectors));
+    $('#stat-running').text(fmt(d.runningConnectors));
+    $('#stat-rows').text(fmt(d.totalRowCount));
+    $('#stat-tables').text(fmt(d.totalTables));
+    $('#benthos-badge').attr('class', d.benthos_running ? 'badge-status badge-running' : 'badge-status badge-stopped')
+      .text(d.benthos_running ? __t('common.running') : __t('common.stopped'));
+  });
+}
+
+/* ── List ── */
+function loadConnectors() {
+  var params = {};
+  var st = $('#filter-status').val(); if (st) params.status = st;
+  var dt = $('#filter-dbtype').val(); if (dt) params.dbType = dt;
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var items = r.data;
+    var $tb = $('#connector-tbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' + __t('page.opcua.no_connectors') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(c) {
+      var cfg = c.config || {};
+      var tables = cfg.tables || [];
+      // 테이블명 추출 (string 또는 object 배열 모두 지원)
+      var tableNames = tables.map(function(t) { return typeof t === 'string' ? t : (t.name || ''); }).filter(Boolean);
+      var actionBtns = '';
+      if (c.status === 'running') {
+        actionBtns =
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.stop') + '" onclick="stopConnector('+c.id+')"><i class="fas fa-stop"></i></button>' +
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.refresh') + '" onclick="restartConnector('+c.id+')"><i class="fas fa-redo"></i></button>';
+      } else {
+        actionBtns = '<button class="btn btn-success btn-sm" title="' + __t('common.start') + '" onclick="startConnector('+c.id+')"><i class="fas fa-play"></i></button>';
+      }
+      actionBtns +=
+        '<button class="btn btn-outline btn-sm" title="' + __t('page.db_connector.btn_tag_mgmt') + '" onclick="openTagModal('+c.id+',\''+escAttr(c.name)+'\')"><i class="fas fa-tags"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.test_connection') + '" onclick="testConnector('+c.id+')"><i class="fas fa-plug"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteConnector('+c.id+',\''+escAttr(c.name)+'\')"><i class="fas fa-trash text-danger"></i></button>';
+
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(c.name) + '</div>' +
+          '<div class="fs-11 text-muted">' + escHtml(c.description || '') + '</div></td>' +
+        '<td>' + (dbTypeBadge[c.dbType] || escHtml(c.dbType)) + '</td>' +
+        '<td><div class="mono">' + escHtml(c.host) + ':' + c.port + '</div></td>' +
+        '<td><div class="fw-600">' + escHtml(c.database) + '</div>' +
+          (c.schemaName ? '<div class="fs-11 text-muted">' + __t('page.db_connector.schema_prefix') + escHtml(c.schemaName) + '</div>' : '') +
+          '<div class="fs-11 text-muted">' + __t('page.db_connector.test_table_prefix') + tableNames.length + __t('page.db_connector.table_count_suffix') +
+            (tableNames.length ? ' (' + tableNames.join(', ') + ')' : '') + '</div></td>' +
+        '<td>' + (modeBadge[c.collectMode] || escHtml(c.collectMode)) + '</td>' +
+        '<td>' + (statusBadge[c.status] || escHtml(c.status)) + '</td>' +
+        '<td>' +
+          (c.lastCollectedAt ? '<div class="mono">' + c.lastCollectedAt.replace('T',' ').slice(0,19) + '</div>' : '<span class="text-muted">-</span>') +
+          '<div class="fs-11 text-muted">' + fmt(c.rowCount) + __t('page.db_connector.collected_count_suffix') + '</div></td>' +
+        '<td><div class="d-flex gap-8">' + actionBtns + '</div></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+/* ── Control ── */
+function startConnector(id) {
+  showToast(__t('page.opcua.toast_starting'), 'info');
+  $.post(API + '/' + id + '/start', function(r) {
+    showToast(r.success ? __t('page.opcua.toast_started') : (r.error && r.error.message) || __t('page.opcua.toast_start_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_start_fail'), 'error');
+  });
+}
+function stopConnector(id) {
+  confirmAction(__t('page.opcua.confirm_stop'), function() {
+    $.post(API + '/' + id + '/stop', function(r) {
+      showToast(r.success ? __t('page.opcua.toast_stopped') : __t('page.opcua.toast_stop_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    });
+  });
+}
+function restartConnector(id) {
+  showToast(__t('page.opcua.toast_restarting'), 'info');
+  $.post(API + '/' + id + '/restart', function(r) {
+    showToast(r.success ? __t('page.opcua.toast_restarted') : __t('page.opcua.toast_restart_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  });
+}
+function testConnector(id) {
+  showToast(__t('page.opcua.toast_testing'), 'info');
+  $.post(API + '/' + id + '/test', function(r) {
+    if (r.success && r.data) {
+      var d = r.data;
+      var msg = d.message;
+      if (d.info && d.info.version) msg += ' (' + __t('page.db_connector.test_version_prefix') + d.info.version + ')';
+      if (d.info && d.info.tables) msg += ' | ' + __t('page.db_connector.test_table_prefix') + d.info.tables.join(', ');
+      showToast(msg, d.success ? 'success' : 'error');
+    }
+  });
+}
+function deleteConnector(id, name) {
+  confirmAction(name +  + __t('page.opcua.confirm_delete'), function() {
+    $.ajax({ url: API + '/' + id, type: 'DELETE', success: function(r) {
+      showToast(r.success ? __t('page.opcua.toast_deleted') : __t('page.opcua.toast_delete_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    }});
+  });
+}
+
+/* ── Modals ── */
+function toggleDbFields() {
+  var dbtype = $('#modal-dbtype').val();
+  var ports = { oracle: 1521, mssql: 1433, postgresql: 5432, mysql: 3306 };
+  $('#modal-port').val(ports[dbtype] || 3306);
+}
+
+function openAddModal() {
+  var body =
+    '<form id="db-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_connector_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="' + __t('page.db_connector.placeholder_name_example') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_description') + '</label>' +
+    '  <input type="text" class="form-control" id="f-desc" placeholder="' + __t('page.opcua.form_desc_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.db_connector.form_db_type') + ' <span class="text-danger">*</span></label>' +
+    '    <select class="form-select" id="modal-dbtype" onchange="toggleDbFields()">' +
+    '      <option value="mysql">MySQL / MariaDB</option>' +
+    '      <option value="oracle">Oracle</option>' +
+    '      <option value="mssql">MS SQL Server</option>' +
+    '      <option value="postgresql">PostgreSQL</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.db_connector.form_collect_mode') + '</label>' +
+    '    <select class="form-select" id="f-mode">' +
+    '      <option value="polling" selected>' + __t('page.db_connector.form_collect_polling') + '</option>' +
+    '      <option value="cdc">CDC (Change Data Capture)</option>' +
+    '      <option value="trigger">' + __t('page.db_connector.form_collect_trigger') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('common.host') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-host" placeholder="localhost" value="localhost">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('common.port') + '</label>' +
+    '    <input type="number" class="form-control" id="modal-port" value="3306">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.db_connector.form_database') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-database" placeholder="' + __t('page.db_connector.form_database_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.db_connector.form_schema') + '</label>' +
+    '    <input type="text" class="form-control" id="f-schema" placeholder="' + __t('page.db_connector.form_schema_placeholder') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.opcua.form_username') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-user" placeholder="' + __t('page.db_connector.form_db_username_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.opcua.form_password') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="password" class="form-control" id="f-pass" placeholder="' + __t('common.password') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.db_connector.form_polling_interval_sec') + '</label>' +
+    '  <input type="number" class="form-control" id="f-interval" value="60" min="10">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.db_connector.form_target_tables') + '</label>' +
+    '  <div id="f-tables-list"></div>' +
+    '  <button type="button" class="btn btn-outline btn-sm" style="margin-top:6px" onclick="addTableRow()">' +
+    '    <i class="fas fa-plus"></i> ' + __t('page.db_connector.btn_add_table') + '</button>' +
+    '  <div class="form-hint">' + __t('page.db_connector.form_table_hint') + '</div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.db_connector.form_batch_size') + '</label>' +
+    '    <input type="number" class="form-control" id="f-batch" value="1000" min="100" max="10000">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.db_connector.form_pool_size') + '</label>' +
+    '    <input type="number" class="form-control" id="f-pool" value="5" min="1" max="20">' +
+    '  </div>' +
+    '</div>' +
+    '</form>';
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-outline" onclick="testConnectionDirect()"><i class="fas fa-plug"></i> ' + __t('page.opcua.btn_connection_test') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnector()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+  openModal(__t('page.db_connector.modal_add_title'), body, footer, 'modal-lg');
+}
+
+function _collectForm() {
+  var tables = [];
+  $('#f-tables-list .table-row-entry').each(function() {
+    var name = $(this).find('.tbl-name').val().trim();
+    var tc = $(this).find('.tbl-tracking').val().trim() || 'id';
+    var sql = $(this).find('.tbl-sql').val().trim();
+    if (name) tables.push({ name: name, trackingColumn: tc, customSql: sql });
+  });
+  return {
+    name: $('#f-name').val().trim(),
+    description: $('#f-desc').val().trim(),
+    dbType: $('#modal-dbtype').val(),
+    collectMode: $('#f-mode').val(),
+    host: $('#f-host').val().trim(),
+    port: parseInt($('#modal-port').val()) || 3306,
+    database: $('#f-database').val().trim(),
+    schemaName: $('#f-schema').val().trim(),
+    username: $('#f-user').val().trim(),
+    password: $('#f-pass').val() || '',
+    pollingInterval: parseInt($('#f-interval').val()) || 60,
+    tables: tables,
+    batchSize: parseInt($('#f-batch').val()) || 1000,
+    poolSize: parseInt($('#f-pool').val()) || 5,
+  };
+}
+
+function addTableRow(name, trackingColumn, customSql) {
+  var n = name || '';
+  var tc = trackingColumn || 'id';
+  var sql = customSql || '';
+  var html =
+    '<div class="table-row-entry" style="border:1px solid var(--border-color,#e2e8f0);border-radius:6px;padding:8px 10px;margin-bottom:8px">' +
+    '  <div style="display:flex;gap:8px;align-items:center">' +
+    '    <input type="text" class="form-control tbl-name" placeholder="' + __t('page.db_connector.form_table_name_placeholder') + '" value="' + escAttr(n) + '" style="flex:2">' +
+    '    <input type="text" class="form-control tbl-tracking" placeholder="' + __t('page.db_connector.form_tracking_col_placeholder') + '" value="' + escAttr(tc) + '" style="flex:1">' +
+    '    <button type="button" class="btn btn-outline btn-sm btn-icon" onclick="$(this).closest(\'.table-row-entry\').remove()" title="' + __t('common.delete') + '">' +
+    '      <i class="fas fa-times text-danger"></i></button>' +
+    '  </div>' +
+    '  <div style="margin-top:4px">' +
+    '    <input type="text" class="form-control tbl-sql" placeholder="' + __t('page.db_connector.form_custom_sql_placeholder') + '" value="' + escAttr(sql) + '" style="font-size:12px">' +
+    '  </div>' +
+    '</div>';
+  $('#f-tables-list').append(html);
+}
+
+function saveConnector() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.opcua.validate_name'), 'error'); return; }
+  if (!d.database) { showToast(__t('page.db_connector.validate_database'), 'error'); return; }
+
+  $.ajax({ url: API, type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.opcua.toast_registered'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_register_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_register_fail'), 'error');
+    }
+  });
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.opcua.toast_query_fail'), 'error'); return; }
+    var c = r.data;
+    var cfg = c.config || {};
+    var tables = cfg.tables || [];
+
+    // Reuse add modal form, pre-fill values
+    openAddModal();
+    setTimeout(function() {
+      $('#f-name').val(c.name).prop('readonly', true).css('background','#f1f5f9');
+      $('#f-desc').val(c.description);
+      $('#modal-dbtype').val(c.dbType);
+      $('#f-mode').val(c.collectMode);
+      $('#f-host').val(c.host);
+      $('#modal-port').val(c.port);
+      $('#f-database').val(c.database);
+      $('#f-schema').val(c.schemaName);
+      $('#f-user').val(c.username);
+      $('#f-pass').val('').attr('placeholder', __t('page.opcua.password_change_hint'));
+      $('#f-interval').val(cfg.pollingInterval || 60);
+      $('#f-batch').val(cfg.batchSize || 1000);
+      $('#f-pool').val(cfg.poolSize || 5);
+
+      // Load tables (supports both legacy string array and new object array)
+      $('#f-tables-list').empty();
+      tables.forEach(function(t) {
+        if (typeof t === 'string') {
+          addTableRow(t, cfg.trackingColumn || 'id', cfg.customSql || '');
+        } else {
+          addTableRow(t.name, t.trackingColumn || 'id', t.customSql || '');
+        }
+      });
+
+      // Replace modal title and save button
+      $('.modal-title').text(__t('page.db_connector.modal_edit_title') + c.name);
+      // Override save to PUT
+      window._editId = id;
+      $('.modal-footer .btn-primary').removeAttr('onclick').off('click').on('click', function() { updateConnector(id); });
+    }, 100);
+  });
+}
+
+function updateConnector(id) {
+  var d = _collectForm();
+  if (!d.password) delete d.password;  // 빈 패스워드는 전송하지 않음 (기존 값 유지)
+  $.ajax({ url: API + '/' + id, type: 'PUT', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.opcua.toast_updated'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_update_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_update_fail'), 'error');
+    }
+  });
+}
+
+function testConnectionDirect() {
+  var d = _collectForm();
+  showToast(__t('page.opcua.toast_testing'), 'info');
+  $.ajax({ url: API + '/test-connection', type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success && r.data) {
+        var info = r.data;
+        var msg = info.message;
+        if (info.info && info.info.version) msg += ' (' + __t('page.db_connector.test_version_prefix') + info.info.version + ')';
+        if (info.info && info.info.tables && info.info.tables.length) msg += ' | ' + __t('page.db_connector.test_table_prefix') + info.info.tables.join(', ');
+        showToast(msg, info.success ? 'success' : 'error');
+      }
+    },
+    error: function() { showToast(__t('page.opcua.toast_test_fail'), 'error'); }
+  });
+}
+
+/* ── Tag Management ── */
+var _tagConnectorId = null;
+
+function openTagModal(id, name) {
+  _tagConnectorId = id;
+  var body =
+    '<div style="margin-bottom:16px">' +
+    '  <p class="text-muted fs-13" style="margin:0">' + __t('page.db_connector.tag_modal_desc') + '<br>' +
+    '    <span class="mono fs-12">' + __t('page.db_connector.tag_topic_format') + '</span></p>' +
+    '</div>' +
+    '<div class="card" style="margin-bottom:16px">' +
+    '  <div class="card-header" style="padding:8px 12px"><h4 style="margin:0;font-size:13px">' + __t('page.db_connector.tag_add_section') + '</h4></div>' +
+    '  <div class="card-body" style="padding:12px">' +
+    '    <div style="display:flex;gap:8px;align-items:flex-end">' +
+    '      <div style="flex:2"><label class="form-label fs-12">' + __t('page.db_connector.tag_table_name_label') + ' <span class="text-danger">*</span></label>' +
+    '        <input type="text" class="form-control" id="tag-table" placeholder="' + __t('page.db_connector.placeholder_table_example') + '"></div>' +
+    '      <div style="flex:2"><label class="form-label fs-12">' + __t('page.db_connector.tag_tag_name_label') + ' <span class="text-danger">*</span></label>' +
+    '        <input type="text" class="form-control" id="tag-name" placeholder="' + __t('page.db_connector.placeholder_tag_example') + '"></div>' +
+    '      <div style="flex:2"><label class="form-label fs-12">' + __t('page.db_connector.tag_desc_label') + '</label>' +
+    '        <input type="text" class="form-control" id="tag-desc" placeholder="' + __t('page.db_connector.tag_desc_placeholder') + '"></div>' +
+    '      <div><button class="btn btn-primary btn-sm" onclick="addTag()" style="white-space:nowrap">' +
+    '        <i class="fas fa-plus"></i> ' + __t('common.add') + '</button></div>' +
+    '    </div>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="card">' +
+    '  <div class="card-header" style="padding:8px 12px"><h4 style="margin:0;font-size:13px">' + __t('page.db_connector.tag_registered_section') + '</h4></div>' +
+    '  <div class="card-body p-0">' +
+    '    <table style="width:100%">' +
+    '      <thead><tr><th>' + __t('page.db_connector.tag_th_table_name') + '</th><th>' + __t('page.db_connector.tag_th_tag_name') + '</th><th>' + __t('page.db_connector.tag_th_desc') + '</th><th>' + __t('page.db_connector.tag_th_created') + '</th><th style="width:60px">' + __t('common.delete') + '</th></tr></thead>' +
+    '      <tbody id="tag-tbody"><tr><td colspan="5" class="text-center text-muted" style="padding:24px">' + __t('common.loading') + '</td></tr></tbody>' +
+    '    </table>' +
+    '  </div>' +
+    '</div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>';
+  openModal(__t('page.db_connector.tag_modal_title') + name, body, footer, 'modal-lg');
+  loadTags(id);
+}
+
+function loadTags(id) {
+  $.getJSON(API + '/' + id + '/tags', function(r) {
+    var $tb = $('#tag-tbody').empty();
+    if (!r.success || !r.data.length) {
+      $tb.html('<tr><td colspan="5" class="text-center text-muted" style="padding:24px">' + __t('page.db_connector.no_tags') + '</td></tr>');
+      return;
+    }
+    r.data.forEach(function(t) {
+      $tb.append(
+        '<tr>' +
+        '<td class="mono fw-600">' + escHtml(t.tableName) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(t.tagName) + '</span></td>' +
+        '<td class="fs-12 text-muted">' + escHtml(t.description || '-') + '</td>' +
+        '<td class="fs-12 mono">' + (t.createdAt ? t.createdAt.replace('T',' ').slice(0,19) : '-') + '</td>' +
+        '<td><button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteTag(' + t.id + ',\'' + escAttr(t.tagName) + '\')">' +
+        '  <i class="fas fa-trash text-danger"></i></button></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function addTag() {
+  var tableName = $('#tag-table').val().trim();
+  var tagName = $('#tag-name').val().trim();
+  var desc = $('#tag-desc').val().trim();
+  if (!tableName || !tagName) { showToast(__t('page.db_connector.validate_tag_required'), 'error'); return; }
+
+  $.ajax({
+    url: API + '/' + _tagConnectorId + '/tags',
+    type: 'POST', contentType: 'application/json',
+    data: JSON.stringify({ tableName: tableName, tagName: tagName, description: desc }),
+    success: function(r) {
+      if (r.success) {
+        showToast(__t('page.db_connector.toast_tag_registered'), 'success');
+        $('#tag-table').val(''); $('#tag-name').val(''); $('#tag-desc').val('');
+        loadTags(_tagConnectorId);
+      } else {
+        showToast((r.error && r.error.message) || __t('page.opcua.toast_register_fail'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_register_fail'), 'error');
+    }
+  });
+}
+
+function deleteTag(tid, name) {
+  confirmAction(name + __t('page.db_connector.confirm_delete_tag'), function() {
+    $.ajax({
+      url: API + '/' + _tagConnectorId + '/tags/' + tid,
+      type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.db_connector.toast_tag_deleted') : __t('page.opcua.toast_delete_fail'), r.success ? 'success' : 'error');
+        loadTags(_tagConnectorId);
+      }
+    });
+  });
+}
+
+/* ── Refresh ── */
+function refreshAll() { loadSummary(); loadConnectors(); }
+
+/* ── Cross-Connector Tag Search (UC-1, UC-5) ── */
+function loadCrossSearch() {
+  var params = { size: 100, active: 'true' };
+  var q = ($('#cross-q').val() || '').trim();
+  var ct = $('#cross-type').val();
+  if (q) params.q = q;
+  if (ct) params.connector_type = ct;
+
+  var $tb = $('#crossSearchTbody').html('<tr><td colspan="8" class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.opcua.cross_searching') + '</td></tr>');
+  $('#patternResults').hide();
+
+  $.getJSON('/api/metadata/search/unified', params, function(r) {
+    if (!r.success || !r.data) return;
+    var items = r.data.items || [];
+    $tb = $('#crossSearchTbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:30px">' + __t('page.opcua.cross_no_results') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(t) {
+      var pipeStatus = t.pipelineLinked
+        ? '<span class="badge-status badge-running" style="font-size:11px">' + t.pipelines.length + __t('common.ea') + '</span>'
+        : '<span class="badge-status badge-stopped" style="font-size:11px">' + __t('page.opcua.cross_pipe_none') + '</span>';
+      var range = (t.minObserved != null && t.maxObserved != null)
+        ? t.minObserved + '~' + t.maxObserved : '-';
+      $tb.append(
+        '<tr>' +
+        '<td class="fw-600">' + escHtml(t.tagName) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(t.connectorLabel || t.connectorType) + '</span> <span class="mono text-muted fs-11">#' + t.connectorId + '</span></td>' +
+        '<td class="fs-12">' + escHtml(t.connectorName || '-') + '</td>' +
+        '<td class="mono fs-12">' + range + '</td>' +
+        '<td class="mono fs-12">' + (t.avgObserved != null ? Number(t.avgObserved).toFixed(1) : '-') + '</td>' +
+        '<td>' + (t.qualityScore != null ? '<span class="badge-sm ' + (t.qualityScore >= 80 ? 'badge-success' : 'badge-danger') + '">' + t.qualityScore + '</span>' : '-') + '</td>' +
+        '<td>' + pipeStatus + '</td>' +
+        '<td class="mono fs-12">' + (t.sampleCount || 0) + '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function loadPatterns() {
+  var ct = $('#cross-type').val();
+  var params = ct ? { connector_type: ct } : {};
+  var $el = $('#patternResults').show().html('<div class="text-center text-muted" style="padding:16px"><i class="fas fa-spinner fa-spin"></i></div>');
+
+  $.getJSON('/api/metadata/search/patterns', params, function(r) {
+    if (!r.success || !r.data) return;
+    var patterns = r.data.patterns || [];
+    var html = '<div class="fw-600 fs-12 mb-8"><i class="fas fa-tags"></i> ' + __t('page.opcua.cross_pattern_title') + ' (' + r.data.totalTags + __t('page.opcua.cross_pattern_count_suffix') + ')</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+    patterns.forEach(function(p) {
+      html += '<div style="background:var(--bg-secondary);border-radius:6px;padding:6px 12px;border:1px solid var(--border);">' +
+        '<span class="fw-600">' + escHtml(p.prefix) + '_*</span>' +
+        ' <span class="badge-sm badge-primary">' + p.count + __t('common.ea') + '</span>' +
+        '<div class="fs-11 text-muted" style="margin-top:2px;">' + p.sampleTags.slice(0,3).map(function(t){return escHtml(t)}).join(', ') + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    $el.html(html);
+  });
+}
+
+$(document).ready(function() { refreshAll(); });
+</script>
+{% endblock %}

@@ -1,0 +1,462 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.system_log.title') }}{% endblock %}
+{% block page_title %}{{ t('page.system_log.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.monitoring') }}</li>
+<li>{{ t('nav.log_mgmt') }}</li>
+<li>{{ t('page.system_log.title') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<label class="form-check-inline fs-12 mr-12" style="cursor:pointer;">
+  <input type="checkbox" id="chk-auto-refresh" checked onchange="toggleAutoRefresh()"> {{ t('page.system_log.label_auto_refresh') }}
+</label>
+<button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-outline btn-sm" onclick="exportCSV()"><i class="fas fa-download"></i> {{ t('page.system_log.btn_export_csv') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Search & Filters -->
+<div class="card mb-24">
+  <div class="card-body">
+    <div class="form-row">
+      <div class="form-group" style="grid-column:span 2;">
+        <label class="form-label">{{ t('page.system_log.label_fulltext_search') }}</label>
+        <div class="input-group">
+          <input type="text" class="form-control" id="log-search" placeholder="{{ t('page.system_log.placeholder_search') }}" onkeyup="debounceSearch()">
+          <button class="btn btn-primary" onclick="doSearch()"><i class="fas fa-search"></i></button>
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.system_log.label_log_level') }}</label>
+        <select class="form-select" id="log-level-filter" onchange="resetAndLoad()">
+          <option value="">{{ t('page.system_log.filter_all') }}</option>
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARNING</option>
+          <option value="ERROR">ERROR</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.system_log.label_component') }}</label>
+        <select class="form-select" id="log-component-filter" onchange="resetAndLoad()">
+          <option value="">{{ t('page.system_log.filter_all') }}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.system_log.label_start_date') }}</label>
+        <input type="date" class="form-control" id="filter-from" onchange="resetAndLoad()">
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.system_log.label_end_date') }}</label>
+        <input type="date" class="form-control" id="filter-to" onchange="resetAndLoad()">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stat-grid mb-24">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.system_log.stat_total_logs') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-scroll"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>ERROR</h4>
+      <div class="stat-value text-danger" id="stat-error">-</div>
+    </div>
+    <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>WARNING</h4>
+      <div class="stat-value text-warning" id="stat-warning">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-triangle-exclamation"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>INFO</h4>
+      <div class="stat-value" id="stat-info" style="color:#3b82f6;">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-info"></i></div>
+  </div>
+</div>
+
+<!-- Charts -->
+<div class="grid-2 mb-24">
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-chart-bar"></i> {{ t('page.system_log.chart_log_level_distribution') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="chart-container" style="height:200px;">
+        <canvas id="logLevelChart"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-chart-line"></i> {{ t('page.system_log.chart_log_timeline') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="chart-container" style="height:200px;">
+        <canvas id="logTimelineChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Log Table -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-scroll"></i> {{ t('page.system_log.section_log_items') }}</h3>
+    <span class="text-muted fs-12" id="table-info">{{ t('common.loading') }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="log-table">
+        <thead>
+          <tr>
+            <th style="width:170px;">{{ t('page.system_log.th_timestamp') }}</th>
+            <th style="width:80px;">{{ t('page.system_log.th_level') }}</th>
+            <th style="width:140px;">{{ t('page.system_log.th_component') }}</th>
+            <th>{{ t('page.system_log.th_message') }}</th>
+            <th style="width:120px;">{{ t('page.system_log.th_host') }}</th>
+          </tr>
+        </thead>
+        <tbody id="log-tbody">
+          <tr><td colspan="5" class="text-center text-muted py-24">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;">
+    <div class="fs-12 text-muted">
+      {{ t('page.system_log.label_per_page') }}
+      <select id="page-size" class="form-select" style="width:70px;display:inline-block;padding:2px 6px;font-size:12px;" onchange="changePageSize()">
+        <option value="30">30</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+      {{ t('page.system_log.label_count_suffix') }}
+    </div>
+    <div id="pagination" class="d-flex align-items-center gap-8"></div>
+  </div>
+</div>
+
+<!-- Log Cleanup -->
+<div class="card mt-24">
+  <div class="card-header">
+    <h3><i class="fas fa-broom"></i> {{ t('page.system_log.section_log_cleanup') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="d-flex align-items-center gap-12">
+      <select id="cleanup-days" class="form-select" style="width:120px;">
+        <option value="7">{{ t('page.system_log.cleanup_7days') }}</option>
+        <option value="14">{{ t('page.system_log.cleanup_14days') }}</option>
+        <option value="30" selected>{{ t('page.system_log.cleanup_30days') }}</option>
+        <option value="60">{{ t('page.system_log.cleanup_60days') }}</option>
+        <option value="90">{{ t('page.system_log.cleanup_90days') }}</option>
+      </select>
+      <button class="btn btn-outline btn-sm" onclick="cleanupLogs()"><i class="fas fa-trash"></i> {{ t('page.system_log.btn_cleanup_logs') }}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay hidden" id="detail-modal">
+  <div class="modal" style="max-width:700px;">
+    <div class="modal-header">
+      <h3><i class="fas fa-file-lines"></i> {{ t('page.system_log.modal_log_detail') }}</h3>
+      <button class="modal-close" onclick="closeDetailModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="detail-body">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeDetailModal()">{{ t('common.close') }}</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/monitoring/syslog';
+var _page = 1;
+var _size = 50;
+var _refreshTimer = null;
+var _searchTimer = null;
+var _levelChart = null;
+var _timelineChart = null;
+
+$(function() {
+  // 오늘 날짜 기본값
+  var today = new Date().toISOString().slice(0, 10);
+  $('#filter-from').val(today);
+  $('#filter-to').val(today);
+  loadAll();
+  startAutoRefresh();
+});
+
+/* ── 로드 ── */
+function loadAll() {
+  loadLogs();
+  loadStats();
+}
+
+function _buildParams() {
+  var p = {};
+  var level = $('#log-level-filter').val();
+  var comp = $('#log-component-filter').val();
+  var search = $('#log-search').val().trim();
+  var from = $('#filter-from').val();
+  var to = $('#filter-to').val();
+  if (level) p.level = level;
+  if (comp) p.component = comp;
+  if (search) p.search = search;
+  if (from) p['from'] = from;
+  if (to) p['to'] = to;
+  return p;
+}
+
+function loadLogs() {
+  var params = _buildParams();
+  params.page = _page;
+  params.size = _size;
+  $.getJSON(API, params, function(res) {
+    if (!res.success) return;
+    renderTable(res.data.logs);
+    renderPagination(res.data);
+    $('#table-info').text(__t('common.total') + ' ' + fmtNum(res.data.total) + __t('page.system_log.label_count_suffix') + ' · ' + __t('common.page') + ' ' + res.data.page + '/' + res.data.totalPages);
+  });
+}
+
+function loadStats() {
+  var params = _buildParams();
+  $.getJSON(API + '/stats', params, function(res) {
+    if (!res.success) return;
+    var d = res.data;
+    // 통계 카드
+    $('#stat-total').text(fmtNum(d.totalCount || 0));
+    $('#stat-error').text(fmtNum(d.levelDist.ERROR || 0));
+    $('#stat-warning').text(fmtNum(d.levelDist.WARNING || 0));
+    $('#stat-info').text(fmtNum(d.levelDist.INFO || 0));
+    // 차트
+    renderLevelChart(d.levelDist);
+    renderTimelineChart(d.timeline);
+    // 컴포넌트 필터 업데이트
+    populateComponentFilter(d.components);
+  });
+}
+
+/* ── 테이블 렌더 ── */
+function renderTable(logs) {
+  if (!logs || logs.length === 0) {
+    $('#log-tbody').html('<tr><td colspan="5" class="text-center text-muted py-24">' + __t('page.system_log.no_logs') + '</td></tr>');
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < logs.length; i++) {
+    var log = logs[i];
+    var badgeCls = _levelBadge(log.level);
+    var msgShort = log.message.length > 120 ? log.message.substring(0, 120) + '...' : log.message;
+    html += '<tr style="cursor:pointer;" onclick=\'showDetail(' + JSON.stringify(log).replace(/'/g, "&#39;") + ')\'>' +
+      '<td class="mono fs-12">' + _escHtml(log.timestamp) + '</td>' +
+      '<td><span class="badge-sm ' + badgeCls + '">' + log.level + '</span></td>' +
+      '<td class="fs-12">' + _escHtml(log.component) + '</td>' +
+      '<td class="fs-12 truncate" style="max-width:400px;" title="' + _escAttr(log.message) + '">' + _escHtml(msgShort) + '</td>' +
+      '<td class="mono fs-12">' + _escHtml(log.host) + '</td>' +
+      '</tr>';
+  }
+  $('#log-tbody').html(html);
+}
+
+function _levelBadge(level) {
+  switch(level) {
+    case 'ERROR': return 'badge-danger';
+    case 'WARNING': return 'badge-warning';
+    case 'INFO': return 'badge-primary';
+    case 'DEBUG': return 'badge-secondary';
+    default: return 'badge-secondary';
+  }
+}
+
+/* ── 페이지네이션 ── */
+function renderPagination(data) {
+  var tp = data.totalPages;
+  var cp = data.page;
+  if (tp <= 1) { $('#pagination').html(''); return; }
+
+  var html = '';
+  html += '<button class="btn btn-outline btn-sm" ' + (cp <= 1 ? 'disabled' : 'onclick="goPage(' + (cp-1) + ')"') + '><i class="fas fa-chevron-left"></i></button>';
+
+  var start = Math.max(1, cp - 2);
+  var end = Math.min(tp, cp + 2);
+  if (start > 1) html += '<button class="btn btn-outline btn-sm" onclick="goPage(1)">1</button>';
+  if (start > 2) html += '<span class="text-muted mx-4">...</span>';
+  for (var i = start; i <= end; i++) {
+    if (i === cp) {
+      html += '<button class="btn btn-primary btn-sm">' + i + '</button>';
+    } else {
+      html += '<button class="btn btn-outline btn-sm" onclick="goPage(' + i + ')">' + i + '</button>';
+    }
+  }
+  if (end < tp - 1) html += '<span class="text-muted mx-4">...</span>';
+  if (end < tp) html += '<button class="btn btn-outline btn-sm" onclick="goPage(' + tp + ')">' + tp + '</button>';
+
+  html += '<button class="btn btn-outline btn-sm" ' + (cp >= tp ? 'disabled' : 'onclick="goPage(' + (cp+1) + ')"') + '><i class="fas fa-chevron-right"></i></button>';
+  $('#pagination').html(html);
+}
+
+function goPage(p) { _page = p; loadLogs(); }
+function changePageSize() { _size = parseInt($('#page-size').val()); _page = 1; loadLogs(); }
+function resetAndLoad() { _page = 1; loadAll(); }
+
+/* ── 검색 debounce ── */
+function debounceSearch() {
+  if (_searchTimer) clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(function() { resetAndLoad(); }, 400);
+}
+function doSearch() { resetAndLoad(); }
+
+/* ── 차트 ── */
+function renderLevelChart(dist) {
+  var labels = ['DEBUG', 'INFO', 'WARNING', 'ERROR'];
+  var data = [dist.DEBUG || 0, dist.INFO || 0, dist.WARNING || 0, dist.ERROR || 0];
+  var colors = ['#94a3b8', '#3b82f6', '#f59e0b', '#ef4444'];
+
+  if (_levelChart) _levelChart.destroy();
+  _levelChart = createBarChart('logLevelChart', labels,
+    [{ label: __t('page.system_log.label_log_count'), data: data, backgroundColor: colors, borderRadius: 4 }],
+    {
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, ticks: { callback: function(v) { return fmtNum(v); } } },
+        y: { grid: { display: false } }
+      }
+    }
+  );
+}
+
+function renderTimelineChart(timeline) {
+  if (!timeline || timeline.length === 0) return;
+  var labels = [];
+  var data = [];
+  for (var i = 0; i < timeline.length; i++) {
+    labels.push(timeline[i].hour);
+    data.push(timeline[i].count);
+  }
+  if (_timelineChart) _timelineChart.destroy();
+  _timelineChart = createLineChart('logTimelineChart', labels,
+    [{
+      label: __t('page.system_log.chart_log_timeline'),
+      data: data,
+      borderColor: '#3b82f6',
+      backgroundColor: 'rgba(59,130,246,0.08)',
+      fill: true
+    }],
+    { plugins: { legend: { display: false } } }
+  );
+}
+
+/* ── 컴포넌트 필터 동적 갱신 ── */
+function populateComponentFilter(components) {
+  var sel = $('#log-component-filter');
+  var cur = sel.val();
+  var html = '<option value="">' + __t('page.system_log.filter_all') + '</option>';
+  for (var i = 0; i < components.length; i++) {
+    var c = components[i];
+    var selected = (c === cur) ? ' selected' : '';
+    html += '<option value="' + _escAttr(c) + '"' + selected + '>' + _escHtml(c) + '</option>';
+  }
+  sel.html(html);
+}
+
+/* ── 상세 모달 ── */
+function showDetail(log) {
+  var html = '<table class="kv-table" style="width:100%;">';
+  html += '<tr><th style="width:100px;">' + __t('page.system_log.th_timestamp') + '</th><td class="mono">' + _escHtml(log.timestamp) + '</td></tr>';
+  html += '<tr><th>' + __t('page.system_log.th_level') + '</th><td><span class="badge-sm ' + _levelBadge(log.level) + '">' + log.level + '</span></td></tr>';
+  html += '<tr><th>' + __t('page.system_log.th_component') + '</th><td>' + _escHtml(log.component) + '</td></tr>';
+  html += '<tr><th>' + __t('page.system_log.th_host') + '</th><td class="mono">' + _escHtml(log.host) + '</td></tr>';
+  html += '<tr><th>' + __t('page.system_log.th_message') + '</th><td style="white-space:pre-wrap;word-break:break-all;">' + _escHtml(log.message) + '</td></tr>';
+  if (log.extra) {
+    if (log.extra.pathname) {
+      html += '<tr><th>' + __t('page.system_log.label_file') + '</th><td class="mono fs-12">' + _escHtml(log.extra.pathname) + ':' + (log.extra.lineno || '') + '</td></tr>';
+    }
+    if (log.extra.funcName) {
+      html += '<tr><th>' + __t('page.system_log.label_function') + '</th><td class="mono fs-12">' + _escHtml(log.extra.funcName) + '</td></tr>';
+    }
+    if (log.extra.traceback) {
+      html += '<tr><th>' + __t('page.system_log.label_stack_trace') + '</th><td><pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:6px;font-size:11px;max-height:300px;overflow:auto;white-space:pre-wrap;">' + _escHtml(log.extra.traceback) + '</pre></td></tr>';
+    }
+  }
+  html += '</table>';
+  $('#detail-body').html(html);
+  $('#detail-modal').removeClass('hidden');
+}
+
+function closeDetailModal() { $('#detail-modal').addClass('hidden'); }
+
+/* ── 자동 새로고침 ── */
+function toggleAutoRefresh() {
+  if ($('#chk-auto-refresh').is(':checked')) {
+    startAutoRefresh();
+  } else {
+    stopAutoRefresh();
+  }
+}
+function startAutoRefresh() {
+  stopAutoRefresh();
+  _refreshTimer = setInterval(function() { loadAll(); }, 30000);
+}
+function stopAutoRefresh() {
+  if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
+}
+
+/* ── CSV 내보내기 ── */
+function exportCSV() {
+  var params = _buildParams();
+  var qs = $.param(params);
+  window.location.href = API + '/export' + (qs ? '?' + qs : '');
+}
+
+/* ── 로그 정리 ── */
+function cleanupLogs() {
+  var days = $('#cleanup-days').val();
+  if (!confirm(days + __t('page.system_log.confirm_cleanup'))) return;
+  $.ajax({
+    url: API + '/cleanup?days=' + days,
+    type: 'DELETE',
+    success: function(res) {
+      if (res.success) {
+        showToast(fmtNum(res.data.deleted) + __t('page.system_log.toast_cleanup_success'), 'success');
+        loadAll();
+      } else {
+        showToast(__t('page.system_log.toast_cleanup_fail') + ' ' + (res.error ? res.error.message : ''), 'error');
+      }
+    }
+  });
+}
+
+/* ── 유틸 ── */
+function _escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function _escAttr(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}

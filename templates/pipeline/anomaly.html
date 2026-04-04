@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.anomaly.title') }}{% endblock %}
+{% block page_title %}{{ t('page.anomaly.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.normalize.breadcrumb_module') }}</li>
+<li>{{ t('page.anomaly.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadRules()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.anomaly.btn_add_config') }}</button>
+{% endblock %}
+
+{% block content %}
+<div class="grid-4 mb-24">
+  <div class="stat-card">
+    <div class="stat-value" id="stat-total">0</div>
+    <div class="stat-label">{{ t('page.anomaly.stat_total_configs') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-primary" id="stat-zscore">0</div>
+    <div class="stat-label">Z-Score</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-success" id="stat-iqr">0</div>
+    <div class="stat-label">IQR</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-warning" id="stat-mavg">0</div>
+    <div class="stat-label">{{ t('page.anomaly.stat_moving_avg_sigma') }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-triangle-exclamation"></i> {{ t('page.anomaly.table_title') }}</h3>
+    <div class="d-flex gap-8">
+      <select class="form-select" style="width:auto;min-width:140px;padding:5px 10px;" id="filterMethod" onchange="loadRules()">
+        <option value="">{{ t('page.anomaly.filter_all_methods') }}</option>
+        <option value="zscore">Z-Score</option>
+        <option value="iqr">IQR</option>
+        <option value="moving_avg">{{ t('page.anomaly.method_moving_avg') }}</option>
+        <option value="sigma">{{ t('page.anomaly.method_sigma') }}</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.anomaly.form_config_name') }}</th>
+            <th>{{ t('page.anomaly.th_method') }}</th>
+            <th>{{ t('page.anomaly.th_threshold') }}</th>
+            <th>{{ t('page.anomaly.th_window') }}</th>
+            <th>{{ t('page.anomaly.th_action') }}</th>
+            <th>{{ t('page.anomaly.th_replace_strategy') }}</th>
+            <th>{{ t('page.anomaly.th_created_at') }}</th>
+            <th style="width:120px">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="rules-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-24">
+  <div class="card-header">
+    <h3><i class="fas fa-link"></i> {{ t('page.anomaly.linkage_title') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-hint" style="font-size:13px;line-height:1.8;">
+      {{ t('page.anomaly.linkage_desc') }}<br>
+      <span class="mono" style="font-size:12px;">{{ t('page.anomaly.linkage_path') }}</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+var API = '/api/pipeline/modules/anomaly-configs';
+
+var _methodLabels = { zscore: 'Z-Score', iqr: __t('page.anomaly.method_iqr'), moving_avg: __t('page.anomaly.method_moving_avg'), sigma: __t('page.anomaly.method_sigma') };
+var _methodColors = { zscore: 'tag-blue', iqr: 'tag-green', moving_avg: 'tag-orange', sigma: 'tag-cyan' };
+var _actLabels = { flag: __t('page.anomaly.action_flag'), drop: __t('page.anomaly.action_drop'), clamp: __t('page.anomaly.action_clamp'), replace: __t('page.anomaly.action_replace') };
+var _replLabels = { mean: __t('page.anomaly.replace_mean'), median: __t('page.anomaly.replace_median'), last: __t('page.anomaly.replace_last') };
+
+function loadRules() {
+  $.getJSON(API, function(r) {
+    if (!r.success) return;
+    var rules = r.data || [];
+    var filter = $('#filterMethod').val();
+    if (filter) rules = rules.filter(function(x) { return x.method === filter; });
+
+    var all = r.data || [];
+    $('#stat-total').text(all.length);
+    $('#stat-zscore').text(all.filter(function(x){ return x.method === 'zscore'; }).length);
+    $('#stat-iqr').text(all.filter(function(x){ return x.method === 'iqr'; }).length);
+    $('#stat-mavg').text(all.filter(function(x){ return x.method === 'moving_avg' || x.method === 'sigma'; }).length);
+
+    var $tb = $('#rules-tbody').empty();
+    if (!rules.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' +
+        '<i class="fas fa-inbox" style="font-size:24px;display:block;margin-bottom:8px;"></i>' +
+        __t('page.anomaly.empty_message') + '</td></tr>');
+      return;
+    }
+    rules.forEach(function(rule) {
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(rule.name) + '</div></td>' +
+        '<td><span class="tag ' + (_methodColors[rule.method] || '') + '">' + escHtml(_methodLabels[rule.method] || rule.method) + '</span></td>' +
+        '<td class="mono">' + (rule.threshold || 3.0) + '</td>' +
+        '<td class="mono">' + (rule.windowSize || 60) + '</td>' +
+        '<td>' + escHtml(_actLabels[rule.action] || rule.action) + '</td>' +
+        '<td>' + (rule.action === 'replace' ? escHtml(_replLabels[rule.replaceStrategy] || rule.replaceStrategy || '-') : '<span class="text-muted">-</span>') + '</td>' +
+        '<td class="fs-12 mono">' + (rule.createdAt ? rule.createdAt.replace('T',' ').slice(0,16) : '-') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + rule.id + ')"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteRule(' + rule.id + ',\'' + escAttr(rule.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function _formHtml(c) {
+  c = c || {};
+  var act = c.action || 'flag';
+  return '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.anomaly.form_config_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" value="' + escAttr(c.name || '') + '" placeholder="' + __t('page.anomaly.form_config_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.anomaly.form_method') + '</label>' +
+    '  <select class="form-select" id="f-method">' +
+    '    <option value="zscore"' + ((c.method || 'zscore') === 'zscore' ? ' selected' : '') + '>Z-Score</option>' +
+    '    <option value="iqr"' + (c.method === 'iqr' ? ' selected' : '') + '>' + __t('page.anomaly.method_iqr') + '</option>' +
+    '    <option value="moving_avg"' + (c.method === 'moving_avg' ? ' selected' : '') + '>' + __t('page.anomaly.method_moving_avg') + '</option>' +
+    '    <option value="sigma"' + (c.method === 'sigma' ? ' selected' : '') + '>' + __t('page.anomaly.method_sigma') + '</option>' +
+    '  </select>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.anomaly.form_threshold') + '</label>' +
+    '    <input type="number" class="form-control" id="f-threshold" value="' + (c.threshold || 3.0) + '" step="0.1">' +
+    '    <span class="form-hint">' + __t('page.anomaly.form_threshold_hint') + '</span>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.anomaly.form_window_size') + '</label>' +
+    '    <input type="number" class="form-control" id="f-windowSize" value="' + (c.windowSize || 60) + '" step="1" min="3">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.anomaly.form_action') + '</label>' +
+    '  <select class="form-select" id="f-action" onchange="_toggleReplace()">' +
+    '    <option value="flag"' + (act === 'flag' ? ' selected' : '') + '>' + __t('page.anomaly.action_flag') + '</option>' +
+    '    <option value="drop"' + (act === 'drop' ? ' selected' : '') + '>' + __t('page.anomaly.action_drop') + '</option>' +
+    '    <option value="clamp"' + (act === 'clamp' ? ' selected' : '') + '>' + __t('page.anomaly.action_clamp') + '</option>' +
+    '    <option value="replace"' + (act === 'replace' ? ' selected' : '') + '>' + __t('page.anomaly.action_replace') + '</option>' +
+    '  </select>' +
+    '</div>' +
+    '<div id="grp-replace"' + (act !== 'replace' ? ' style="display:none"' : '') + '>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.anomaly.form_replace_strategy') + '</label>' +
+    '  <select class="form-select" id="f-replaceStrategy">' +
+    '    <option value="mean"' + ((c.replaceStrategy || 'mean') === 'mean' ? ' selected' : '') + '>' + __t('page.anomaly.replace_mean') + '</option>' +
+    '    <option value="median"' + (c.replaceStrategy === 'median' ? ' selected' : '') + '>' + __t('page.anomaly.replace_median') + '</option>' +
+    '    <option value="last"' + (c.replaceStrategy === 'last' ? ' selected' : '') + '>' + __t('page.anomaly.replace_last') + '</option>' +
+    '  </select>' +
+    '</div></div>';
+}
+
+function _toggleReplace() {
+  $('#grp-replace').toggle($('#f-action').val() === 'replace');
+}
+
+function _collectForm() {
+  var d = {
+    name: $('#f-name').val().trim(),
+    method: $('#f-method').val(),
+    threshold: parseFloat($('#f-threshold').val()) || 3.0,
+    windowSize: parseInt($('#f-windowSize').val()) || 60,
+    action: $('#f-action').val()
+  };
+  if (d.action === 'replace') d.replaceStrategy = $('#f-replaceStrategy').val();
+  return d;
+}
+
+function openAddModal() {
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveRule()"><i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.anomaly.modal_add_title'), _formHtml({}), footer);
+}
+
+function saveRule() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.anomaly.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API, type: 'POST', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.anomaly.toast_added'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.anomaly.toast_load_fail'), 'error'); return; }
+    var rule = r.data;
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="updateRule(' + id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+    openModal(__t('page.anomaly.modal_edit_title') + ' — ' + escHtml(rule.name), _formHtml(rule), footer);
+  });
+}
+
+function updateRule(id) {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.anomaly.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API + '/' + id, type: 'PUT', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.anomaly.toast_updated'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function deleteRule(id, name) {
+  confirmAction('"' + name + '" ' + __t('page.anomaly.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.anomaly.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        loadRules();
+      }
+    });
+  });
+}
+
+$(document).ready(function() { loadRules(); });
+</script>
+{% endblock %}

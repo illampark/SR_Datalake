@@ -1,0 +1,520 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.tsdb.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.tsdb.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.tsdb.breadcrumb_storage') }}</li>
+<li>{{ t('page.tsdb.breadcrumb_tsdb') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openTsdbConfigModal()"><i class="fas fa-cog"></i> {{ t('page.tsdb.btn_db_settings') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stat Cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>Total Size</h4>
+      <div class="stat-value" id="stat-total-size">- <span style="font-size:14px;color:var(--text-secondary)"></span></div>
+      <div class="stat-change" id="stat-size-change"><i class="fas fa-minus"></i> {{ t('page.tsdb.stat_change_waiting') }}</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-hard-drive"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>Data Points</h4>
+      <div class="stat-value" id="stat-data-points">- <span style="font-size:14px;color:var(--text-secondary)"></span></div>
+      <div class="stat-change" id="stat-points-change"><i class="fas fa-minus"></i> {{ t('page.tsdb.stat_change_waiting') }}</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-database"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>Write Rate</h4>
+      <div class="stat-value" id="stat-write-rate">- <span style="font-size:14px;color:var(--text-secondary)">pts/s</span></div>
+      <div class="stat-change" id="stat-rate-change"><i class="fas fa-minus"></i> {{ t('page.tsdb.stat_change_waiting') }}</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-pen-to-square"></i></div>
+  </div>
+</div>
+
+<div class="grid-2 mb-24">
+  <!-- Connection Info -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-plug"></i> {{ t('page.tsdb.card_connection_info') }}</h3>
+      <span class="badge-status" id="conn-badge">{{ t('page.tsdb.badge_not_configured') }}</span>
+    </div>
+    <div class="card-body" id="connection-info">
+      <div class="kv-list">
+        <div class="kv-item"><span class="kv-label">{{ t('common.status') }}</span><span class="kv-value">{{ t('page.tsdb.status_register_instance') }}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Storage Usage Bar Chart -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-chart-bar"></i> {{ t('page.tsdb.card_table_usage') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="chart-container">
+        <canvas id="storageUsageChart"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Downsampling Policies -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-compress"></i> {{ t('page.tsdb.card_downsampling_policy') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="openPolicyModal()"><i class="fas fa-plus"></i> {{ t('page.tsdb.btn_add_policy') }}</button>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.tsdb.th_policy_name') }}</th>
+            <th>{{ t('page.tsdb.th_source_retention') }}</th>
+            <th>{{ t('page.tsdb.th_target_retention') }}</th>
+            <th>{{ t('page.tsdb.th_aggregate_function') }}</th>
+            <th>{{ t('page.tsdb.th_aggregation_period') }}</th>
+            <th>{{ t('page.tsdb.th_target_data') }}</th>
+            <th>{{ t('common.status') }}</th>
+            <th>{{ t('page.tsdb.th_last_executed') }}</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="policy-tbody">
+          <tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-secondary)">{{ t('page.tsdb.loading_data') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Query Editor -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-terminal"></i> {{ t('page.tsdb.card_query_editor') }}</h3>
+    <div class="d-flex gap-8">
+      <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="query-lang">
+        <option value="sql">SQL</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="runQuery()"><i class="fas fa-play"></i> {{ t('page.tsdb.btn_run') }}</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <textarea class="form-control mono" rows="6" id="query-editor" placeholder="{{ t('page.tsdb.placeholder_query') }}" style="font-size:12px;line-height:1.6">SELECT tablename, schemaname FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;</textarea>
+    <div id="query-result" class="mt-8" style="display:none"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var currentInstance = null;
+var usageChart = null;
+var API = '/api/storage/tsdb';
+
+$(function() {
+  loadCurrentInstance();
+});
+
+// ── 현재 인스턴스 로드 ──
+function loadCurrentInstance() {
+  $.getJSON(API, function(resp) {
+    if (resp.success && resp.data && resp.data.length > 0) {
+      currentInstance = resp.data[0];
+      renderConnectionInfo(currentInstance);
+      loadUsage(currentInstance.id);
+      loadPolicies(currentInstance.id);
+    } else {
+      renderEmptyState();
+    }
+  }).fail(function() {
+    renderEmptyState();
+  });
+}
+
+// ── 빈 상태 렌더링 ──
+function renderEmptyState() {
+  currentInstance = null;
+  $('#conn-badge').attr('class', 'badge-status').text(__t('page.tsdb.badge_not_configured'));
+  $('#connection-info').html(
+    '<div class="kv-list"><div class="kv-item"><span class="kv-label">' + __t('common.status') + '</span>' +
+    '<span class="kv-value">' + __t('page.tsdb.status_register_click') + '</span></div></div>'
+  );
+  $('#stat-total-size').html('- <span style="font-size:14px;color:var(--text-secondary)"></span>');
+  $('#stat-data-points').html('- <span style="font-size:14px;color:var(--text-secondary)"></span>');
+  $('#stat-write-rate').html('- <span style="font-size:14px;color:var(--text-secondary)">pts/s</span>');
+  $('#policy-tbody').html('<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-secondary)">' + __t('page.tsdb.no_instances') + '</td></tr>');
+  if (usageChart) { usageChart.destroy(); usageChart = null; }
+}
+
+// ── 연결 정보 렌더링 ──
+function renderConnectionInfo(inst) {
+  var statusBadge = 'badge-status';
+  var statusText = __t('page.tsdb.badge_not_connected');
+  if (inst.status === 'connected') { statusBadge += ' badge-running'; statusText = __t('page.tsdb.badge_connected'); }
+  else if (inst.status === 'error') { statusBadge += ' badge-error'; statusText = __t('page.tsdb.badge_error'); }
+  else { statusBadge += ' badge-pending'; statusText = __t('page.tsdb.badge_not_connected'); }
+
+  $('#conn-badge').attr('class', statusBadge).text(statusText);
+  $('#connection-info').html(
+    '<div class="kv-list">' +
+    kvItem('Name', inst.name) +
+    kvItem('DB Type', inst.db_type) +
+    kvItem('Host', '<span class="mono">' + inst.host + '</span>') +
+    kvItem('Port', '<span class="mono">' + inst.port + '</span>') +
+    kvItem('Organization', inst.organization || '-') +
+    kvItem('Bucket / DB', inst.bucket || inst.database_name || '-') +
+    kvItem('Retention', inst.retention_days + __t('page.tsdb.kv_retention_days')) +
+    kvItem('TLS', inst.tls_enabled ? '<i class="fas fa-lock text-success"></i> ' + __t('page.tsdb.kv_tls_enabled') : '<i class="fas fa-lock-open"></i> ' + __t('page.tsdb.kv_tls_disabled')) +
+    kvItem('Status', statusIcon(inst.status)) +
+    (inst.last_connected_at ? kvItem('Last Connected', formatDt(inst.last_connected_at)) : '') +
+    '</div>'
+  );
+}
+
+function kvItem(label, value) {
+  return '<div class="kv-item"><span class="kv-label">' + label + '</span><span class="kv-value">' + value + '</span></div>';
+}
+
+function statusIcon(s) {
+  if (s === 'connected') return '<span class="text-success"><i class="fas fa-circle-check"></i> ' + __t('page.tsdb.status_normal') + '</span>';
+  if (s === 'error') return '<span class="text-danger"><i class="fas fa-circle-xmark"></i> ' + __t('page.tsdb.status_error') + '</span>';
+  return '<span style="color:var(--text-secondary)"><i class="fas fa-circle-minus"></i> ' + __t('page.tsdb.status_disconnected') + '</span>';
+}
+
+function formatDt(iso) {
+  if (!iso) return '-';
+  var d = new Date(iso);
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' +
+         pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+// ── 사용량 로드 ──
+function loadUsage(id) {
+  $.getJSON(API + '/' + id + '/usage', function(resp) {
+    if (!resp.success) return;
+    var u = resp.data;
+
+    // Stat cards
+    $('#stat-total-size').html(u.total_size_display);
+    $('#stat-data-points').html(fmtNum(u.total_data_points));
+    $('#stat-write-rate').html(fmtNum(u.write_rate) + ' <span style="font-size:14px;color:var(--text-secondary)">txn</span>');
+    $('#stat-size-change').html('<i class="fas fa-circle-check text-success"></i> ' + __t('page.tsdb.stat_change_complete'));
+    $('#stat-points-change').html('<i class="fas fa-circle-check text-success"></i> ' + __t('page.tsdb.stat_change_complete'));
+    $('#stat-rate-change').html('<i class="fas fa-circle-check text-success"></i> ' + __t('page.tsdb.stat_change_complete'));
+
+    // Chart
+    if (usageChart) usageChart.destroy();
+    if (u.measurements && u.measurements.length > 0) {
+      var labels = u.measurements.map(function(m) { return m.name; });
+      var sizes = u.measurements.map(function(m) { return m.size_bytes; });
+      var colors = ['#3b82f6','#22c55e','#f59e0b','#06b6d4','#ef4444','#8b5cf6','#94a3b8','#ec4899','#14b8a6','#f97316'];
+      usageChart = createBarChart('storageUsageChart', labels,
+        [{ label: __t('page.tsdb.usage_label'), data: sizes, backgroundColor: colors.slice(0, labels.length), borderRadius: 4, borderWidth: 0 }],
+        { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: function(v) { return fmtBytes(v); } } } } }
+      );
+    }
+  });
+}
+
+// ── 다운샘플링 정책 로드 ──
+function loadPolicies(id) {
+  $.getJSON(API + '/' + id + '/downsampling', function(resp) {
+    if (!resp.success) return;
+    var policies = resp.data;
+    if (policies.length === 0) {
+      $('#policy-tbody').html('<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-secondary)">' + __t('page.tsdb.no_policies') + '</td></tr>');
+      return;
+    }
+    var html = '';
+    policies.forEach(function(p) {
+      var funcs = (p.aggregate_functions || []).map(function(f) {
+        var cls = f === 'MEAN' ? 'tag-blue' : f === 'MIN' ? 'tag-green' : '';
+        return '<span class="tag ' + cls + '">' + f + '</span>';
+      }).join(' ');
+      var statusBadge = p.enabled
+        ? '<span class="badge-status badge-running">' + __t('page.tsdb.badge_running') + '</span>'
+        : '<span class="badge-status badge-pending">' + __t('page.tsdb.badge_stopped') + '</span>';
+      var toggleIcon = p.enabled ? 'fa-pause' : 'fa-play';
+      var toggleTitle = p.enabled ? __t('page.tsdb.btn_toggle_stop') : __t('page.tsdb.btn_toggle_start');
+      html += '<tr>' +
+        '<td class="fw-600">' + p.policy_name + '</td>' +
+        '<td>' + p.source_retention + '</td>' +
+        '<td>' + p.target_retention + '</td>' +
+        '<td>' + funcs + '</td>' +
+        '<td>' + p.aggregation_period + '</td>' +
+        '<td>' + (p.target_data || '-') + '</td>' +
+        '<td>' + statusBadge + '</td>' +
+        '<td class="mono fs-12">' + (p.last_executed_at ? formatDt(p.last_executed_at) : '-') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openPolicyModal(' + JSON.stringify(p).replace(/"/g, '&quot;') + ')"><i class="fas fa-pen"></i></button> ' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + toggleTitle + '" onclick="togglePolicy(' + p.id + ')"><i class="fas ' + toggleIcon + '"></i></button> ' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deletePolicy(' + p.id + ')"><i class="fas fa-trash"></i></button>' +
+        '</td></tr>';
+    });
+    $('#policy-tbody').html(html);
+  });
+}
+
+// ── DB 설정 모달 ──
+function openTsdbConfigModal(data) {
+  var d = data || currentInstance || {};
+  var isEdit = !!d.id;
+  var body =
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_instance_name') + '</label><input class="form-control" id="cfg-name" value="' + (d.name || '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_db_type') + '</label>' +
+    '<select class="form-select" id="cfg-dbtype"><option' + (d.db_type==='PostgreSQL' ? ' selected' : '') + '>PostgreSQL</option>' +
+    '<option' + (d.db_type==='TimescaleDB' ? ' selected' : '') + '>TimescaleDB</option>' +
+    '<option' + (d.db_type==='InfluxDB' ? ' selected' : '') + '>InfluxDB</option></select></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_host') + '</label><input class="form-control" id="cfg-host" value="' + (d.host || 'localhost') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_port') + '</label><input class="form-control" id="cfg-port" type="number" value="' + (d.port || 5432) + '"></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_organization') + '</label><input class="form-control" id="cfg-org" value="' + (d.organization || '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_bucket') + '</label><input class="form-control" id="cfg-bucket" value="' + (d.bucket || '') + '"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_database_name') + '</label><input class="form-control" id="cfg-dbname" value="' + (d.database_name || '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_api_token') + '</label><input class="form-control" type="password" id="cfg-token" value="' + (d.api_token || '') + '"></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_retention') + '</label><input class="form-control" id="cfg-retention" type="number" value="' + (d.retention_days || 30) + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_tls') + '</label>' +
+    '<select class="form-select" id="cfg-tls"><option value="false"' + (!d.tls_enabled ? ' selected' : '') + '>' + __t('page.tsdb.kv_tls_disabled') + '</option>' +
+    '<option value="true"' + (d.tls_enabled ? ' selected' : '') + '>' + __t('page.tsdb.kv_tls_enabled') + '</option></select></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_description') + '</label><textarea class="form-control" id="cfg-desc" rows="2">' + (d.description || '') + '</textarea></div>';
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    (isEdit ? '<button class="btn btn-outline" onclick="testConnection()"><i class="fas fa-plug"></i> ' + __t('page.tsdb.btn_connection_test') + '</button>' : '') +
+    '<button class="btn btn-primary" onclick="saveTsdbConfig(' + (d.id || 'null') + ')">' + (isEdit ? __t('common.edit') : __t('common.add')) + '</button>';
+  openModal(__t('page.tsdb.modal_tsdb_settings'), body, footer);
+}
+
+function saveTsdbConfig(id) {
+  var payload = {
+    name: $('#cfg-name').val(),
+    db_type: $('#cfg-dbtype').val(),
+    host: $('#cfg-host').val(),
+    port: parseInt($('#cfg-port').val()) || 5432,
+    organization: $('#cfg-org').val(),
+    bucket: $('#cfg-bucket').val(),
+    database_name: $('#cfg-dbname').val(),
+    api_token: $('#cfg-token').val(),
+    retention_days: parseInt($('#cfg-retention').val()) || 30,
+    tls_enabled: $('#cfg-tls').val() === 'true',
+    description: $('#cfg-desc').val()
+  };
+  if (!payload.name || !payload.host) {
+    showToast(__t('page.tsdb.toast_required_fields'), 'warning');
+    return;
+  }
+  var method = id ? 'PUT' : 'POST';
+  var url = id ? API + '/' + id : API;
+  $.ajax({
+    url: url, type: method, contentType: 'application/json', data: JSON.stringify(payload),
+    success: function(resp) {
+      if (resp.success) {
+        closeModal();
+        showToast(id ? __t('page.tsdb.toast_settings_updated') : __t('page.tsdb.toast_instance_registered'), 'success');
+        loadCurrentInstance();
+      } else {
+        showToast(resp.error.message, 'error');
+      }
+    },
+    error: function(xhr) {
+      var msg = xhr.responseJSON ? xhr.responseJSON.error.message : __t('page.tsdb.toast_request_failed');
+      showToast(msg, 'error');
+    }
+  });
+}
+
+// ── 연결 테스트 ──
+function testConnection() {
+  if (!currentInstance) { showToast(__t('page.tsdb.toast_no_instance'), 'warning'); return; }
+  showToast(__t('page.tsdb.toast_testing_connection'), 'info');
+  $.ajax({
+    url: API + '/' + currentInstance.id + '/test', type: 'POST',
+    success: function(resp) {
+      if (resp.success) {
+        var d = resp.data;
+        if (d.connected) {
+          showToast(__t('page.tsdb.toast_connection_success') + d.latency_ms + 'ms)', 'success');
+        } else {
+          showToast(d.message, 'error');
+        }
+        loadCurrentInstance();
+      }
+    },
+    error: function() { showToast(__t('page.tsdb.toast_connection_failed'), 'error'); }
+  });
+}
+
+// ── 정책 모달 ──
+function openPolicyModal(d) {
+  d = d || {};
+  var isEdit = !!d.id;
+  var funcsArr = d.aggregate_functions || ['MEAN'];
+  var body =
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_policy_name') + '</label><input class="form-control" id="pol-name" value="' + (d.policy_name || '') + '"></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_source_retention') + '</label>' +
+    '<select class="form-select" id="pol-src"><option' + (d.source_retention==='Raw (1초)' ? ' selected' : '') + '>' + __t('page.tsdb.option_raw_1s') + '</option>' +
+    '<option' + (d.source_retention==='1분 집계' ? ' selected' : '') + '>' + __t('page.tsdb.option_1min_agg') + '</option>' +
+    '<option' + (d.source_retention==='1시간 집계' ? ' selected' : '') + '>' + __t('page.tsdb.option_1hour_agg') + '</option></select></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_target_retention') + '</label>' +
+    '<select class="form-select" id="pol-tgt"><option' + (d.target_retention==='1년' ? ' selected' : '') + '>' + __t('page.tsdb.option_1year') + '</option>' +
+    '<option' + (d.target_retention==='3년' ? ' selected' : '') + '>' + __t('page.tsdb.option_3years') + '</option>' +
+    '<option' + (d.target_retention==='5년' ? ' selected' : '') + '>' + __t('page.tsdb.option_5years') + '</option></select></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_aggregate_functions') + '</label><input class="form-control" id="pol-funcs" value="' + funcsArr.join(', ') + '"></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_aggregation_period') + '</label>' +
+    '<select class="form-select" id="pol-period"><option' + (d.aggregation_period==='1분' ? ' selected' : '') + '>' + __t('page.tsdb.option_1min') + '</option>' +
+    '<option' + (d.aggregation_period==='5분' ? ' selected' : '') + '>' + __t('page.tsdb.option_5min') + '</option>' +
+    '<option' + (d.aggregation_period==='1시간' ? ' selected' : '') + '>' + __t('page.tsdb.option_1hour') + '</option>' +
+    '<option' + (d.aggregation_period==='1일' ? ' selected' : '') + '>' + __t('page.tsdb.option_1day') + '</option>' +
+    '<option' + (d.aggregation_period==='실시간' ? ' selected' : '') + '>' + __t('page.tsdb.option_realtime') + '</option></select></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.tsdb.label_target_data') + '</label><input class="form-control" id="pol-data" value="' + (d.target_data || '') + '"></div>' +
+    '</div>';
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="savePolicy(' + (d.id || 'null') + ')">' + (isEdit ? __t('common.edit') : __t('common.add')) + '</button>';
+  openModal((isEdit ? __t('page.tsdb.modal_policy_edit') : __t('page.tsdb.modal_policy_add')), body, footer);
+}
+
+function savePolicy(policyId) {
+  if (!currentInstance) { showToast(__t('page.tsdb.toast_register_instance_first'), 'warning'); return; }
+  var funcsStr = $('#pol-funcs').val();
+  var funcsArr = funcsStr.split(',').map(function(s) { return s.trim().toUpperCase(); }).filter(function(s) { return s; });
+  var payload = {
+    policy_name: $('#pol-name').val(),
+    source_retention: $('#pol-src').val(),
+    target_retention: $('#pol-tgt').val(),
+    aggregate_functions: funcsArr,
+    aggregation_period: $('#pol-period').val(),
+    target_data: $('#pol-data').val()
+  };
+  if (!payload.policy_name) { showToast(__t('page.tsdb.toast_policy_name_required'), 'warning'); return; }
+  var method = policyId ? 'PUT' : 'POST';
+  var url = API + '/' + currentInstance.id + '/downsampling' + (policyId ? '/' + policyId : '');
+  $.ajax({
+    url: url, type: method, contentType: 'application/json', data: JSON.stringify(payload),
+    success: function(resp) {
+      if (resp.success) {
+        closeModal();
+        showToast(policyId ? __t('page.tsdb.toast_policy_updated') : __t('page.tsdb.toast_policy_added'), 'success');
+        loadPolicies(currentInstance.id);
+      } else {
+        showToast(resp.error.message, 'error');
+      }
+    },
+    error: function(xhr) {
+      var msg = xhr.responseJSON ? xhr.responseJSON.error.message : __t('page.tsdb.toast_request_failed');
+      showToast(msg, 'error');
+    }
+  });
+}
+
+// ── 정책 토글 ──
+function togglePolicy(policyId) {
+  if (!currentInstance) return;
+  $.ajax({
+    url: API + '/' + currentInstance.id + '/downsampling/' + policyId + '/toggle', type: 'PATCH',
+    success: function(resp) {
+      if (resp.success) {
+        var st = resp.data.enabled ? __t('common.run') : __t('common.stop');
+        showToast(__t('page.tsdb.toast_policy_toggled') + st + __t('page.tsdb.toast_policy_toggled_status'), 'success');
+        loadPolicies(currentInstance.id);
+      }
+    },
+    error: function() { showToast(__t('page.tsdb.toast_state_change_failed'), 'error'); }
+  });
+}
+
+// ── 정책 삭제 ──
+function deletePolicy(policyId) {
+  if (!currentInstance) return;
+  confirmAction(__t('page.tsdb.confirm_delete_policy'), function() {
+    $.ajax({
+      url: API + '/' + currentInstance.id + '/downsampling/' + policyId, type: 'DELETE',
+      success: function(resp) {
+        if (resp.success) {
+          showToast(__t('page.tsdb.toast_policy_deleted'), 'success');
+          loadPolicies(currentInstance.id);
+        }
+      },
+      error: function() { showToast(__t('page.tsdb.toast_delete_failed'), 'error'); }
+    });
+  });
+}
+
+// ── 쿼리 실행 ──
+function runQuery() {
+  if (!currentInstance) { showToast(__t('page.tsdb.toast_register_instance_first'), 'warning'); return; }
+  var q = $('#query-editor').val().trim();
+  if (!q) { showToast(__t('page.tsdb.toast_enter_query'), 'warning'); return; }
+  $('#query-result').html('<div class="form-hint"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.tsdb.query_executing') + '</div>').slideDown(200);
+  $.ajax({
+    url: API + '/' + currentInstance.id + '/query', type: 'POST',
+    contentType: 'application/json', data: JSON.stringify({ query: q }),
+    success: function(resp) {
+      if (resp.success) {
+        var d = resp.data;
+        var html = '<div class="form-hint mb-8"><i class="fas fa-check-circle text-success"></i> ' + __t('page.tsdb.query_complete') +
+          d.row_count + ' rows, ' + d.elapsed_ms + 'ms</div>';
+        if (d.columns && d.columns.length > 0 && d.rows.length > 0) {
+          html += '<div class="table-wrapper" style="max-height:300px;overflow:auto"><table><thead><tr>';
+          d.columns.forEach(function(c) { html += '<th>' + c + '</th>'; });
+          html += '</tr></thead><tbody>';
+          d.rows.forEach(function(row) {
+            html += '<tr>';
+            d.columns.forEach(function(c) { html += '<td class="mono fs-12">' + (row[c] !== null ? row[c] : 'NULL') + '</td>'; });
+            html += '</tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+        $('#query-result').html(html);
+      } else {
+        $('#query-result').html('<div class="form-hint"><i class="fas fa-circle-xmark text-danger"></i> ' + resp.error.message + '</div>');
+      }
+    },
+    error: function(xhr) {
+      var msg = xhr.responseJSON ? xhr.responseJSON.error.message : __t('page.tsdb.query_execution_failed');
+      $('#query-result').html('<div class="form-hint"><i class="fas fa-circle-xmark text-danger"></i> ' + msg + '</div>');
+    }
+  });
+}
+
+// ── 새로고침 ──
+function refreshAll() {
+  showToast(__t('page.tsdb.toast_refreshing'), 'info');
+  if (currentInstance) {
+    $.ajax({
+      url: API + '/' + currentInstance.id + '/test', type: 'POST',
+      success: function(resp) {
+        if (resp.success && resp.data.connected) {
+          showToast(__t('page.tsdb.toast_connection_verified') + resp.data.latency_ms + 'ms)', 'success');
+        }
+        loadCurrentInstance();
+      },
+      error: function() { loadCurrentInstance(); }
+    });
+  } else {
+    loadCurrentInstance();
+  }
+}
+</script>
+{% endblock %}

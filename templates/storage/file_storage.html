@@ -1,0 +1,456 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.file_storage.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.file_storage.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.file_storage.breadcrumb_storage') }}</li>
+<li>{{ t('page.file_storage.breadcrumb_file_storage') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openUploadModal()"><i class="fas fa-upload"></i> {{ t('page.file_storage.btn_upload_file') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stat Cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.file_storage.stat_total_capacity') }}</h4>
+      <div class="stat-value" id="stat-total">- <span style="font-size:14px;color:var(--text-secondary)">TB</span></div>
+      <div class="stat-change up"><i class="fas fa-hard-drive"></i> <span id="stat-type">MinIO S3</span></div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-hard-drive"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.file_storage.stat_usage') }}</h4>
+      <div class="stat-value" id="stat-used">- <span style="font-size:14px;color:var(--text-secondary)">GB</span></div>
+      <div class="stat-change down"><i class="fas fa-arrow-up"></i> <span id="stat-pct">0%</span> {{ t('page.file_storage.stat_using') }}</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-chart-pie"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.file_storage.stat_file_count') }}</h4>
+      <div class="stat-value" id="stat-objects">0</div>
+      <div class="stat-change up"><i class="fas fa-file"></i> {{ t('page.file_storage.stat_total_buckets') }}</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-file"></i></div>
+  </div>
+</div>
+
+<div class="grid-2 mb-24">
+  <!-- Storage Usage by File Type -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-chart-pie"></i> {{ t('page.file_storage.card_usage_by_type') }}</h3>
+    </div>
+    <div class="card-body">
+      <div id="chart-area" class="chart-container">
+        <canvas id="fileTypeChart"></canvas>
+      </div>
+      <p id="chart-empty" class="text-muted fs-13" style="display:none;text-align:center;padding:40px 0">
+        <i class="fas fa-chart-pie"></i> {{ t('page.file_storage.chart_no_files') }}
+      </p>
+    </div>
+  </div>
+
+  <!-- Storage Info -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-info-circle"></i> {{ t('page.file_storage.card_storage_info') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="kv-list mb-16">
+        <div class="kv-item">
+          <span class="kv-label">{{ t('page.file_storage.label_storage_type') }}</span>
+          <span class="kv-value" id="info-type">-</span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">Endpoint</span>
+          <span class="kv-value mono" id="info-endpoint">-</span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">{{ t('page.file_storage.label_bucket_count') }}</span>
+          <span class="kv-value" id="info-buckets">-</span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">{{ t('common.status') }}</span>
+          <span class="kv-value" id="info-status">-</span>
+        </div>
+      </div>
+      <div class="mb-8">
+        <div class="d-flex align-center" style="justify-content:space-between">
+          <span class="fs-12 text-muted">{{ t('page.file_storage.stat_usage') }}</span>
+          <span id="info-usage-text" class="fs-12 fw-600">- / - (0%)</span>
+        </div>
+        <div class="progress mt-8">
+          <div id="info-usage-bar" class="progress-bar green" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- File Browser -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-folder-open"></i> {{ t('page.file_storage.card_file_list') }}</h3>
+    <div class="d-flex gap-8">
+      <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="filter-bucket">
+        <option value="sdl-files">sdl-files</option>
+        <option value="sdl-archive">sdl-archive</option>
+        <option value="sdl-backup">sdl-backup</option>
+      </select>
+      <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="filter-filetype">
+        <option value="">{{ t('page.file_storage.filter_all_types') }}</option>
+        <option value="log">{{ t('page.file_storage.filter_log') }}</option>
+        <option value="csv">{{ t('page.file_storage.filter_csv') }}</option>
+        <option value="image">{{ t('page.file_storage.filter_image') }}</option>
+        <option value="doc">{{ t('page.file_storage.filter_doc') }}</option>
+        <option value="excel">{{ t('page.file_storage.filter_excel') }}</option>
+        <option value="backup">{{ t('page.file_storage.filter_backup') }}</option>
+      </select>
+      <input class="form-control" type="text" placeholder="{{ t('page.file_storage.placeholder_search') }}" style="width:160px;padding:4px 8px;" id="search-file">
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.file_storage.th_filename') }}</th>
+            <th>{{ t('page.file_storage.th_type') }}</th>
+            <th>{{ t('page.file_storage.th_size') }}</th>
+            <th>{{ t('page.file_storage.th_path') }}</th>
+            <th>{{ t('page.file_storage.th_modified') }}</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="file-tbody">
+          <tr><td colspan="6" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer d-flex align-center" style="justify-content:space-between;padding:12px 20px">
+    <span id="file-total" class="fs-12 text-muted">{{ t('page.file_storage.total_files') }}0{{ t('page.file_storage.total_files_suffix') }}</span>
+    <div class="d-flex gap-8">
+      <button class="btn btn-outline btn-sm" id="btn-prev" onclick="changePage(-1)" disabled><i class="fas fa-chevron-left"></i> {{ t('page.file_storage.btn_previous') }}</button>
+      <span id="page-info" class="fs-12 text-muted" style="line-height:32px">1 / 1</span>
+      <button class="btn btn-outline btn-sm" id="btn-next" onclick="changePage(1)" disabled>{{ t('page.file_storage.btn_next') }} <i class="fas fa-chevron-right"></i></button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/storage/file';
+var currentPage = 1;
+var pageSize = 50;
+var totalFiles = 0;
+var fileTypeChart = null;
+
+var FILE_ICONS = {
+  log: 'fa-file-lines text-muted',
+  csv: 'fa-file-csv text-success',
+  image: 'fa-file-image text-primary',
+  doc: 'fa-file-pdf text-danger',
+  excel: 'fa-file-excel text-success',
+  backup: 'fa-file-zipper text-warning',
+  other: 'fa-file text-muted'
+};
+
+var TAG_COLORS = {
+  log: '', csv: 'tag-green', image: 'tag-blue', doc: '',
+  excel: 'tag-green', backup: 'tag-yellow', other: ''
+};
+
+var TYPE_LABELS = {
+  log: __t('page.file_storage.filter_log'), csv: __t('page.file_storage.filter_csv'), image: __t('page.file_storage.filter_image'), doc: __t('page.file_storage.filter_doc'),
+  excel: 'Excel', backup: __t('page.file_storage.filter_backup'), other: '기타'
+};
+
+$(function() {
+  loadStatus();
+  loadStats();
+  loadFiles();
+
+  var searchTimer;
+  $('#search-file').on('input', function() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(function() { currentPage = 1; loadFiles(); }, 400);
+  });
+  $('#filter-filetype').on('change', function() { currentPage = 1; loadFiles(); });
+  $('#filter-bucket').on('change', function() { currentPage = 1; loadFiles(); });
+});
+
+/* ── 스토리지 상태 조회 ── */
+function loadStatus() {
+  $.getJSON(API + '/status', function(res) {
+    if (!res.success) return;
+    var d = res.data;
+
+    // Stat cards
+    if (d.totalGB >= 1024) {
+      $('#stat-total').html((d.totalGB / 1024).toFixed(1) + ' <span style="font-size:14px;color:var(--text-secondary)">TB</span>');
+    } else {
+      $('#stat-total').html(d.totalGB.toFixed(1) + ' <span style="font-size:14px;color:var(--text-secondary)">GB</span>');
+    }
+
+    if (d.usedGB >= 1024) {
+      $('#stat-used').html((d.usedGB / 1024).toFixed(2) + ' <span style="font-size:14px;color:var(--text-secondary)">TB</span>');
+    } else if (d.usedGB >= 1) {
+      $('#stat-used').html(d.usedGB.toFixed(2) + ' <span style="font-size:14px;color:var(--text-secondary)">GB</span>');
+    } else {
+      $('#stat-used').html((d.usedGB * 1024).toFixed(1) + ' <span style="font-size:14px;color:var(--text-secondary)">MB</span>');
+    }
+
+    $('#stat-pct').text(d.usagePercent + '%');
+    $('#stat-objects').text(fmtNum(d.totalObjects));
+    $('#stat-type').text(d.storageType);
+
+    // Storage info card
+    $('#info-type').text(d.storageType);
+    $('#info-endpoint').text(d.endpoint);
+    $('#info-buckets').text(d.buckets ? d.buckets.length + __t('page.file_storage.label_bucket_count_suffix') : '-');
+
+    if (d.status === 'connected') {
+      $('#info-status').html('<span class="text-success"><i class="fas fa-circle-check"></i> ' + __t('page.file_storage.status_connected') + '</span>');
+    } else {
+      $('#info-status').html('<span class="text-danger"><i class="fas fa-circle-xmark"></i> ' + __t('page.file_storage.status_disconnected') + '</span>');
+    }
+
+    // Usage bar
+    var usedLabel = d.usedGB >= 1 ? d.usedGB.toFixed(2) + ' GB' : (d.usedGB * 1024).toFixed(1) + ' MB';
+    var totalLabel = d.totalGB >= 1024 ? (d.totalGB / 1024).toFixed(1) + ' TB' : d.totalGB + ' GB';
+    $('#info-usage-text').text(usedLabel + ' / ' + totalLabel + ' (' + d.usagePercent + '%)');
+
+    var barClass = d.usagePercent >= 80 ? 'red' : d.usagePercent >= 60 ? 'yellow' : 'green';
+    $('#info-usage-bar').attr('class', 'progress-bar ' + barClass).css('width', d.usagePercent + '%');
+  });
+}
+
+/* ── 파일 유형 통계 ── */
+function loadStats() {
+  $.getJSON(API + '/stats', function(res) {
+    if (!res.success || !res.data.stats || res.data.stats.length === 0) {
+      $('#chart-area').hide();
+      $('#chart-empty').show();
+      return;
+    }
+
+    $('#chart-area').show();
+    $('#chart-empty').hide();
+
+    var stats = res.data.stats;
+    var labels = [];
+    var data = [];
+    var colors = ['#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#94a3b8'];
+
+    for (var i = 0; i < stats.length; i++) {
+      labels.push(stats[i].label + ' (' + stats[i].totalSizeDisplay + ')');
+      data.push(stats[i].totalSizeBytes);
+    }
+
+    if (fileTypeChart) fileTypeChart.destroy();
+    fileTypeChart = createDoughnutChart('fileTypeChart', labels, data, colors.slice(0, labels.length));
+  });
+}
+
+/* ── 파일 목록 조회 ── */
+function loadFiles() {
+  var bucket = $('#filter-bucket').val();
+  var type = $('#filter-filetype').val();
+  var search = $('#search-file').val();
+
+  var params = {
+    bucket: bucket,
+    page: currentPage,
+    size: pageSize
+  };
+  if (type) params.type = type;
+  if (search) params.search = search;
+
+  $.getJSON(API + '/browse', params, function(res) {
+    if (!res.success) {
+      $('#file-tbody').html('<tr><td colspan="6" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.query_failed') + '</td></tr>');
+      return;
+    }
+
+    var files = res.data;
+    totalFiles = res.meta.total;
+
+    if (!files || files.length === 0) {
+      $('#file-tbody').html('<tr><td colspan="6" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-folder-open"></i> ' + __t('page.file_storage.no_files') + '</td></tr>');
+      updatePagination();
+      return;
+    }
+
+    var html = '';
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var icon = FILE_ICONS[f.type] || FILE_ICONS.other;
+      var tagCls = TAG_COLORS[f.type] || '';
+      var label = (TYPE_LABELS[f.type] || f.extension).toUpperCase();
+      var modified = f.modifiedAt ? f.modifiedAt.replace('T', ' ').substring(0, 19) : '-';
+
+      html += '<tr>' +
+        '<td><i class="fas ' + icon + '"></i> ' + escHtml(f.name) + '</td>' +
+        '<td><span class="tag ' + tagCls + '">' + label + '</span></td>' +
+        '<td class="mono">' + f.sizeDisplay + '</td>' +
+        '<td class="mono fs-12 truncate">' + escHtml(f.path) + '</td>' +
+        '<td class="mono fs-12">' + modified + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '" onclick="downloadFile(\'' + escAttr(f.bucket) + '\',\'' + escAttr(f.objectName) + '\')"><i class="fas fa-download"></i></button> ' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteFile(\'' + escAttr(f.bucket) + '\',\'' + escAttr(f.objectName) + '\',\'' + escAttr(f.name) + '\')"><i class="fas fa-trash"></i></button>' +
+        '</td></tr>';
+    }
+    $('#file-tbody').html(html);
+    updatePagination();
+  }).fail(function() {
+    $('#file-tbody').html('<tr><td colspan="6" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
+  });
+}
+
+function updatePagination() {
+  var totalPages = Math.max(1, Math.ceil(totalFiles / pageSize));
+  $('#file-total').text(__t('page.file_storage.total_files') + fmtNum(totalFiles) + __t('page.file_storage.total_files_suffix'));
+  $('#page-info').text(currentPage + ' / ' + totalPages);
+  $('#btn-prev').prop('disabled', currentPage <= 1);
+  $('#btn-next').prop('disabled', currentPage >= totalPages);
+}
+
+function changePage(delta) {
+  currentPage += delta;
+  loadFiles();
+}
+
+/* ── 파일 업로드 ── */
+function openUploadModal() {
+  var bucketOpts = '';
+  $('#filter-bucket option').each(function() {
+    bucketOpts += '<option value="' + $(this).val() + '">' + $(this).val() + '</option>';
+  });
+
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.file_storage.label_select_bucket') + '</label>' +
+    '<select class="form-select" id="upload-bucket">' + bucketOpts + '</select>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.file_storage.label_save_path') + '</label>' +
+    '<input class="form-control" id="upload-path" placeholder="' + __t('page.file_storage.placeholder_path') + '">' +
+    '<div class="form-hint">' + __t('page.file_storage.hint_empty_root') + '</div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.file_storage.label_select_file') + '</label>' +
+    '<input type="file" class="form-control" id="upload-files" multiple>' +
+    '<div class="form-hint">' + __t('page.file_storage.hint_file_limit') + '</div>' +
+    '</div>' +
+    '<div id="upload-progress" style="display:none">' +
+    '<div class="progress mt-8"><div id="upload-bar" class="progress-bar blue" style="width:0%"></div></div>' +
+    '<p id="upload-status" class="fs-12 text-muted mt-8">' + __t('page.file_storage.uploading') + '</p>' +
+    '</div>';
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" id="btn-upload" onclick="doUpload()"><i class="fas fa-upload"></i> ' + __t('common.upload') + '</button>';
+
+  openModal(__t('page.file_storage.modal_upload'), body, footer);
+}
+
+function doUpload() {
+  var files = document.getElementById('upload-files').files;
+  if (!files || files.length === 0) {
+    showToast(__t('page.file_storage.toast_select_file'), 'warning');
+    return;
+  }
+
+  var fd = new FormData();
+  fd.append('bucket', $('#upload-bucket').val());
+  fd.append('path', $('#upload-path').val());
+  for (var i = 0; i < files.length; i++) {
+    fd.append('file', files[i]);
+  }
+
+  $('#btn-upload').prop('disabled', true).text(__t('page.file_storage.uploading'));
+  $('#upload-progress').show();
+
+  $.ajax({
+    url: API + '/upload',
+    type: 'POST',
+    data: fd,
+    processData: false,
+    contentType: false,
+    xhr: function() {
+      var xhr = new XMLHttpRequest();
+      xhr.upload.addEventListener('progress', function(e) {
+        if (e.lengthComputable) {
+          var pct = Math.round(e.loaded / e.total * 100);
+          $('#upload-bar').css('width', pct + '%');
+          $('#upload-status').text(__t('page.file_storage.uploading') + ' ' + pct + '%');
+        }
+      });
+      return xhr;
+    },
+    success: function(res) {
+      closeModal();
+      if (res.success) {
+        showToast(res.data.count + __t('page.file_storage.toast_uploaded'), 'success');
+        refreshAll();
+      } else {
+        showToast(res.error.message, 'error');
+      }
+    },
+    error: function(xhr) {
+      closeModal();
+      var msg = __t('page.file_storage.toast_upload_failed');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    }
+  });
+}
+
+/* ── 파일 다운로드 ── */
+function downloadFile(bucket, objectName) {
+  window.location.href = API + '/download?bucket=' + encodeURIComponent(bucket) + '&objectName=' + encodeURIComponent(objectName);
+}
+
+/* ── 파일 삭제 ── */
+function deleteFile(bucket, objectName, filename) {
+  confirmAction('"' + filename + '" ' + __t('page.file_storage.confirm_delete_file'), function() {
+    $.ajax({
+      url: API + '/delete',
+      type: 'DELETE',
+      contentType: 'application/json',
+      data: JSON.stringify({ bucket: bucket, objectName: objectName }),
+      success: function(res) {
+        if (res.success) {
+          showToast(filename + __t('page.file_storage.toast_file_deleted'), 'success');
+          refreshAll();
+        } else {
+          showToast(res.error.message, 'error');
+        }
+      },
+      error: function() { showToast(__t('page.file_storage.toast_delete_error'), 'error'); }
+    });
+  });
+}
+
+/* ── 새로고침 ── */
+function refreshAll() {
+  showToast(__t('page.file_storage.toast_refreshing_storage'), 'info');
+  loadStatus();
+  loadStats();
+  loadFiles();
+}
+
+/* ── 유틸리티 ── */
+function escHtml(s) { return $('<span>').text(s || '').html(); }
+function escAttr(s) { return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+</script>
+{% endblock %}

@@ -1,0 +1,588 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.alarm.title') }}{% endblock %}
+{% block page_title %}{{ t('page.alarm.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.monitoring') }}</li>
+<li>{{ t('page.alarm.title') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<div class="d-flex align-center gap-8">
+  <span class="fs-12 text-muted">{{ t('page.alarm.last_refresh_label') }} <span id="last-refresh">-</span></span>
+  <select class="form-select" id="refresh-interval" style="width:auto;min-width:130px;padding:5px 10px;font-size:12px;">
+    <option value="0">{{ t('page.alarm.auto_refresh_off') }}</option>
+    <option value="10000">{{ t('page.alarm.auto_refresh_10s') }}</option>
+    <option value="30000" selected>{{ t('page.alarm.auto_refresh_30s') }}</option>
+    <option value="60000">{{ t('page.alarm.auto_refresh_60s') }}</option>
+  </select>
+  <button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+  <button class="btn btn-warning btn-sm" onclick="runEvaluate()"><i class="fas fa-bolt"></i> {{ t('page.alarm.btn_manual_evaluate') }}</button>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .severity-critical { color: var(--c-danger); font-weight: 600; }
+  .severity-warning  { color: var(--c-warning); font-weight: 600; }
+  .severity-info     { color: var(--c-info, #3b82f6); font-weight: 600; }
+  .alarm-summary-bar {
+    display: flex; gap: 16px; align-items: center;
+    padding: 10px 16px; background: var(--bg-secondary, #f8fafc);
+    border-radius: var(--radius); margin-bottom: 16px; font-size: 13px;
+  }
+  .alarm-summary-bar .summary-item { display: flex; align-items: center; gap: 4px; }
+  .alarm-summary-bar .count { font-weight: 700; font-size: 16px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab-item active" data-tab="tab-realtime"><i class="fas fa-bolt"></i> {{ t('page.alarm.tab_realtime') }}</div>
+  <div class="tab-item" data-tab="tab-rules"><i class="fas fa-list-check"></i> {{ t('page.alarm.tab_rules') }}</div>
+  <div class="tab-item" data-tab="tab-routing"><i class="fas fa-route"></i> {{ t('page.alarm.tab_routing') }}</div>
+</div>
+
+<!-- Tab: 실시간 알람 -->
+<div class="tab-content active" id="tab-realtime">
+  <div class="alarm-summary-bar" id="alarm-summary">
+    <div class="summary-item"><span class="count text-danger" id="sum-active">-</span> {{ t('page.alarm.summary_active') }}</div>
+    <div class="summary-item"><span class="count text-danger" id="sum-critical">-</span> Critical</div>
+    <div class="summary-item"><span class="count text-warning" id="sum-warning">-</span> Warning</div>
+    <div class="summary-item"><span class="count" style="color:var(--c-info,#3b82f6)" id="sum-info">-</span> Info</div>
+  </div>
+
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <div class="filter-group">
+        <label>{{ t('page.alarm.th_severity') }}:</label>
+        <select class="form-select" id="filter-severity" style="width:auto;min-width:110px;padding:5px 10px;">
+          <option value="all">{{ t('page.alarm.filter_all') }}</option>
+          <option value="critical">Critical</option>
+          <option value="warning">Warning</option>
+          <option value="info">Info</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>{{ t('common.status') }}:</label>
+        <select class="form-select" id="filter-status" style="width:auto;min-width:110px;padding:5px 10px;">
+          <option value="all">{{ t('page.alarm.filter_all') }}</option>
+          <option value="active">{{ t('page.alarm.badge_active') }}</option>
+          <option value="acknowledged">{{ t('page.alarm.filter_acknowledged') }}</option>
+          <option value="resolved">{{ t('page.alarm.filter_resolved') }}</option>
+        </select>
+      </div>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn btn-outline btn-sm" onclick="ackAll()"><i class="fas fa-check-double"></i> {{ t('page.alarm.btn_acknowledge_all') }}</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.alarm.th_fired_at') }}</th>
+              <th>{{ t('page.alarm.th_source') }}</th>
+              <th>{{ t('page.alarm.th_severity') }}</th>
+              <th>{{ t('page.alarm.th_message') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.alarm.th_action') }}</th>
+            </tr>
+          </thead>
+          <tbody id="events-tbody">
+            <tr><td colspan="6" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: 알람 규칙 -->
+<div class="tab-content" id="tab-rules">
+  <div class="toolbar">
+    <div class="toolbar-left">&nbsp;</div>
+    <div class="toolbar-right">
+      <button class="btn btn-primary btn-sm" onclick="openRuleModal()"><i class="fas fa-plus"></i> {{ t('page.alarm.btn_add_rule') }}</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.alarm.th_rule_name') }}</th>
+              <th>{{ t('page.alarm.th_target') }}</th>
+              <th>{{ t('page.alarm.th_condition') }}</th>
+              <th>{{ t('page.alarm.th_severity') }}</th>
+              <th>{{ t('page.alarm.th_cooldown') }}</th>
+              <th>{{ t('page.alarm.th_enabled') }}</th>
+              <th>{{ t('page.alarm.th_action') }}</th>
+            </tr>
+          </thead>
+          <tbody id="rules-tbody">
+            <tr><td colspan="7" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: 알람 라우팅 -->
+<div class="tab-content" id="tab-routing">
+  <div class="toolbar">
+    <div class="toolbar-left">&nbsp;</div>
+    <div class="toolbar-right">
+      <button class="btn btn-primary btn-sm" onclick="openChannelModal()"><i class="fas fa-plus"></i> {{ t('page.alarm.btn_add_channel') }}</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.alarm.th_channel_name') }}</th>
+              <th>{{ t('page.alarm.th_channel_type') }}</th>
+              <th>{{ t('page.alarm.th_config') }}</th>
+              <th>{{ t('page.alarm.th_severity_filter') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.alarm.th_action') }}</th>
+            </tr>
+          </thead>
+          <tbody id="channels-tbody">
+            <tr><td colspan="6" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API_EVENTS   = '/api/alarm/events';
+var API_RULES    = '/api/alarm/rules';
+var API_CHANNELS = '/api/alarm/channels';
+var _events = [], _rules = [], _channels = [];
+var _refreshTimer = null;
+
+function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmtTime(iso) {
+  if (!iso) return '-';
+  var d = new Date(iso);
+  return d.toLocaleString('ko-KR', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function sevHtml(s) {
+  if (s === 'critical') return '<span class="severity-critical"><i class="fas fa-circle-exclamation"></i> Critical</span>';
+  if (s === 'warning') return '<span class="severity-warning"><i class="fas fa-triangle-exclamation"></i> Warning</span>';
+  return '<span class="severity-info"><i class="fas fa-circle-info"></i> Info</span>';
+}
+
+function statusBadge(s) {
+  if (s === 'active') return '<span class="badge-status badge-error">' + __t('page.alarm.badge_active') + '</span>';
+  if (s === 'acknowledged') return '<span class="badge-status badge-warning">' + __t('page.alarm.badge_acknowledged') + '</span>';
+  return '<span class="badge-status badge-healthy">' + __t('page.alarm.badge_resolved') + '</span>';
+}
+
+/* ── Load All ── */
+function loadAll() {
+  loadEvents();
+  loadRules();
+  loadChannels();
+  $('#last-refresh').text(new Date().toLocaleTimeString('ko-KR'));
+}
+
+/* ── Events ── */
+function loadEvents() {
+  $.getJSON(API_EVENTS, function(res) {
+    if (!res.success) return;
+    _events = res.data.events;
+    var sum = res.data.summary;
+    $('#sum-active').text(sum.active);
+    $('#sum-critical').text(sum.critical);
+    $('#sum-warning').text(sum.warning);
+    $('#sum-info').text(sum.info);
+    renderEvents();
+  });
+}
+
+function renderEvents() {
+  var sevF = $('#filter-severity').val();
+  var staF = $('#filter-status').val();
+  var filtered = _events.filter(function(e) {
+    if (sevF !== 'all' && e.severity !== sevF) return false;
+    if (staF !== 'all' && e.status !== staF) return false;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    $('#events-tbody').html('<tr><td colspan="6" class="text-center text-muted" style="padding:32px">' + __t('page.alarm.no_events') + '</td></tr>');
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < filtered.length; i++) {
+    var e = filtered[i];
+    var actions = '';
+    if (e.status === 'active') {
+      actions = '<button class="btn btn-outline btn-sm" onclick="ackEvent(' + e.id + ')"><i class="fas fa-check"></i> ' + __t('common.confirm') + '</button> ' +
+                '<button class="btn btn-outline btn-sm" onclick="resolveEvent(' + e.id + ')"><i class="fas fa-times"></i> ' + __t('page.alarm.filter_resolved') + '</button>';
+    } else if (e.status === 'acknowledged') {
+      actions = '<button class="btn btn-outline btn-sm" onclick="resolveEvent(' + e.id + ')"><i class="fas fa-times"></i> ' + __t('page.alarm.filter_resolved') + '</button>';
+    } else {
+      actions = '<span class="text-muted fs-12">-</span>';
+    }
+
+    html += '<tr>' +
+      '<td class="mono fs-12">' + fmtTime(e.fired_at) + '</td>' +
+      '<td class="fw-600">' + escHtml(e.source_name) + '</td>' +
+      '<td>' + sevHtml(e.severity) + '</td>' +
+      '<td class="fs-12">' + escHtml(e.message) + '</td>' +
+      '<td>' + statusBadge(e.status) + '</td>' +
+      '<td>' + actions + '</td>' +
+      '</tr>';
+  }
+  $('#events-tbody').html(html);
+}
+
+function ackEvent(id) {
+  $.post(API_EVENTS + '/' + id + '/ack', function(res) {
+    if (res.success) { showToast(__t('page.alarm.toast_acknowledged'), 'success'); loadEvents(); }
+  });
+}
+
+function resolveEvent(id) {
+  $.post(API_EVENTS + '/' + id + '/resolve', function(res) {
+    if (res.success) { showToast(__t('page.alarm.toast_resolved'), 'success'); loadEvents(); }
+  });
+}
+
+function ackAll() {
+  confirmAction(__t('page.alarm.confirm_ack_all'), function() {
+    $.post(API_EVENTS + '/ack-all', function(res) {
+      if (res.success) { showToast(res.data.updated + __t('page.alarm.toast_ack_all_count'), 'success'); loadEvents(); }
+    });
+  });
+}
+
+function runEvaluate() {
+  showToast(__t('page.alarm.toast_evaluating'), 'info');
+  $.post('/api/alarm/evaluate', function(res) {
+    if (res.success) { showToast(__t('page.alarm.toast_evaluate_complete'), 'success'); loadEvents(); }
+    else { showToast(__t('page.alarm.toast_evaluate_fail'), 'error'); }
+  });
+}
+
+/* ── Rules ── */
+function loadRules() {
+  $.getJSON(API_RULES, function(res) {
+    if (!res.success) return;
+    _rules = res.data;
+    renderRules();
+  });
+}
+
+var TYPE_LABELS = { 'infra': __t('page.healthcheck.filter_infra'), 'connector': __t('page.healthcheck.filter_connector'), 'pipeline': __t('page.healthcheck.filter_pipeline'), '*': __t('page.alarm.filter_all') };
+
+function renderRules() {
+  if (_rules.length === 0) {
+    $('#rules-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding:32px">' + __t('page.alarm.no_rules') + '</td></tr>');
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < _rules.length; i++) {
+    var r = _rules[i];
+    var target = (TYPE_LABELS[r.source_type] || r.source_type);
+    if (r.source_name && r.source_name !== '*') target += ' / ' + escHtml(r.source_name);
+
+    html += '<tr>' +
+      '<td class="fw-600">' + escHtml(r.name) + '</td>' +
+      '<td class="fs-12">' + escHtml(target) + '</td>' +
+      '<td class="mono fs-12">' + escHtml(r.condition) + '</td>' +
+      '<td>' + sevHtml(r.severity) + '</td>' +
+      '<td class="fs-12">' + r.cooldown_sec + __t('common.sec') + '</td>' +
+      '<td><input type="checkbox" ' + (r.enabled ? 'checked' : '') +
+        ' onchange="toggleRule(' + r.id + ')" style="accent-color:var(--c-primary);width:18px;height:18px;cursor:pointer"></td>' +
+      '<td>' +
+        '<button class="btn btn-outline btn-sm" onclick="openRuleModal(' + r.id + ')"><i class="fas fa-pen"></i></button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="deleteRule(' + r.id + ')"><i class="fas fa-trash text-danger"></i></button>' +
+      '</td>' +
+      '</tr>';
+  }
+  $('#rules-tbody').html(html);
+}
+
+function toggleRule(id) {
+  $.post(API_RULES + '/' + id + '/toggle', function(res) {
+    if (res.success) { showToast(res.data.enabled ? __t('page.alarm.toast_rule_enabled') : __t('page.alarm.toast_rule_disabled'), 'success'); loadRules(); }
+  });
+}
+
+function deleteRule(id) {
+  confirmAction(__t('page.alarm.confirm_delete_rule'), function() {
+    $.ajax({ url: API_RULES + '/' + id, type: 'DELETE', success: function(res) {
+      if (res.success) { showToast(__t('page.alarm.toast_rule_deleted'), 'success'); loadRules(); }
+    }});
+  });
+}
+
+function openRuleModal(editId) {
+  var rule = null;
+  if (editId) {
+    for (var i = 0; i < _rules.length; i++) { if (_rules[i].id === editId) { rule = _rules[i]; break; } }
+  }
+
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.th_rule_name') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" id="rule-name" value="' + escHtml(rule ? rule.name : '') + '">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.label_target_type') + '</label>' +
+    '<select class="form-select" id="rule-source-type">' +
+    '<option value="*"' + (rule && rule.source_type === '*' ? ' selected' : '') + '>' + __t('page.alarm.filter_all') + '</option>' +
+    '<option value="infra"' + (rule && rule.source_type === 'infra' ? ' selected' : '') + '>' + __t('page.healthcheck.filter_infra') + '</option>' +
+    '<option value="connector"' + (rule && rule.source_type === 'connector' ? ' selected' : '') + '>' + __t('page.healthcheck.filter_connector') + '</option>' +
+    '<option value="pipeline"' + (rule && rule.source_type === 'pipeline' ? ' selected' : '') + '>' + __t('page.healthcheck.filter_pipeline') + '</option>' +
+    '</select></div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.label_target_name') + ' (' + __t('page.alarm.wildcard_all') + ')</label>' +
+    '<input type="text" class="form-control" id="rule-source-name" value="' + escHtml(rule ? rule.source_name : '*') + '">' +
+    '</div></div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.label_condition_expression') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control mono" id="rule-condition" value="' + escHtml(rule ? rule.condition : '') + '" placeholder="' + __t('page.alarm.placeholder_condition') + '">' +
+    '<span class="form-hint">' + __t('page.alarm.hint_condition') + '</span>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.th_severity') + '</label>' +
+    '<select class="form-select" id="rule-severity">' +
+    '<option value="critical"' + (rule && rule.severity === 'critical' ? ' selected' : '') + '>Critical</option>' +
+    '<option value="warning"' + (rule && rule.severity === 'warning' ? ' selected' : '') + '>Warning</option>' +
+    '<option value="info"' + (rule && rule.severity === 'info' ? ' selected' : '') + '>Info</option>' +
+    '</select></div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.label_cooldown_seconds') + '</label>' +
+    '<input type="number" class="form-control" id="rule-cooldown" value="' + (rule ? rule.cooldown_sec : 300) + '" min="10">' +
+    '</div></div>';
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveRule(' + (editId || 'null') + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+
+  openModal(editId ? __t('page.alarm.modal_rule_edit') : __t('page.alarm.modal_rule_add'), body, footer);
+}
+
+function saveRule(editId) {
+  var data = {
+    name: $('#rule-name').val(),
+    source_type: $('#rule-source-type').val(),
+    source_name: $('#rule-source-name').val(),
+    condition: $('#rule-condition').val(),
+    severity: $('#rule-severity').val(),
+    cooldown_sec: parseInt($('#rule-cooldown').val()) || 300,
+  };
+  if (!data.name || !data.condition) { showToast(__t('page.alarm.toast_rule_required'), 'error'); return; }
+
+  if (editId) {
+    $.ajax({ url: API_RULES + '/' + editId, type: 'PUT', contentType: 'application/json',
+      data: JSON.stringify(data), success: function(res) {
+        if (res.success) { closeModal(); showToast(__t('page.alarm.toast_rule_updated'), 'success'); loadRules(); }
+      }});
+  } else {
+    $.ajax({ url: API_RULES, type: 'POST', contentType: 'application/json',
+      data: JSON.stringify(data), success: function(res) {
+        if (res.success) { closeModal(); showToast(__t('page.alarm.toast_rule_added'), 'success'); loadRules(); }
+      }});
+  }
+}
+
+/* ── Channels ── */
+function loadChannels() {
+  $.getJSON(API_CHANNELS, function(res) {
+    if (!res.success) return;
+    _channels = res.data;
+    renderChannels();
+  });
+}
+
+var CH_ICONS = { 'webhook': 'fa-globe', 'email': 'fa-envelope' };
+var CH_LABELS = { 'webhook': 'Webhook', 'email': 'Email' };
+
+function renderChannels() {
+  if (_channels.length === 0) {
+    $('#channels-tbody').html('<tr><td colspan="6" class="text-center text-muted" style="padding:32px">' + __t('page.alarm.no_channels') + '</td></tr>');
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < _channels.length; i++) {
+    var ch = _channels[i];
+    var cfg = ch.config || {};
+    var cfgDisplay = '';
+    if (ch.channel_type === 'webhook') cfgDisplay = escHtml(cfg.url || '-');
+    else if (ch.channel_type === 'email') cfgDisplay = escHtml((cfg.recipients || []).join(', ') || '-');
+
+    var sevFilter = (ch.severity_filter || []).map(function(s) { return sevHtml(s); }).join(' ');
+
+    html += '<tr>' +
+      '<td class="fw-600">' + escHtml(ch.name) + '</td>' +
+      '<td><span class="badge-sm badge-primary"><i class="fas ' + (CH_ICONS[ch.channel_type] || 'fa-bell') + '"></i> ' + (CH_LABELS[ch.channel_type] || ch.channel_type) + '</span></td>' +
+      '<td class="fs-12" style="max-width:250px;overflow:hidden;text-overflow:ellipsis">' + cfgDisplay + '</td>' +
+      '<td>' + sevFilter + '</td>' +
+      '<td>' + (ch.enabled ? '<span class="badge-status badge-running">' + __t('page.alarm.badge_enabled') + '</span>' : '<span class="badge-status badge-stopped">' + __t('page.alarm.badge_disabled') + '</span>') + '</td>' +
+      '<td>' +
+        '<button class="btn btn-outline btn-sm" onclick="testChannel(' + ch.id + ')" title="' + __t('common.test') + '"><i class="fas fa-paper-plane"></i></button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="openChannelModal(' + ch.id + ')"><i class="fas fa-pen"></i></button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="deleteChannel(' + ch.id + ')"><i class="fas fa-trash text-danger"></i></button>' +
+      '</td>' +
+      '</tr>';
+  }
+  $('#channels-tbody').html(html);
+}
+
+function testChannel(id) {
+  $.post(API_CHANNELS + '/' + id + '/test', function(res) {
+    showToast(res.success ? __t('page.alarm.toast_test_sent') : __t('page.alarm.toast_test_fail') + ' ' + (res.error && res.error.message || ''), res.success ? 'success' : 'error');
+  });
+}
+
+function deleteChannel(id) {
+  confirmAction(__t('page.alarm.confirm_delete_channel'), function() {
+    $.ajax({ url: API_CHANNELS + '/' + id, type: 'DELETE', success: function(res) {
+      if (res.success) { showToast(__t('page.alarm.toast_channel_deleted'), 'success'); loadChannels(); }
+    }});
+  });
+}
+
+function openChannelModal(editId) {
+  var ch = null;
+  if (editId) {
+    for (var i = 0; i < _channels.length; i++) { if (_channels[i].id === editId) { ch = _channels[i]; break; } }
+  }
+  var cfg = ch ? (ch.config || {}) : {};
+
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.th_channel_name') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" id="ch-name" value="' + escHtml(ch ? ch.name : '') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.label_channel_type') + '</label>' +
+    '<select class="form-select" id="ch-type" onchange="toggleChannelFields()">' +
+    '<option value="webhook"' + (ch && ch.channel_type === 'webhook' ? ' selected' : '') + '>Webhook</option>' +
+    '<option value="email"' + (ch && ch.channel_type === 'email' ? ' selected' : '') + '>Email</option>' +
+    '</select></div>' +
+    '<div id="ch-webhook-fields">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.alarm.label_webhook_url') + '</label>' +
+    '<input type="text" class="form-control" id="ch-url" value="' + escHtml(cfg.url || '') + '" placeholder="https://hooks.slack.com/...">' +
+    '</div></div>' +
+    '<div id="ch-email-fields" style="display:none">' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.alarm.label_smtp_host') + '</label>' +
+    '<input type="text" class="form-control" id="ch-smtp-host" value="' + escHtml(cfg.smtp_host || '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.alarm.label_smtp_port') + '</label>' +
+    '<input type="number" class="form-control" id="ch-smtp-port" value="' + (cfg.smtp_port || 587) + '"></div></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.alarm.label_smtp_user') + '</label>' +
+    '<input type="text" class="form-control" id="ch-smtp-user" value="' + escHtml(cfg.smtp_user || '') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.alarm.label_smtp_password') + '</label>' +
+    '<input type="password" class="form-control" id="ch-smtp-pass" value="' + escHtml(cfg.smtp_password || '') + '"></div></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.alarm.label_recipients') + '</label>' +
+    '<input type="text" class="form-control" id="ch-recipients" value="' + escHtml((cfg.recipients || []).join(', ')) + '"></div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.alarm.label_severity_filter') + '</label>' +
+    '<div class="d-flex gap-16">' +
+    '<label class="form-check"><input type="checkbox" id="ch-sev-critical"' + (ch && ch.severity_filter && ch.severity_filter.indexOf('critical') >= 0 ? ' checked' : (!ch ? ' checked' : '')) + '> Critical</label>' +
+    '<label class="form-check"><input type="checkbox" id="ch-sev-warning"' + (ch && ch.severity_filter && ch.severity_filter.indexOf('warning') >= 0 ? ' checked' : (!ch ? ' checked' : '')) + '> Warning</label>' +
+    '<label class="form-check"><input type="checkbox" id="ch-sev-info"' + (ch && ch.severity_filter && ch.severity_filter.indexOf('info') >= 0 ? ' checked' : '') + '> Info</label>' +
+    '</div></div>';
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveChannel(' + (editId || 'null') + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+
+  openModal(editId ? __t('page.alarm.modal_channel_edit') : __t('page.alarm.modal_channel_add'), body, footer);
+
+  if (ch && ch.channel_type === 'email') {
+    $('#ch-webhook-fields').hide();
+    $('#ch-email-fields').show();
+  }
+}
+
+function toggleChannelFields() {
+  var t = $('#ch-type').val();
+  if (t === 'webhook') { $('#ch-webhook-fields').show(); $('#ch-email-fields').hide(); }
+  else { $('#ch-webhook-fields').hide(); $('#ch-email-fields').show(); }
+}
+
+function saveChannel(editId) {
+  var chType = $('#ch-type').val();
+  var config = {};
+  if (chType === 'webhook') {
+    config = { url: $('#ch-url').val() };
+  } else {
+    config = {
+      smtp_host: $('#ch-smtp-host').val(),
+      smtp_port: parseInt($('#ch-smtp-port').val()) || 587,
+      smtp_user: $('#ch-smtp-user').val(),
+      smtp_password: $('#ch-smtp-pass').val(),
+      recipients: $('#ch-recipients').val().split(',').map(function(s) { return s.trim(); }).filter(Boolean),
+    };
+  }
+
+  var sevFilter = [];
+  if ($('#ch-sev-critical').is(':checked')) sevFilter.push('critical');
+  if ($('#ch-sev-warning').is(':checked')) sevFilter.push('warning');
+  if ($('#ch-sev-info').is(':checked')) sevFilter.push('info');
+
+  var data = {
+    name: $('#ch-name').val(),
+    channel_type: chType,
+    config: config,
+    severity_filter: sevFilter,
+    enabled: true,
+  };
+  if (!data.name) { showToast(__t('page.alarm.toast_channel_required'), 'error'); return; }
+
+  if (editId) {
+    $.ajax({ url: API_CHANNELS + '/' + editId, type: 'PUT', contentType: 'application/json',
+      data: JSON.stringify(data), success: function(res) {
+        if (res.success) { closeModal(); showToast(__t('page.alarm.toast_channel_updated'), 'success'); loadChannels(); }
+      }});
+  } else {
+    $.ajax({ url: API_CHANNELS, type: 'POST', contentType: 'application/json',
+      data: JSON.stringify(data), success: function(res) {
+        if (res.success) { closeModal(); showToast(__t('page.alarm.toast_channel_added'), 'success'); loadChannels(); }
+      }});
+  }
+}
+
+/* ── Auto Refresh ── */
+$('#refresh-interval').on('change', function() {
+  clearInterval(_refreshTimer);
+  var ms = parseInt(this.value);
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+});
+
+/* ── Filters ── */
+$('#filter-severity, #filter-status').on('change', function() {
+  renderEvents();
+});
+
+/* ── Init ── */
+$(function() {
+  loadAll();
+  var ms = parseInt($('#refresh-interval').val());
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+});
+</script>
+{% endblock %}

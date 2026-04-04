@@ -1,0 +1,146 @@
+# ============================================================
+# SR DataLake — Docker Compose (폐쇄망 배포용)
+# ============================================================
+# PostgreSQL, MinIO: 엔진(컨테이너)과 데이터(볼륨) 분리
+# ============================================================
+
+services:
+
+  # ── PostgreSQL: 엔진 ──
+  # 데이터는 named volume 'pgdata'에 저장 → 컨테이너 교체 시에도 데이터 유지
+  postgres:
+    image: postgres:16-alpine
+    container_name: sdl-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: sdl_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sdl_password_2025}
+      POSTGRES_DB: sdl
+    volumes:
+      - pgdata:/var/lib/postgresql/data       # 데이터 스토리지 (분리)
+      - ./config/pg-init.sql:/docker-entrypoint-initdb.d/init.sql  # 초기화 SQL
+    ports:
+      - "127.0.0.1:15432:5432"                # 디버깅용 (demiurge 5432/5433 회피)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sdl_user -d sdl"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sdl-net
+
+  # ── MinIO: 엔진 ──
+  # 오브젝트 데이터는 named volume 'minio-data'에 저장
+  minio:
+    image: minio/minio:latest
+    container_name: sdl-minio
+    restart: always
+    command: server /data --address ":9000" --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sdladmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sdladmin1234}
+    volumes:
+      - minio-data:/data                      # 오브젝트 스토리지 (분리)
+    ports:
+      - "127.0.0.1:19000:9000"                # API (demiurge 9000 회피)
+      - "127.0.0.1:19001:9001"                # Console (demiurge 9001 회피)
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sdl-net
+
+  # ── MinIO 초기화: 버킷 자동 생성 (일회성) ──
+  minio-init:
+    image: minio/mc:latest
+    container_name: sdl-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+        mc mb --ignore-existing local/sdl-files;
+        mc mb --ignore-existing local/sdl-archive;
+        mc mb --ignore-existing local/sdl-backup;
+        echo '=== 버킷 생성 완료 ===';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sdladmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sdladmin1234}
+    networks:
+      - sdl-net
+
+  # ── Mosquitto (MQTT 브로커) ──
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: sdl-mosquitto
+    restart: always
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    ports:
+      - "11883:1883"                           # 외부 장비용 (기존 1883 회피)
+    networks:
+      - sdl-net
+
+  # ── SR DataLake 애플리케이션 ──
+  sdl-app:
+    image: sdl-app:latest
+    container_name: sdl-app
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-sdl-secret-key-2025-change-in-production}
+      DATABASE_URL: postgresql+psycopg2://sdl_user:${DB_PASSWORD:-sdl_password_2025}@postgres:5432/sdl
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-sdladmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-sdladmin1234}
+      MINIO_SECURE: "false"
+      BENTHOS_BIN: /usr/local/bin/redpanda-connect
+      BENTHOS_API: http://localhost:4195
+      MQTT_DEFAULT_HOST: mosquitto
+      MQTT_DEFAULT_PORT: "1883"
+    ports:
+      - "${SDL_PORT:-5001}:5001"
+    volumes:
+      - sdl-uploads:/app/static/uploads       # 업로드 파일 영속화
+      - sdl-logs:/app/logs                     # 앱 로그
+    networks:
+      - sdl-net
+
+# ── Named Volumes: 데이터 스토리지 (엔진과 분리) ──
+volumes:
+  pgdata:                    # PostgreSQL 데이터
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_ROOT:-/opt/sdl-data}/postgres
+  minio-data:                # MinIO 오브젝트 파일
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_ROOT:-/opt/sdl-data}/minio
+  mosquitto-data:
+    driver: local
+  mosquitto-log:
+    driver: local
+  sdl-uploads:
+    driver: local
+  sdl-logs:
+    driver: local
+
+networks:
+  sdl-net:
+    driver: bridge

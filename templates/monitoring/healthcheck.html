@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.healthcheck.title') }}{% endblock %}
+{% block page_title %}{{ t('page.healthcheck.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.monitoring') }}</li>
+<li>{{ t('page.healthcheck.title') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<div class="d-flex align-center gap-8">
+  <span class="fs-12 text-muted">{{ t('page.healthcheck.last_checked_label') }} <span id="last-checked">-</span></span>
+  <select class="form-select" id="refresh-interval" style="width:auto;min-width:130px;padding:5px 10px;font-size:12px;">
+    <option value="0">{{ t('page.healthcheck.auto_refresh_off') }}</option>
+    <option value="10000">{{ t('page.healthcheck.auto_refresh_10s') }}</option>
+    <option value="30000" selected>{{ t('page.healthcheck.auto_refresh_30s') }}</option>
+    <option value="60000">{{ t('page.healthcheck.auto_refresh_60s') }}</option>
+  </select>
+  <button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+  <button class="btn btn-primary btn-sm" onclick="runCheck()"><i class="fas fa-heart-pulse"></i> {{ t('page.healthcheck.btn_run_healthcheck') }}</button>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .hc-group-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 0 6px; margin-top: 12px; margin-bottom: 10px; border-bottom: 1px solid var(--border);
+    font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  }
+  .hc-group-header:first-child { margin-top: 0; }
+  .hc-group-header .hc-group-count {
+    font-weight: 400; font-size: 12px; color: var(--text-muted);
+  }
+  .health-node.hc-compact {
+    display: flex; align-items: center; gap: 10px;
+    text-align: left; padding: 8px 12px;
+  }
+  .hc-compact-icon { font-size: 16px; flex-shrink: 0; }
+  .hc-compact-body { flex: 1; min-width: 0; }
+  .hc-compact-top {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 1px;
+  }
+  .hc-compact-top .node-name { font-size: 12px; margin-bottom: 0; }
+  .hc-compact-top .badge-status { font-size: 10px; padding: 1px 6px; }
+  .card-collapsible .card-header {
+    cursor: pointer; user-select: none;
+  }
+  .card-collapsible .card-header .collapse-icon {
+    transition: transform 0.2s ease;
+    font-size: 12px; color: var(--text-muted); margin-left: 8px;
+  }
+  .card-collapsible.collapsed .card-header .collapse-icon {
+    transform: rotate(-90deg);
+  }
+  .card-collapsible.collapsed .card-collapse-body {
+    display: none;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stat Cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.healthcheck.stat_healthy') }}</h4>
+      <div class="stat-value text-success" id="stat-healthy">-</div>
+      <div class="stat-change" id="stat-healthy-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.healthcheck.stat_degraded') }}</h4>
+      <div class="stat-value text-warning" id="stat-degraded">-</div>
+      <div class="stat-change" id="stat-degraded-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-triangle-exclamation"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.healthcheck.stat_down') }}</h4>
+      <div class="stat-value text-danger" id="stat-down">-</div>
+      <div class="stat-change" id="stat-down-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon red"><i class="fas fa-circle-xmark"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.healthcheck.stat_check_elapsed') }}</h4>
+      <div class="stat-value" id="stat-elapsed" style="font-size:18px;">-</div>
+      <div class="stat-change" id="stat-elapsed-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-clock-rotate-left"></i></div>
+  </div>
+</div>
+
+<!-- Health Grid (grouped by type) -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-heart-pulse"></i> {{ t('page.healthcheck.section_component_status_map') }}</h3>
+    <div class="d-flex align-center gap-8">
+      <span class="fs-11"><span class="badge-status badge-healthy" style="padding:2px 8px">{{ t('page.healthcheck.filter_healthy') }}</span></span>
+      <span class="fs-11"><span class="badge-status badge-degraded" style="padding:2px 8px">{{ t('page.healthcheck.filter_degraded') }}</span></span>
+      <span class="fs-11"><span class="badge-status badge-error" style="padding:2px 8px">{{ t('page.healthcheck.filter_down') }}</span></span>
+      <span class="fs-11"><span class="badge-status badge-stopped" style="padding:2px 8px">{{ t('page.healthcheck.filter_stopped') }}</span></span>
+    </div>
+  </div>
+  <div class="card-body" id="health-grid-container">
+    <div class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</div>
+  </div>
+</div>
+
+<!-- Detail Status Table (collapsible, default collapsed) -->
+<div class="card card-collapsible collapsed mb-24">
+  <div class="card-header" onclick="toggleCollapse(this)">
+    <h3><i class="fas fa-list-check"></i> {{ t('page.healthcheck.section_detail_status') }} <i class="fas fa-chevron-down collapse-icon"></i></h3>
+    <div class="toolbar-right" onclick="event.stopPropagation()">
+      <div class="filter-group">
+        <label>{{ t('common.status') }}:</label>
+        <select class="form-select" id="detail-filter" style="width:auto;min-width:120px;padding:5px 10px;">
+          <option value="all">{{ t('page.healthcheck.filter_all') }}</option>
+          <option value="healthy">{{ t('page.healthcheck.filter_healthy') }}</option>
+          <option value="degraded">{{ t('page.healthcheck.filter_degraded') }}</option>
+          <option value="down">{{ t('page.healthcheck.filter_down') }}</option>
+          <option value="stopped">{{ t('page.healthcheck.filter_stopped') }}</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>{{ t('page.healthcheck.th_type') }}:</label>
+        <select class="form-select" id="type-filter" style="width:auto;min-width:120px;padding:5px 10px;">
+          <option value="all">{{ t('page.healthcheck.filter_all') }}</option>
+          <option value="infra">{{ t('page.healthcheck.filter_infra') }}</option>
+          <option value="connector">{{ t('page.healthcheck.filter_connector') }}</option>
+          <option value="pipeline">{{ t('page.healthcheck.filter_pipeline') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-collapse-body">
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.healthcheck.th_component') }}</th>
+              <th>{{ t('page.healthcheck.th_type') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.healthcheck.th_response_time') }}</th>
+              <th>{{ t('page.healthcheck.th_detail') }}</th>
+            </tr>
+          </thead>
+          <tbody id="detail-tbody">
+            <tr><td colspan="5" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Infrastructure Info (collapsible, default collapsed) -->
+<div class="card card-collapsible collapsed">
+  <div class="card-header" onclick="toggleCollapse(this)">
+    <h3><i class="fas fa-info-circle"></i> {{ t('page.healthcheck.section_infra_info') }} <i class="fas fa-chevron-down collapse-icon"></i></h3>
+  </div>
+  <div class="card-collapse-body">
+    <div class="card-body">
+      <div class="kv-list" id="infra-kv">
+        <div class="kv-item"><span class="kv-label">{{ t('common.status') }}</span><span class="kv-value text-muted">{{ t('common.loading') }}</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/monitoring/healthcheck';
+var _data = null;
+var _refreshTimer = null;
+
+/* ── Helpers ── */
+function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+var TYPE_LABELS = { 'infra': __t('page.healthcheck.filter_infra'), 'connector': __t('page.healthcheck.filter_connector'), 'pipeline': __t('page.healthcheck.filter_pipeline') };
+var TYPE_TAG_CLS = { 'infra': 'tag-cyan', 'connector': 'tag-blue', 'pipeline': 'tag-green' };
+var TYPE_ICONS = { 'infra': 'fa-server', 'connector': 'fa-plug', 'pipeline': 'fa-diagram-project' };
+
+function statusBadge(s) {
+  if (s === 'healthy') return '<span class="badge-status badge-healthy">' + __t('page.healthcheck.filter_healthy') + '</span>';
+  if (s === 'degraded') return '<span class="badge-status badge-degraded">' + __t('page.healthcheck.filter_degraded') + '</span>';
+  if (s === 'down') return '<span class="badge-status badge-error">' + __t('page.healthcheck.filter_down') + '</span>';
+  if (s === 'stopped') return '<span class="badge-status badge-stopped">' + __t('page.healthcheck.filter_stopped') + '</span>';
+  return '<span class="badge-status">' + escHtml(s) + '</span>';
+}
+
+function statusClass(s) {
+  if (s === 'healthy') return 'healthy';
+  if (s === 'degraded') return 'degraded';
+  if (s === 'stopped') return 'stopped';
+  return 'down';
+}
+
+/* ── Collapsible Toggle ── */
+function toggleCollapse(headerEl) {
+  $(headerEl).closest('.card-collapsible').toggleClass('collapsed');
+}
+
+/* ── Load All ── */
+function loadAll() {
+  $.getJSON(API, function(res) {
+    if (!res.success) { showToast(__t('page.healthcheck.toast_healthcheck_fail'), 'error'); return; }
+    _data = res.data;
+    renderSummary();
+    renderHealthGrid();
+    renderDetailTable();
+    renderInfraInfo();
+    $('#last-checked').text(new Date().toLocaleTimeString('ko-KR'));
+  }).fail(function() {
+    showToast(__t('page.healthcheck.toast_api_fail'), 'error');
+  });
+}
+
+/* ── Manual Run ── */
+function runCheck() {
+  showToast(__t('page.healthcheck.toast_running'), 'info');
+  $.post(API + '/run', function(res) {
+    if (!res.success) { showToast(__t('page.healthcheck.toast_run_fail'), 'error'); return; }
+    _data = res.data;
+    renderSummary();
+    renderHealthGrid();
+    renderDetailTable();
+    renderInfraInfo();
+    $('#last-checked').text(new Date().toLocaleTimeString('ko-KR'));
+
+    var s = _data.summary;
+    showToast(__t('page.healthcheck.toast_complete') + ' ' + s.healthy + ' ' + __t('page.healthcheck.filter_healthy') + ' / ' + s.degraded + ' ' + __t('page.healthcheck.filter_degraded') + ' / ' + s.down + ' ' + __t('page.healthcheck.filter_down'), 'success');
+  }).fail(function() {
+    showToast(__t('page.healthcheck.toast_api_fail'), 'error');
+  });
+}
+
+/* ── Summary Cards ── */
+function renderSummary() {
+  var s = _data.summary;
+  $('#stat-healthy').text(s.healthy);
+  $('#stat-healthy-sub').html(s.total + __t('page.healthcheck.label_total_components'));
+
+  $('#stat-degraded').text(s.degraded);
+  if (s.degraded > 0) {
+    $('#stat-degraded-sub').html('<span class="text-warning">' + __t('page.healthcheck.label_attention_required') + '</span>');
+  } else {
+    $('#stat-degraded-sub').html(__t('page.healthcheck.label_no_issues'));
+  }
+
+  $('#stat-down').text(s.down);
+  if (s.down > 0) {
+    $('#stat-down-sub').html('<span class="text-danger">' + __t('page.healthcheck.label_check_immediately') + '</span>');
+  } else {
+    $('#stat-down-sub').html(__t('page.healthcheck.label_all_running'));
+  }
+
+  $('#stat-elapsed').text(_data.elapsed_ms + 'ms');
+  $('#stat-elapsed-sub').html(_data.components.length + __t('page.healthcheck.label_components_checked'));
+}
+
+/* ── Health Grid (grouped by type) ── */
+function renderHealthGrid() {
+  var comps = _data.components || [];
+  if (comps.length === 0) {
+    $('#health-grid-container').html('<div class="text-center text-muted" style="padding:32px">' + __t('page.healthcheck.no_components') + '</div>');
+    return;
+  }
+
+  // Group by type preserving order
+  var groups = [];
+  var groupMap = {};
+  for (var i = 0; i < comps.length; i++) {
+    var c = comps[i];
+    if (!groupMap[c.type]) {
+      groupMap[c.type] = { type: c.type, items: [] };
+      groups.push(groupMap[c.type]);
+    }
+    groupMap[c.type].items.push(c);
+  }
+
+  var html = '';
+  for (var g = 0; g < groups.length; g++) {
+    var grp = groups[g];
+    var label = TYPE_LABELS[grp.type] || grp.type;
+    var icon = TYPE_ICONS[grp.type] || 'fa-cube';
+
+    // Group header
+    html += '<div class="hc-group-header">' +
+      '<i class="fas ' + icon + '"></i> ' + escHtml(label) +
+      ' <span class="hc-group-count">(' + grp.items.length + ')</span>' +
+      '</div>';
+
+    // Grid for this group
+    html += '<div class="health-grid">';
+    for (var j = 0; j < grp.items.length; j++) {
+      var c = grp.items[j];
+      var cls = statusClass(c.status);
+
+      html += '<div class="health-node hc-compact ' + cls + '">' +
+        '<div class="hc-compact-icon"><i class="fas ' + escHtml(c.icon) + '"></i></div>' +
+        '<div class="hc-compact-body">' +
+          '<div class="hc-compact-top">' +
+            '<span class="node-name">' + escHtml(c.name) + '</span>' +
+            statusBadge(c.status) +
+          '</div>' +
+          '<div class="fs-11 text-muted">' +
+            (c.response_ms > 0 ? __t('page.healthcheck.label_response') + ' ' + c.response_ms + 'ms · ' : '') + escHtml(c.detail) +
+          '</div>' +
+        '</div>' +
+        '</div>';
+    }
+    html += '</div>';
+  }
+
+  $('#health-grid-container').html(html);
+}
+
+/* ── Detail Table ── */
+function renderDetailTable() {
+  var statusFilter = $('#detail-filter').val();
+  var typeFilter = $('#type-filter').val();
+  var comps = (_data.components || []).filter(function(c) {
+    if (statusFilter !== 'all' && c.status !== statusFilter) return false;
+    if (typeFilter !== 'all' && c.type !== typeFilter) return false;
+    return true;
+  });
+
+  var html = '';
+  if (comps.length === 0) {
+    html = '<tr><td colspan="5" class="text-center text-muted" style="padding:32px">' + __t('page.healthcheck.no_matching_components') + '</td></tr>';
+  } else {
+    for (var i = 0; i < comps.length; i++) {
+      var c = comps[i];
+      var typeLabel = TYPE_LABELS[c.type] || c.type;
+      var typeCls = TYPE_TAG_CLS[c.type] || '';
+
+      html += '<tr>' +
+        '<td><div class="d-flex align-center gap-8">' +
+          '<i class="fas ' + escHtml(c.icon) + ' text-muted"></i>' +
+          '<span class="fw-600">' + escHtml(c.name) + '</span>' +
+        '</div></td>' +
+        '<td><span class="tag ' + typeCls + '">' + escHtml(typeLabel) + '</span></td>' +
+        '<td>' + statusBadge(c.status) + '</td>' +
+        '<td class="mono">' + (c.response_ms > 0 ? c.response_ms + 'ms' : '<span class="text-muted">-</span>') + '</td>' +
+        '<td class="fs-12 text-muted">' + escHtml(c.detail) + '</td>' +
+        '</tr>';
+    }
+  }
+
+  $('#detail-tbody').html(html);
+}
+
+/* ── Infra Info ── */
+function renderInfraInfo() {
+  var comps = _data.components || [];
+  var infra = comps.filter(function(c) { return c.type === 'infra'; });
+  var html = '';
+
+  html += '<div class="kv-item"><span class="kv-label">' + __t('page.healthcheck.label_overall_status') + '</span><span class="kv-value">' + statusBadge(_data.overall) + '</span></div>';
+  html += '<div class="kv-item"><span class="kv-label">' + __t('page.healthcheck.label_check_time') + '</span><span class="kv-value">' + new Date(_data.timestamp).toLocaleString('ko-KR') + '</span></div>';
+  html += '<div class="kv-item"><span class="kv-label">' + __t('page.healthcheck.label_elapsed_time') + '</span><span class="kv-value">' + _data.elapsed_ms + 'ms</span></div>';
+
+  for (var i = 0; i < infra.length; i++) {
+    var c = infra[i];
+    html += '<div class="kv-item"><span class="kv-label">' + escHtml(c.name) + '</span><span class="kv-value">' +
+      statusBadge(c.status) + ' <span class="fs-12 text-muted" style="margin-left:8px">' + escHtml(c.detail) + '</span>' +
+      '</span></div>';
+  }
+
+  $('#infra-kv').html(html);
+}
+
+/* ── Auto Refresh ── */
+function setupRefresh() {
+  var ms = parseInt($('#refresh-interval').val());
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+}
+
+$('#refresh-interval').on('change', function() {
+  clearInterval(_refreshTimer);
+  var ms = parseInt(this.value);
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+});
+
+/* ── Filters ── */
+$('#detail-filter, #type-filter').on('change', function() {
+  if (_data) renderDetailTable();
+});
+
+/* ── Init ── */
+$(function() {
+  loadAll();
+  setupRefresh();
+});
+</script>
+{% endblock %}

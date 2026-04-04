@@ -1,0 +1,619 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.users.title') }}{% endblock %}
+{% block page_title %}{{ t('page.users.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.users.breadcrumb_system') }}</li>
+<li>{{ t('page.users.breadcrumb_users') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-primary btn-sm" onclick="openAddUserModal()"><i class="fas fa-user-plus"></i> {{ t('page.users.btn_add_user') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab-item active" data-tab="tab-users"><i class="fas fa-users"></i> {{ t('page.users.tab_user_list') }}</div>
+  <div class="tab-item" data-tab="tab-roles"><i class="fas fa-shield-halved"></i> {{ t('page.users.tab_roles') }}</div>
+  <div class="tab-item" data-tab="tab-history"><i class="fas fa-clock-rotate-left"></i> {{ t('page.users.tab_history') }}</div>
+  <div class="tab-item" data-tab="tab-policy"><i class="fas fa-gears"></i> {{ t('page.users.tab_policy') }}</div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- Tab 1: 사용자 목록                           -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="tab-content active" id="tab-users">
+  <div class="card">
+    <div class="card-header">
+      <h3>{{ t('page.users.section_registered_users') }}</h3>
+      <div class="filter-group">
+        <label>{{ t('common.search') }}:</label>
+        <input type="text" class="form-control" id="user-search" placeholder="{{ t('page.users.placeholder_search') }}" oninput="filterUserTable()">
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table id="user-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>{{ t('page.users.th_name') }}</th>
+              <th>{{ t('page.users.th_email') }}</th>
+              <th>{{ t('page.users.th_role') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.users.th_last_login') }}</th>
+              <th>{{ t('common.actions') }}</th>
+            </tr>
+          </thead>
+          <tbody id="user-tbody">
+            <tr><td colspan="7" class="text-center text-muted py-24">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- Tab 2: 역할 관리                             -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="tab-content" id="tab-roles">
+  <div class="card mb-24">
+    <div class="card-header">
+      <h3>{{ t('page.users.section_role_list') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.users.th_role_name') }}</th>
+              <th>{{ t('common.description') }}</th>
+              <th>{{ t('page.users.th_user_count') }}</th>
+            </tr>
+          </thead>
+          <tbody id="role-tbody">
+            <tr><td colspan="3" class="text-center text-muted py-24">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Permission Matrix -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-table-cells"></i> {{ t('page.users.section_permission_matrix') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.users.th_feature') }}</th>
+              <th class="text-center">{{ t('page.users.role_system_admin') }}</th>
+              <th class="text-center">{{ t('page.users.role_engineer') }}</th>
+              <th class="text-center">{{ t('page.users.role_operator') }}</th>
+              <th class="text-center">{{ t('page.users.role_viewer') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_dashboard_view') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+            </tr>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_connector_mgmt') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-muted"><i class="fas fa-minus"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+            </tr>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_pipeline_mgmt') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-muted"><i class="fas fa-minus"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+            </tr>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_alarm_mgmt') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+            </tr>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_log_view') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+            </tr>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_user_mgmt') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+            </tr>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_infra_mgmt') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-muted"><i class="fas fa-minus"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+            </tr>
+            <tr>
+              <td class="fw-600">{{ t('page.users.feat_system_settings') }}</td>
+              <td class="text-center text-success"><i class="fas fa-check"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- Tab 3: 로그인 이력                           -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="tab-content" id="tab-history">
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-clock-rotate-left"></i> {{ t('page.users.section_login_events') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="filter-group mb-16" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="form-group mb-0">
+          <label class="form-label">{{ t('common.username') }}</label>
+          <select class="form-select" id="hist-user" style="min-width:140px;" onchange="loadHistory()">
+            <option value="">{{ t('page.users.filter_all') }}</option>
+          </select>
+        </div>
+        <div class="form-group mb-0">
+          <label class="form-label">{{ t('page.users.th_event') }}</label>
+          <select class="form-select" id="hist-type" style="min-width:140px;" onchange="loadHistory()">
+            <option value="">{{ t('page.users.filter_all') }}</option>
+            <option value="login">{{ t('page.users.event_login') }}</option>
+            <option value="logout">{{ t('page.users.event_logout') }}</option>
+            <option value="fail">{{ t('page.users.event_fail') }}</option>
+            <option value="lock">{{ t('page.users.event_lock') }}</option>
+            <option value="unlock">{{ t('page.users.event_unlock') }}</option>
+          </select>
+        </div>
+        <div class="form-group mb-0">
+          <label class="form-label">{{ t('page.users.filter_start_date') }}</label>
+          <input type="date" class="form-control" id="hist-from" onchange="loadHistory()">
+        </div>
+        <div class="form-group mb-0">
+          <label class="form-label">{{ t('page.users.filter_end_date') }}</label>
+          <input type="date" class="form-control" id="hist-to" onchange="loadHistory()">
+        </div>
+      </div>
+    </div>
+    <div class="card-body p-0" style="border-top:1px solid var(--border);">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('common.time') }}</th>
+              <th>{{ t('common.username') }}</th>
+              <th>{{ t('page.users.th_event') }}</th>
+              <th>{{ t('page.users.th_ip_address') }}</th>
+              <th>{{ t('common.detail') }}</th>
+            </tr>
+          </thead>
+          <tbody id="hist-tbody">
+            <tr><td colspan="5" class="text-center text-muted py-24">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- Tab 4: 로그인 정책                           -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="tab-content" id="tab-policy">
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-gears"></i> {{ t('page.users.section_login_policy') }}</h3>
+      <button class="btn btn-primary btn-sm" onclick="savePolicy()"><i class="fas fa-save"></i> {{ t('common.save') }}</button>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.users.label_session_timeout') }}</label>
+          <div class="d-flex align-center gap-8">
+            <input type="number" class="form-control" id="pol-session-timeout" min="10" max="1440" style="max-width:120px;">
+            <span class="text-muted">{{ t('page.users.unit_minutes') }}</span>
+          </div>
+          <span class="form-hint">{{ t('page.users.hint_session_timeout') }}</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.users.label_max_fail_count') }}</label>
+          <div class="d-flex align-center gap-8">
+            <input type="number" class="form-control" id="pol-max-fail" min="1" max="20" style="max-width:120px;">
+            <span class="text-muted">{{ t('page.users.unit_times') }}</span>
+          </div>
+          <span class="form-hint">{{ t('page.users.hint_max_fail_count') }}</span>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.users.label_lockout_duration') }}</label>
+          <div class="d-flex align-center gap-8">
+            <input type="number" class="form-control" id="pol-lockout" min="1" max="1440" style="max-width:120px;">
+            <span class="text-muted">{{ t('page.users.unit_minutes') }}</span>
+          </div>
+          <span class="form-hint">{{ t('page.users.hint_lockout_duration') }}</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.users.label_password_min_length') }}</label>
+          <div class="d-flex align-center gap-8">
+            <input type="number" class="form-control" id="pol-pw-min" min="4" max="32" style="max-width:120px;">
+            <span class="text-muted">{{ t('page.users.unit_characters') }}</span>
+          </div>
+          <span class="form-hint">{{ t('page.users.hint_password_min_length') }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/admin';
+var _users = [];
+var _roles = [];
+
+/* ── 초기 로드 ── */
+$(function() {
+  loadUsers();
+  loadRoles();
+  loadHistory();
+  loadPolicy();
+});
+
+
+/* ══════════════════════════════════════
+   사용자 목록
+   ══════════════════════════════════════ */
+
+var _ROLE_BADGE = {
+  admin: {name: __t('page.users.role_system_admin'), cls: 'danger'},
+  engineer: {name: __t('page.users.role_engineer'), cls: 'primary'},
+  operator: {name: __t('page.users.role_operator'), cls: 'success'},
+  viewer: {name: __t('page.users.role_viewer'), cls: 'warning'}
+};
+
+function loadUsers() {
+  $.getJSON(API + '/users', function(res) {
+    if (!res.success) return;
+    _users = res.data.users;
+    renderUsers(_users);
+    // 로그인 이력 필터에 사용자 목록 반영
+    var sel = $('#hist-user');
+    var cur = sel.val();
+    sel.find('option:not(:first)').remove();
+    for (var i = 0; i < _users.length; i++) {
+      sel.append('<option value="' + _users[i].username + '">' + _users[i].username + ' (' + _users[i].displayName + ')</option>');
+    }
+    sel.val(cur);
+  });
+}
+
+function renderUsers(users) {
+  if (!users.length) {
+    $('#user-tbody').html('<tr><td colspan="7" class="text-center text-muted py-24">' + __t('page.users.no_users') + '</td></tr>');
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < users.length; i++) {
+    var u = users[i];
+    var role = _ROLE_BADGE[u.role] || {name: u.role, cls: 'primary'};
+    var isLocked = u.lockedUntil && new Date(u.lockedUntil) > new Date();
+    var statusBadge, statusText;
+    if (isLocked) {
+      statusBadge = 'badge-error'; statusText = __t('page.users.badge_locked');
+    } else if (u.enabled) {
+      statusBadge = 'badge-running'; statusText = __t('page.users.badge_active');
+    } else {
+      statusBadge = 'badge-stopped'; statusText = __t('page.users.badge_inactive');
+    }
+
+    html += '<tr>';
+    html += '<td class="mono">' + _esc(u.username) + '</td>';
+    html += '<td class="fw-600">' + _esc(u.displayName) + '</td>';
+    html += '<td>' + _esc(u.email) + '</td>';
+    html += '<td><span class="badge-sm badge-' + role.cls + '">' + role.name + '</span></td>';
+    html += '<td><span class="badge-status ' + statusBadge + '">' + statusText + '</span></td>';
+    html += '<td class="mono">' + (u.lastLoginAt || '-') + '</td>';
+    html += '<td>';
+    html += '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal(' + u.id + ')"><i class="fas fa-pen"></i></button> ';
+    if (u.enabled) {
+      html += '<button class="btn btn-outline btn-sm" title="' + __t('page.users.btn_deactivate') + '" onclick="toggleUser(' + u.id + ',\'' + _esc(u.displayName) + '\')"><i class="fas fa-user-slash text-danger"></i></button> ';
+    } else {
+      html += '<button class="btn btn-success btn-sm" title="' + __t('page.users.btn_activate') + '" onclick="toggleUser(' + u.id + ',\'' + _esc(u.displayName) + '\')"><i class="fas fa-user-check"></i></button> ';
+    }
+    if (isLocked) {
+      html += '<button class="btn btn-warning btn-sm" title="' + __t('page.users.btn_unlock') + '" onclick="unlockUser(' + u.id + ',\'' + _esc(u.username) + '\')"><i class="fas fa-lock-open"></i></button> ';
+    }
+    html += '<button class="btn btn-outline btn-sm" title="' + __t('page.users.btn_reset_password') + '" onclick="openResetPwModal(' + u.id + ',\'' + _esc(u.username) + '\')"><i class="fas fa-key"></i></button> ';
+    html += '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteUser(' + u.id + ',\'' + _esc(u.username) + '\')"><i class="fas fa-trash text-danger"></i></button>';
+    html += '</td>';
+    html += '</tr>';
+  }
+  $('#user-tbody').html(html);
+}
+
+function filterUserTable() {
+  var q = $('#user-search').val().toLowerCase();
+  if (!q) { renderUsers(_users); return; }
+  var filtered = [];
+  for (var i = 0; i < _users.length; i++) {
+    var u = _users[i];
+    if ((u.username + u.displayName + u.email).toLowerCase().indexOf(q) !== -1) {
+      filtered.push(u);
+    }
+  }
+  renderUsers(filtered);
+}
+
+/* ── 사용자 추가 모달 ── */
+function openAddUserModal() {
+  var body = '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_user_id') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" id="add-username" placeholder="' + __t('page.users.placeholder_user_id') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_name') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" id="add-name" placeholder="' + __t('page.users.placeholder_name') + '"></div>' +
+    '</div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_email') + '</label>' +
+    '<input type="email" class="form-control" id="add-email" placeholder="' + __t('page.users.placeholder_email') + '"></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_password') + ' <span class="text-danger">*</span></label>' +
+    '<input type="password" class="form-control" id="add-pw" placeholder="' + __t('page.users.placeholder_password') + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_role') + '</label>' +
+    '<select class="form-select" id="add-role">' +
+    '<option value="viewer">' + __t('page.users.role_viewer') + '</option><option value="operator">' + __t('page.users.role_operator') + '</option>' +
+    '<option value="engineer">' + __t('page.users.role_engineer') + '</option><option value="admin">' + __t('page.users.role_system_admin') + '</option>' +
+    '</select></div>' +
+    '</div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="createUser()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+  openModal(__t('page.users.modal_add_user'), body, footer);
+}
+
+function createUser() {
+  var data = {
+    username: $('#add-username').val().trim(),
+    displayName: $('#add-name').val().trim(),
+    email: $('#add-email').val().trim(),
+    password: $('#add-pw').val(),
+    role: $('#add-role').val()
+  };
+  if (!data.username || !data.displayName) { showToast(__t('page.users.toast_user_id_required'), 'error'); return; }
+  if (!data.password) { showToast(__t('page.users.toast_password_required'), 'error'); return; }
+  $.ajax({
+    url: API + '/users', method: 'POST',
+    contentType: 'application/json', data: JSON.stringify(data),
+    success: function(res) {
+      if (res.success) { closeModal(); showToast(__t('page.users.toast_user_added'), 'success'); loadUsers(); loadRoles(); }
+      else { showToast(res.error.message, 'error'); }
+    }
+  });
+}
+
+/* ── 사용자 편집 모달 ── */
+function openEditModal(userId) {
+  var u = null;
+  for (var i = 0; i < _users.length; i++) { if (_users[i].id === userId) { u = _users[i]; break; } }
+  if (!u) return;
+
+  var body = '<div class="form-group"><label class="form-label">' + __t('page.users.label_user_id') + '</label>' +
+    '<input type="text" class="form-control" value="' + _esc(u.username) + '" readonly style="background:var(--bg-subtle)"></div>' +
+    '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_name') + '</label>' +
+    '<input type="text" class="form-control" id="edit-name" value="' + _esc(u.displayName) + '"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_role') + '</label>' +
+    '<select class="form-select" id="edit-role">' +
+    '<option value="viewer"' + (u.role === 'viewer' ? ' selected' : '') + '>' + __t('page.users.role_viewer') + '</option>' +
+    '<option value="operator"' + (u.role === 'operator' ? ' selected' : '') + '>' + __t('page.users.role_operator') + '</option>' +
+    '<option value="engineer"' + (u.role === 'engineer' ? ' selected' : '') + '>' + __t('page.users.role_engineer') + '</option>' +
+    '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>' + __t('page.users.role_system_admin') + '</option>' +
+    '</select></div></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_email') + '</label>' +
+    '<input type="email" class="form-control" id="edit-email" value="' + _esc(u.email) + '"></div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="updateUser(' + u.id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+  openModal(__t('page.users.modal_edit_user') + ' — ' + u.username, body, footer);
+}
+
+function updateUser(userId) {
+  var data = {
+    displayName: $('#edit-name').val().trim(),
+    email: $('#edit-email').val().trim(),
+    role: $('#edit-role').val()
+  };
+  $.ajax({
+    url: API + '/users/' + userId, method: 'PUT',
+    contentType: 'application/json', data: JSON.stringify(data),
+    success: function(res) {
+      if (res.success) { closeModal(); showToast(__t('page.users.toast_user_updated'), 'success'); loadUsers(); loadRoles(); }
+      else { showToast(res.error.message, 'error'); }
+    }
+  });
+}
+
+/* ── 토글 / 잠금해제 / 삭제 ── */
+function toggleUser(userId, name) {
+  confirmAction(name + ' ' + __t('page.users.confirm_toggle_status'), function() {
+    $.post(API + '/users/' + userId + '/toggle', function(res) {
+      if (res.success) {
+        showToast(__t('page.users.toast_status_changed'), 'success'); loadUsers();
+      }
+    });
+  });
+}
+
+function unlockUser(userId, username) {
+  confirmAction(username + ' ' + __t('page.users.confirm_unlock'), function() {
+    $.post(API + '/users/' + userId + '/unlock', function(res) {
+      if (res.success) { showToast(__t('page.users.toast_unlocked'), 'success'); loadUsers(); }
+    });
+  });
+}
+
+function deleteUser(userId, username) {
+  confirmAction(username + ' ' + __t('page.users.confirm_delete_user'), function() {
+    $.ajax({
+      url: API + '/users/' + userId, method: 'DELETE',
+      success: function(res) {
+        if (res.success) { showToast(__t('page.users.toast_user_deleted'), 'success'); loadUsers(); loadRoles(); }
+        else { showToast(res.error.message, 'error'); }
+      }
+    });
+  });
+}
+
+/* ── 비밀번호 초기화 모달 ── */
+function openResetPwModal(userId, username) {
+  var body = '<div class="form-group"><label class="form-label">' + __t('page.users.label_target_user') + '</label>' +
+    '<input type="text" class="form-control" value="' + _esc(username) + '" readonly style="background:var(--bg-subtle)"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_new_password') + ' <span class="text-danger">*</span></label>' +
+    '<input type="password" class="form-control" id="reset-pw" placeholder="' + __t('page.users.placeholder_new_password') + '"></div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="resetPassword(' + userId + ')"><i class="fas fa-key"></i> ' + __t('common.reset') + '</button>';
+  openModal(__t('page.users.modal_reset_password'), body, footer);
+}
+
+function resetPassword(userId) {
+  var pw = $('#reset-pw').val();
+  if (!pw) { showToast(__t('page.users.toast_enter_new_password'), 'error'); return; }
+  $.ajax({
+    url: API + '/users/' + userId + '/reset-password', method: 'POST',
+    contentType: 'application/json', data: JSON.stringify({password: pw}),
+    success: function(res) {
+      if (res.success) { closeModal(); showToast(__t('page.users.toast_password_reset'), 'success'); loadUsers(); }
+      else { showToast(res.error.message, 'error'); }
+    }
+  });
+}
+
+
+/* ══════════════════════════════════════
+   역할 관리
+   ══════════════════════════════════════ */
+
+function loadRoles() {
+  $.getJSON(API + '/roles', function(res) {
+    if (!res.success) return;
+    _roles = res.data.roles;
+    var html = '';
+    for (var i = 0; i < _roles.length; i++) {
+      var r = _roles[i];
+      html += '<tr>';
+      html += '<td class="fw-600"><span class="badge-sm badge-' + r.badge + '">' + r.name + '</span></td>';
+      html += '<td>' + r.desc + '</td>';
+      html += '<td class="fw-600">' + r.userCount + '</td>';
+      html += '</tr>';
+    }
+    $('#role-tbody').html(html);
+  });
+}
+
+
+/* ══════════════════════════════════════
+   로그인 이력
+   ══════════════════════════════════════ */
+
+var _EVENT_LABEL = {
+  login: {text: __t('page.users.event_label_login'), cls: 'success'},
+  logout: {text: __t('page.users.event_label_logout'), cls: 'primary'},
+  fail: {text: __t('page.users.event_label_fail'), cls: 'danger'},
+  lock: {text: __t('page.users.event_label_lock'), cls: 'danger'},
+  unlock: {text: __t('page.users.event_label_unlock'), cls: 'warning'}
+};
+
+function loadHistory() {
+  var params = {};
+  var u = $('#hist-user').val(); if (u) params.username = u;
+  var t = $('#hist-type').val(); if (t) params.eventType = t;
+  var f = $('#hist-from').val(); if (f) params.from = f;
+  var to = $('#hist-to').val(); if (to) params.to = to;
+
+  $.getJSON(API + '/login-history', params, function(res) {
+    if (!res.success) return;
+    var events = res.data.events;
+    if (!events.length) {
+      $('#hist-tbody').html('<tr><td colspan="5" class="text-center text-muted py-24">' + __t('page.users.no_login_history') + '</td></tr>');
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i];
+      var lbl = _EVENT_LABEL[e.eventType] || {text: e.eventType, cls: 'primary'};
+      html += '<tr>';
+      html += '<td class="mono">' + e.createdAt + '</td>';
+      html += '<td class="fw-600">' + _esc(e.username) + '</td>';
+      html += '<td><span class="badge-sm badge-' + lbl.cls + '">' + lbl.text + '</span></td>';
+      html += '<td class="mono">' + _esc(e.ipAddress) + '</td>';
+      html += '<td>' + _esc(e.detail) + '</td>';
+      html += '</tr>';
+    }
+    $('#hist-tbody').html(html);
+  });
+}
+
+
+/* ══════════════════════════════════════
+   로그인 정책
+   ══════════════════════════════════════ */
+
+function loadPolicy() {
+  $.getJSON(API + '/login-policy', function(res) {
+    if (!res.success) return;
+    var p = res.data.policy;
+    $('#pol-session-timeout').val(p.sessionTimeoutMin || 480);
+    $('#pol-max-fail').val(p.maxFailCount || 5);
+    $('#pol-lockout').val(p.lockoutDurationMin || 30);
+    $('#pol-pw-min').val(p.passwordMinLength || 8);
+  });
+}
+
+function savePolicy() {
+  var data = {
+    sessionTimeoutMin: parseInt($('#pol-session-timeout').val()) || 480,
+    maxFailCount: parseInt($('#pol-max-fail').val()) || 5,
+    lockoutDurationMin: parseInt($('#pol-lockout').val()) || 30,
+    passwordMinLength: parseInt($('#pol-pw-min').val()) || 8
+  };
+  $.ajax({
+    url: API + '/login-policy', method: 'PUT',
+    contentType: 'application/json', data: JSON.stringify(data),
+    success: function(res) {
+      if (res.success) { showToast(__t('page.users.toast_policy_saved'), 'success'); }
+      else { showToast(res.error.message, 'error'); }
+    }
+  });
+}
+
+
+/* ── 유틸 ── */
+function _esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.retention.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.retention.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.retention.breadcrumb_storage') }}</li>
+<li>{{ t('page.retention.breadcrumb_retention') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="saveRetentionPolicy()"><i class="fas fa-save"></i> {{ t('page.retention.btn_save_policy') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Data Tier Cards -->
+<div class="grid-3 mb-24">
+  <!-- Hot Tier -->
+  <div class="card" id="tier-hot">
+    <div class="card-header">
+      <h3><i class="fas fa-fire" style="color:var(--c-danger)"></i> {{ t('page.retention.tier_hot') }}</h3>
+      <span class="badge-sm badge-danger" id="hot-badge">{{ t('page.retention.badge_hot_period') }}</span>
+    </div>
+    <div class="card-body">
+      <div class="mb-12">
+        <div class="d-flex align-center" style="justify-content:space-between">
+          <span class="fs-12 text-muted">{{ t('page.retention.label_usage') }}</span>
+          <span class="fs-12 fw-600" id="hot-usage-text">- / -</span>
+        </div>
+        <div class="progress mt-8">
+          <div class="progress-bar red" id="hot-bar" style="width:0%"></div>
+        </div>
+        <div class="fs-11 text-muted mt-8" id="hot-pct">0% {{ t('page.retention.using_percent') }}</div>
+      </div>
+      <div class="kv-list">
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_storage') }}</span><span class="kv-value" id="hot-storage">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_resolution') }}</span><span class="kv-value" id="hot-resolution">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_retention_period') }}</span><span class="kv-value" id="hot-retention">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_daily_growth') }}</span><span class="kv-value" id="hot-daily">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Warm Tier -->
+  <div class="card" id="tier-warm">
+    <div class="card-header">
+      <h3><i class="fas fa-temperature-half" style="color:var(--c-warning)"></i> {{ t('page.retention.tier_warm') }}</h3>
+      <span class="badge-sm badge-warning" id="warm-badge">{{ t('page.retention.badge_warm_period') }}</span>
+    </div>
+    <div class="card-body">
+      <div class="mb-12">
+        <div class="d-flex align-center" style="justify-content:space-between">
+          <span class="fs-12 text-muted">{{ t('page.retention.label_usage') }}</span>
+          <span class="fs-12 fw-600" id="warm-usage-text">- / -</span>
+        </div>
+        <div class="progress mt-8">
+          <div class="progress-bar yellow" id="warm-bar" style="width:0%"></div>
+        </div>
+        <div class="fs-11 text-muted mt-8" id="warm-pct">0% {{ t('page.retention.using_percent') }}</div>
+      </div>
+      <div class="kv-list">
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_storage') }}</span><span class="kv-value" id="warm-storage">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_resolution') }}</span><span class="kv-value" id="warm-resolution">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_retention_period') }}</span><span class="kv-value" id="warm-retention">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_daily_growth') }}</span><span class="kv-value" id="warm-daily">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cold Tier -->
+  <div class="card" id="tier-cold">
+    <div class="card-header">
+      <h3><i class="fas fa-snowflake" style="color:var(--c-primary)"></i> {{ t('page.retention.tier_cold') }}</h3>
+      <span class="badge-sm badge-primary" id="cold-badge">{{ t('page.retention.badge_cold_period') }}</span>
+    </div>
+    <div class="card-body">
+      <div class="mb-12">
+        <div class="d-flex align-center" style="justify-content:space-between">
+          <span class="fs-12 text-muted">{{ t('page.retention.label_usage') }}</span>
+          <span class="fs-12 fw-600" id="cold-usage-text">- / -</span>
+        </div>
+        <div class="progress mt-8">
+          <div class="progress-bar blue" id="cold-bar" style="width:0%"></div>
+        </div>
+        <div class="fs-11 text-muted mt-8" id="cold-pct">0% {{ t('page.retention.using_percent') }}</div>
+      </div>
+      <div class="kv-list">
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_storage') }}</span><span class="kv-value" id="cold-storage">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_resolution') }}</span><span class="kv-value" id="cold-resolution">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_retention_period') }}</span><span class="kv-value" id="cold-retention">-</span></div>
+        <div class="kv-item"><span class="kv-label">{{ t('page.retention.label_daily_growth') }}</span><span class="kv-value" id="cold-daily">-</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Policy Settings Form -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-sliders"></i> {{ t('page.retention.card_policy_settings') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-row mb-16">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.retention.label_hot_retention_days') }}</label>
+        <input class="form-control" type="number" id="pol-hot-days" value="30" min="1" max="365">
+        <div class="form-hint">{{ t('page.retention.hint_hot_retention') }}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.retention.label_warm_retention_months') }}</label>
+        <input class="form-control" type="number" id="pol-warm-months" value="12" min="1" max="60">
+        <div class="form-hint">{{ t('page.retention.hint_warm_retention') }}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.retention.label_cold_retention_years') }}</label>
+        <input class="form-control" type="number" id="pol-cold-years" value="3" min="1" max="10">
+        <div class="form-hint">{{ t('page.retention.hint_cold_retention') }}</div>
+      </div>
+    </div>
+    <div class="form-row mb-16">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.retention.label_hot_warm_schedule') }}</label>
+        <select class="form-select" id="pol-hot-warm-schedule">
+          <option value="매일 자정">{{ t('page.retention.schedule_daily_midnight') }}</option>
+          <option value="매일 새벽 3시">{{ t('page.retention.schedule_daily_3am') }}</option>
+          <option value="매주 일요일 새벽 3시">{{ t('page.retention.schedule_weekly_sunday_3am') }}</option>
+        </select>
+        <div class="form-hint">{{ t('page.retention.hint_hot_warm_schedule') }}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.retention.label_warm_cold_schedule') }}</label>
+        <select class="form-select" id="pol-warm-cold-schedule">
+          <option value="매일 새벽 4시">{{ t('page.retention.schedule_daily_4am') }}</option>
+          <option value="매주 일요일 새벽 4시">{{ t('page.retention.schedule_weekly_sunday_4am') }}</option>
+          <option value="매월 1일 새벽 4시">{{ t('page.retention.schedule_monthly_1st_4am') }}</option>
+        </select>
+        <div class="form-hint">{{ t('page.retention.hint_warm_cold_schedule') }}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.retention.label_expiry_schedule') }}</label>
+        <select class="form-select" id="pol-expiry-schedule">
+          <option value="매일">{{ t('page.retention.schedule_daily') }}</option>
+          <option value="매주">{{ t('page.retention.schedule_weekly') }}</option>
+          <option value="매월">{{ t('page.retention.schedule_monthly') }}</option>
+        </select>
+        <div class="form-hint">{{ t('page.retention.hint_expiry_schedule') }}</div>
+      </div>
+    </div>
+    <div class="form-group">
+      <div class="form-check">
+        <input type="checkbox" id="pol-auto-delete" checked>
+        <label for="pol-auto-delete">{{ t('page.retention.checkbox_auto_delete') }}</label>
+      </div>
+    </div>
+    <div class="form-group">
+      <div class="form-check">
+        <input type="checkbox" id="pol-alert-threshold" checked>
+        <label for="pol-alert-threshold">{{ t('page.retention.checkbox_alert_threshold') }}</label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Execution History -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-history"></i> {{ t('page.retention.card_execution_history') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="openExecuteModal()"><i class="fas fa-play"></i> {{ t('page.retention.btn_manual_execute') }}</button>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.retention.th_execution_time') }}</th>
+            <th>{{ t('page.retention.th_task') }}</th>
+            <th>{{ t('page.retention.th_tier_transition') }}</th>
+            <th>{{ t('page.retention.th_processed_data') }}</th>
+            <th>{{ t('page.retention.th_processed_records') }}</th>
+            <th>{{ t('page.retention.th_duration') }}</th>
+            <th>{{ t('common.status') }}</th>
+          </tr>
+        </thead>
+        <tbody id="history-tbody">
+          <tr><td colspan="7" class="text-center text-muted">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/storage/retention';
+
+$(function() {
+  loadPolicy();
+  loadTiers();
+  loadHistory();
+});
+
+/* ── 헬퍼 ── */
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+function formatDt(iso) {
+  if (!iso) return '-';
+  var d = new Date(iso);
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' '
+       + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+function formatDuration(sec) {
+  if (!sec && sec !== 0) return '-';
+  var m = Math.floor(sec / 60);
+  var s = Math.round(sec % 60);
+  if (m > 0) return m + __t('common.minutes_short') + ' ' + pad(s) + __t('common.seconds_short');
+  return s + __t('common.seconds_short');
+}
+
+/* ── 계층 카드 ── */
+function loadTiers() {
+  $.getJSON(API + '/tiers', function(resp) {
+    if (!resp.success) return;
+    var d = resp.data;
+    renderTier('hot', d.hot, 'red');
+    renderTier('warm', d.warm, 'yellow');
+    renderTier('cold', d.cold, 'blue');
+  });
+}
+
+function renderTier(key, t, barColor) {
+  var capDisplay = t.capacity_gb >= 1024
+    ? (t.capacity_gb / 1024).toFixed(1) + ' TB'
+    : t.capacity_gb + ' GB';
+  $('#' + key + '-usage-text').text(t.used_display + ' / ' + capDisplay);
+  $('#' + key + '-bar').css('width', t.usage_percent + '%');
+  $('#' + key + '-pct').text(t.usage_percent + '% ' + __t('page.retention.using_percent'));
+  $('#' + key + '-badge').text(t.retention_label);
+  $('#' + key + '-storage').text(t.storage_type);
+  $('#' + key + '-resolution').text(t.resolution);
+  $('#' + key + '-retention').text(t.retention_label);
+  $('#' + key + '-daily').text(t.daily_growth_display);
+}
+
+/* ── 정책 폼 ── */
+function loadPolicy() {
+  $.getJSON(API, function(resp) {
+    if (!resp.success) return;
+    var p = resp.data;
+    $('#pol-hot-days').val(p.hot_retention_days);
+    $('#pol-warm-months').val(p.warm_retention_months);
+    $('#pol-cold-years').val(p.cold_retention_years);
+    $('#pol-hot-warm-schedule').val(p.hot_to_warm_schedule);
+    $('#pol-warm-cold-schedule').val(p.warm_to_cold_schedule);
+    $('#pol-expiry-schedule').val(p.expiry_cleanup_schedule);
+    $('#pol-auto-delete').prop('checked', p.auto_delete_enabled);
+    $('#pol-alert-threshold').prop('checked', p.alert_threshold_enabled);
+  });
+}
+
+function saveRetentionPolicy() {
+  confirmAction(__t('page.retention.confirm_save_policy') + '<br><span class="fs-12 text-muted">변경 사항은 다음 실행 주기부터 적용됩니다.</span>', function() {
+    var payload = {
+      hot_retention_days: parseInt($('#pol-hot-days').val()) || 30,
+      warm_retention_months: parseInt($('#pol-warm-months').val()) || 12,
+      cold_retention_years: parseInt($('#pol-cold-years').val()) || 3,
+      hot_to_warm_schedule: $('#pol-hot-warm-schedule').val(),
+      warm_to_cold_schedule: $('#pol-warm-cold-schedule').val(),
+      expiry_cleanup_schedule: $('#pol-expiry-schedule').val(),
+      auto_delete_enabled: $('#pol-auto-delete').is(':checked'),
+      alert_threshold_enabled: $('#pol-alert-threshold').is(':checked')
+    };
+    $.ajax({
+      url: API, type: 'PUT',
+      contentType: 'application/json',
+      data: JSON.stringify(payload),
+      success: function(resp) {
+        if (resp.success) {
+          showToast(__t('page.retention.toast_policy_saved'), 'success');
+          loadTiers();
+        } else {
+          showToast(resp.error.message, 'error');
+        }
+      },
+      error: function(xhr) {
+        var msg = xhr.responseJSON ? xhr.responseJSON.error.message : __t('page.retention.toast_save_failed');
+        showToast(msg, 'error');
+      }
+    });
+  });
+}
+
+/* ── 실행 이력 ── */
+function loadHistory() {
+  $.getJSON(API + '/history', { page: 1, size: 20 }, function(resp) {
+    if (!resp.success) return;
+    var logs = resp.data;
+    if (logs.length === 0) {
+      $('#history-tbody').html('<tr><td colspan="7" class="text-center text-muted">' + __t('page.retention.no_execution_history') + '</td></tr>');
+      return;
+    }
+    var html = '';
+    logs.forEach(function(log) {
+      var tagClass = log.task_type === 'downsampling' ? 'tag-blue'
+                   : log.task_type === 'archiving' ? 'tag-green' : '';
+      var tagStyle = log.task_type === 'delete'
+        ? 'style="background:var(--c-danger-bg);color:var(--c-danger)"' : '';
+      var taskLabel = log.task_type === 'downsampling' ? __t('page.retention.task_downsampling')
+                    : log.task_type === 'archiving' ? __t('page.retention.task_archiving') : __t('page.retention.task_delete');
+      var statusBadge = log.status === 'success' ? 'badge-running'
+                      : log.status === 'partial' ? 'badge-warning' : 'badge-error';
+      var statusLabel = log.status === 'success' ? __t('page.retention.status_success')
+                      : log.status === 'partial' ? __t('page.retention.status_partial') : __t('page.retention.status_failed');
+      html += '<tr>'
+        + '<td class="mono fs-12">' + formatDt(log.execution_time) + '</td>'
+        + '<td><span class="tag ' + tagClass + '" ' + tagStyle + '>' + taskLabel + '</span></td>'
+        + '<td>' + log.tier_transition + '</td>'
+        + '<td class="mono">' + fmtBytes(log.processed_bytes) + '</td>'
+        + '<td class="mono">' + fmtNum(log.processed_records) + '</td>'
+        + '<td class="mono">' + formatDuration(log.duration_seconds) + '</td>'
+        + '<td><span class="badge-status ' + statusBadge + '">' + statusLabel + '</span></td>'
+        + '</tr>';
+    });
+    $('#history-tbody').html(html);
+  });
+}
+
+/* ── 수동 실행 ── */
+function openExecuteModal() {
+  var body = '<div class="form-group">'
+    + '<label class="form-label">' + __t('page.retention.label_task_type') + '</label>'
+    + '<select class="form-select" id="exec-task-type">'
+    + '<option value="downsampling">' + __t('page.retention.option_downsampling') + '</option>'
+    + '<option value="archiving">' + __t('page.retention.option_archiving') + '</option>'
+    + '<option value="delete">' + __t('page.retention.option_delete') + '</option>'
+    + '</select>'
+    + '</div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>'
+    + '<button class="btn btn-primary" onclick="doExecute()"><i class="fas fa-play"></i> ' + __t('common.run') + '</button>';
+  openModal(__t('page.retention.modal_manual_execute'), body, footer);
+}
+
+function doExecute() {
+  var taskType = $('#exec-task-type').val();
+  $.ajax({
+    url: API + '/execute', type: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify({ task_type: taskType }),
+    success: function(resp) {
+      closeModal();
+      if (resp.success) {
+        showToast(__t('page.retention.toast_task_executed'), 'success');
+        loadHistory();
+      } else {
+        showToast(resp.error.message, 'error');
+      }
+    },
+    error: function() {
+      showToast(__t('page.retention.toast_execution_error'), 'error');
+    }
+  });
+}
+
+/* ── 새로고침 ── */
+function refreshAll() {
+  showToast(__t('page.retention.toast_refreshing_policy'), 'info');
+  loadPolicy();
+  loadTiers();
+  loadHistory();
+}
+</script>
+{% endblock %}

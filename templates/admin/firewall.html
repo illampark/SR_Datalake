@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.firewall.title') }}{% endblock %}
+{% block page_title %}{{ t('page.firewall.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.admin') }}</li>
+<li>{{ t('page.firewall.breadcrumb_security') }}</li>
+<li>{{ t('page.firewall.breadcrumb_current') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-primary btn-sm" onclick="openAddIpModal()"><i class="fas fa-plus"></i> {{ t('page.firewall.btn_add_ip') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- IP Whitelist -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-list-check"></i> {{ t('page.firewall.section_ip_whitelist') }}</h3>
+    <span class="badge-sm badge-primary">{{ t('page.firewall.badge_total_registered') }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.firewall.th_ip_cidr') }}</th>
+            <th>{{ t('page.firewall.th_description') }}</th>
+            <th>{{ t('page.firewall.th_registered_by') }}</th>
+            <th>{{ t('page.firewall.th_registered_date') }}</th>
+            <th>{{ t('page.firewall.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono fw-600">192.168.1.0/24</td>
+            <td>{{ t('page.firewall.desc_office_network') }}</td>
+            <td>admin</td>
+            <td class="mono">2025-06-01</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">10.0.0.0/16</td>
+            <td>{{ t('page.firewall.desc_internal_service') }}</td>
+            <td>admin</td>
+            <td class="mono">2025-06-01</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">10.10.5.0/24</td>
+            <td>{{ t('page.firewall.desc_vpn_client') }}</td>
+            <td>admin</td>
+            <td class="mono">2025-07-15</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">10.10.8.0/24</td>
+            <td>{{ t('page.firewall.desc_busan_vpn') }}</td>
+            <td>admin</td>
+            <td class="mono">2026-02-10</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">172.20.0.0/16</td>
+            <td>{{ t('page.firewall.desc_docker_network') }}</td>
+            <td>admin</td>
+            <td class="mono">2025-06-01</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">203.248.44.100</td>
+            <td>{{ t('page.firewall.desc_mes_external') }}</td>
+            <td>김철수</td>
+            <td class="mono">2025-09-20</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">211.115.82.0/28</td>
+            <td>{{ t('page.firewall.desc_erp_range') }}</td>
+            <td>김철수</td>
+            <td class="mono">2025-10-05</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">52.78.123.45</td>
+            <td>{{ t('page.firewall.desc_aws_monitoring') }}</td>
+            <td>이영희</td>
+            <td class="mono">2025-11-12</td>
+            <td><button class="btn btn-outline btn-sm" onclick="confirmAction(__t('page.firewall.confirm_delete_ip'), function(){ showToast(__t('page.firewall.toast_ip_deleted'),'success'); })"><i class="fas fa-trash text-danger"></i></button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- VPN Settings -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-lock"></i> {{ t('page.firewall.section_vpn') }}</h3>
+    <span class="badge-status badge-running">{{ t('page.firewall.badge_active') }}</span>
+  </div>
+  <div class="card-body">
+    <div class="kv-list mb-16">
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.firewall.label_gateway_address') }}</span>
+        <span class="kv-value mono">vpn.sdm-factory.co.kr:1194</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.firewall.label_protocol') }}</span>
+        <span class="kv-value">OpenVPN (UDP)</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.firewall.label_status') }}</span>
+        <span class="kv-value"><span class="badge-status badge-running">{{ t('page.firewall.badge_active') }}</span></span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.firewall.label_connected_clients') }}</span>
+        <span class="kv-value fw-600">5</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.firewall.label_encryption') }}</span>
+        <span class="kv-value">AES-256-GCM</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.firewall.label_auth_method') }}</span>
+        <span class="kv-value">{{ t('page.firewall.auth_cert_otp') }}</span>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.firewall.label_max_concurrent') }}</label>
+        <input type="number" class="form-control" value="20" min="1" max="100" style="max-width:200px;">
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.firewall.label_session_timeout') }}</label>
+        <select class="form-select" style="max-width:200px;">
+          <option>{{ t('page.firewall.option_4hours') }}</option>
+          <option selected>{{ t('page.firewall.option_8hours') }}</option>
+          <option>{{ t('page.firewall.option_12hours') }}</option>
+          <option>{{ t('page.firewall.option_24hours') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Blocked Access Log -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-ban"></i> {{ t('page.firewall.section_blocked_log') }}</h3>
+    <span class="badge-sm badge-danger">{{ t('page.firewall.badge_last_7days') }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.firewall.th_time') }}</th>
+            <th>{{ t('page.firewall.th_source_ip') }}</th>
+            <th>{{ t('page.firewall.th_dest_port') }}</th>
+            <th>{{ t('page.firewall.th_reason') }}</th>
+            <th>{{ t('page.firewall.th_count') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">2026-02-10 14:55:32</td>
+            <td class="mono fw-600">45.33.32.156</td>
+            <td>443 (HTTPS)</td>
+            <td><span class="severity-critical">{{ t('page.firewall.reason_not_whitelisted') }}</span></td>
+            <td><span class="badge-sm badge-danger">23</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-10 12:22:10</td>
+            <td class="mono fw-600">185.220.101.45</td>
+            <td>22 (SSH)</td>
+            <td><span class="severity-critical">{{ t('page.firewall.reason_brute_force') }}</span></td>
+            <td><span class="badge-sm badge-danger">156</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-10 08:15:44</td>
+            <td class="mono fw-600">91.189.114.8</td>
+            <td>8086 (InfluxDB)</td>
+            <td><span class="severity-warning">{{ t('page.firewall.reason_not_whitelisted') }}</span></td>
+            <td><span class="badge-sm badge-warning">5</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-09 22:45:18</td>
+            <td class="mono fw-600">103.245.222.201</td>
+            <td>9092 (Kafka)</td>
+            <td><span class="severity-critical">{{ t('page.firewall.reason_not_whitelisted') }}</span></td>
+            <td><span class="badge-sm badge-danger">42</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-09 16:30:55</td>
+            <td class="mono fw-600">198.51.100.12</td>
+            <td>5432 (PostgreSQL)</td>
+            <td><span class="severity-warning">{{ t('page.firewall.reason_not_whitelisted') }}</span></td>
+            <td><span class="badge-sm badge-warning">8</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-08 03:12:00</td>
+            <td class="mono fw-600">209.141.55.26</td>
+            <td>22 (SSH)</td>
+            <td><span class="severity-critical">{{ t('page.firewall.reason_brute_force') }}</span></td>
+            <td><span class="badge-sm badge-danger">312</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-07 19:48:22</td>
+            <td class="mono fw-600">162.158.79.100</td>
+            <td>443 (HTTPS)</td>
+            <td><span class="severity-info">{{ t('page.firewall.reason_abnormal_pattern') }}</span></td>
+            <td><span class="badge-sm badge-primary">15</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openAddIpModal() {
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.firewall.form_ip_cidr') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control mono" placeholder="' + __t('page.firewall.form_placeholder_ip') + '">' +
+    '<span class="form-hint">' + __t('page.firewall.form_hint_ip') + '</span>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.firewall.form_description') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" placeholder="' + __t('page.firewall.form_placeholder_description') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.firewall.form_allowed_ports') + '</label>' +
+    '<div class="d-flex gap-16">' +
+    '<label class="form-check"><input type="checkbox" checked> ' + __t('page.firewall.port_all') + '</label>' +
+    '<label class="form-check"><input type="checkbox"> 443 (HTTPS)</label>' +
+    '<label class="form-check"><input type="checkbox"> 8080 (API)</label>' +
+    '<label class="form-check"><input type="checkbox"> 22 (SSH)</label>' +
+    '</div>' +
+    '</div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="closeModal(); showToast(__t(\'page.firewall.toast_ip_added\'),\'success\')"><i class="fas fa-save"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.firewall.modal_add_ip'), body, footer);
+}
+</script>
+{% endblock %}

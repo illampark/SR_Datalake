@@ -1,0 +1,620 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.metadata.title') }}{% endblock %}
+{% block page_title %}{{ t('page.metadata.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.metadata.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-outline btn-sm" onclick="exportCSV()"><i class="fas fa-file-export"></i> {{ t('common.export') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stats Cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.metadata.stat_total_tags') }}</h4>
+      <div class="stat-value" id="statTotalTags">-</div>
+      <div class="stat-change up">{{ t('page.metadata.stat_total_sub') }}</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-tags"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.metadata.stat_active_tags') }}</h4>
+      <div class="stat-value" id="statActiveTags">-</div>
+      <div class="stat-change up">{{ t('page.metadata.stat_active_sub') }}</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.metadata.stat_avg_quality') }}</h4>
+      <div class="stat-value" id="statAvgQuality">-</div>
+      <div class="stat-change up">{{ t('page.metadata.stat_quality_sub') }}</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-star-half-stroke"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.metadata.stat_lineage_count') }}</h4>
+      <div class="stat-value" id="statLineageCount">-</div>
+      <div class="stat-change up">{{ t('page.metadata.stat_lineage_sub') }}</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-sitemap"></i></div>
+  </div>
+</div>
+
+<!-- Tag Metadata Summary by Connector Type -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-chart-pie"></i> {{ t('page.metadata.summary_title') }}</h3>
+  </div>
+  <div class="card-body" id="summaryContainer">
+    <div class="text-center text-muted" style="padding:32px 0;">
+      <i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}
+    </div>
+  </div>
+</div>
+
+<!-- Tag Metadata Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-tags"></i> {{ t('page.metadata.tags_title') }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <!-- Toolbar -->
+    <div class="toolbar" style="padding:12px 16px;border-bottom:1px solid var(--border-color,#e2e8f0);">
+      <div class="toolbar-left" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select class="form-select" id="filterConnectorType" style="width:auto;min-width:140px;padding:5px 10px;" onchange="loadTags(1)">
+          <option value="">{{ t('page.metadata.filter_all_connectors') }}</option>
+          <option value="opcua">OPC-UA</option>
+          <option value="opcda">OPC-DA</option>
+          <option value="modbus">Modbus</option>
+          <option value="mqtt">MQTT</option>
+          <option value="api">REST API</option>
+          <option value="file">{{ t('page.metadata.connector_file') }}</option>
+          <option value="db">DB</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" id="filterActiveOnly" onchange="loadTags(1)"> {{ t('page.metadata.filter_active_only') }}
+        </label>
+        <div style="position:relative;">
+          <input type="text" class="form-control" id="filterSearch" placeholder="{{ t('page.metadata.filter_search_placeholder') }}" style="width:200px;padding:5px 10px 5px 30px;" onkeyup="if(event.key==='Enter')loadTags(1)">
+          <i class="fas fa-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:12px;"></i>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="loadTags(1)"><i class="fas fa-search"></i> {{ t('page.metadata.btn_query') }}</button>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.metadata.th_tag_name') }}</th>
+            <th>{{ t('page.metadata.th_connector') }}</th>
+            <th>{{ t('page.metadata.th_data_type') }}</th>
+            <th>{{ t('common.min') }}</th>
+            <th>{{ t('common.max') }}</th>
+            <th>{{ t('common.avg') }}</th>
+            <th>{{ t('page.metadata.th_sample_count') }}</th>
+            <th>{{ t('page.metadata.th_quality_score') }}</th>
+            <th>{{ t('page.metadata.th_last_collected') }}</th>
+            <th>{{ t('common.status') }}</th>
+          </tr>
+        </thead>
+        <tbody id="tagsTableBody">
+          <tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="tagsPagination" style="display:flex;justify-content:center;align-items:center;gap:8px;padding:12px 16px;"></div>
+  </div>
+</div>
+
+<!-- Data Lineage Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-sitemap"></i> {{ t('page.metadata.lineage_title') }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <!-- Toolbar -->
+    <div class="toolbar" style="padding:12px 16px;border-bottom:1px solid var(--border-color,#e2e8f0);">
+      <div class="toolbar-left" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" class="form-control" id="filterLineagePipeline" placeholder="{{ t('page.metadata.lineage_pipeline_placeholder') }}" style="width:160px;padding:5px 10px;" onkeyup="if(event.key==='Enter')loadLineage(1)">
+        <select class="form-select" id="filterLineageConnector" style="width:auto;min-width:140px;padding:5px 10px;" onchange="loadLineage(1)">
+          <option value="">{{ t('page.metadata.lineage_all_connectors') }}</option>
+          <option value="opcua">OPC-UA</option>
+          <option value="opcda">OPC-DA</option>
+          <option value="modbus">Modbus</option>
+          <option value="mqtt">MQTT</option>
+          <option value="api">REST API</option>
+          <option value="file">{{ t('page.metadata.connector_file') }}</option>
+          <option value="db">DB</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="loadLineage(1)"><i class="fas fa-search"></i> {{ t('page.metadata.btn_query') }}</button>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.metadata.th_batch_id') }}</th>
+            <th>{{ t('page.metadata.th_source_connector') }}</th>
+            <th>{{ t('page.metadata.th_source_tag') }}</th>
+            <th>{{ t('page.metadata.th_pipeline') }}</th>
+            <th>{{ t('page.metadata.th_applied_steps') }}</th>
+            <th>{{ t('page.metadata.th_destination') }}</th>
+            <th>{{ t('page.metadata.th_record_count') }}</th>
+            <th>{{ t('page.metadata.th_processing_time') }}</th>
+            <th>{{ t('page.metadata.th_time') }}</th>
+          </tr>
+        </thead>
+        <tbody id="lineageTableBody">
+          <tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="lineagePagination" style="display:flex;justify-content:center;align-items:center;gap:8px;padding:12px 16px;"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var currentTagPage = 1;
+var currentLineagePage = 1;
+var PAGE_SIZE = 20;
+
+// ── Connector type helpers ──
+var connectorIcons = {
+  'opcua': 'fa-plug-circle-bolt',
+  'opcda': 'fa-plug',
+  'modbus': 'fa-microchip',
+  'mqtt': 'fa-satellite-dish',
+  'api': 'fa-code',
+  'file': 'fa-file-import',
+  'db': 'fa-database'
+};
+var connectorNames = {
+  'opcua': 'OPC-UA',
+  'opcda': 'OPC-DA',
+  'modbus': 'Modbus',
+  'mqtt': 'MQTT',
+  'api': 'REST API',
+  'file': __t('page.metadata.connector_file'),
+  'db': 'DB'
+};
+
+function getConnectorIcon(type) {
+  return connectorIcons[type] || 'fa-plug';
+}
+
+function getConnectorName(type) {
+  return connectorNames[type] || type;
+}
+
+// ── Quality score color helper ──
+function qualityClass(score) {
+  if (score >= 90) return 'text-success';
+  if (score >= 70) return 'text-warning';
+  return 'text-danger';
+}
+
+function qualityBadge(score) {
+  if (score >= 90) return 'badge-success';
+  if (score >= 70) return 'badge-warning';
+  return 'badge-danger';
+}
+
+// ── Format timestamp ──
+function fmtTime(ts) {
+  if (!ts) return '-';
+  var d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  var y = d.getFullYear();
+  var m = ('0' + (d.getMonth()+1)).slice(-2);
+  var day = ('0' + d.getDate()).slice(-2);
+  var h = ('0' + d.getHours()).slice(-2);
+  var min = ('0' + d.getMinutes()).slice(-2);
+  return y + '-' + m + '-' + day + ' ' + h + ':' + min;
+}
+
+// ── Pagination renderer ──
+function renderPagination(containerId, currentPage, totalPages, loadFn) {
+  var $c = $('#' + containerId).empty();
+  if (totalPages <= 1) return;
+
+  var prev = '<button class="btn btn-outline btn-sm"' + (currentPage <= 1 ? ' disabled' : ' onclick="' + loadFn + '(' + (currentPage - 1) + ')"') + '><i class="fas fa-chevron-left"></i></button>';
+  $c.append(prev);
+
+  var startPage = Math.max(1, currentPage - 2);
+  var endPage = Math.min(totalPages, currentPage + 2);
+
+  if (startPage > 1) {
+    $c.append('<button class="btn btn-outline btn-sm" onclick="' + loadFn + '(1)">1</button>');
+    if (startPage > 2) $c.append('<span style="padding:0 4px;color:#94a3b8;">...</span>');
+  }
+
+  for (var i = startPage; i <= endPage; i++) {
+    if (i === currentPage) {
+      $c.append('<button class="btn btn-primary btn-sm">' + i + '</button>');
+    } else {
+      $c.append('<button class="btn btn-outline btn-sm" onclick="' + loadFn + '(' + i + ')">' + i + '</button>');
+    }
+  }
+
+  if (endPage < totalPages) {
+    if (endPage < totalPages - 1) $c.append('<span style="padding:0 4px;color:#94a3b8;">...</span>');
+    $c.append('<button class="btn btn-outline btn-sm" onclick="' + loadFn + '(' + totalPages + ')">' + totalPages + '</button>');
+  }
+
+  var next = '<button class="btn btn-outline btn-sm"' + (currentPage >= totalPages ? ' disabled' : ' onclick="' + loadFn + '(' + (currentPage + 1) + ')"') + '><i class="fas fa-chevron-right"></i></button>';
+  $c.append(next);
+}
+
+// ── Load Summary ──
+function loadSummary() {
+  $.ajax({
+    url: '/api/metadata/tags/summary',
+    method: 'GET',
+    success: function(res) {
+      var data = res.data || res;
+      var summaryItems = Array.isArray(data) ? data : (data.items || []);
+      if (!summaryItems.length) {
+        $('#summaryContainer').html('<div class="text-center text-muted" style="padding:24px 0;">' + __t('page.metadata.summary_no_data') + '</div>');
+        return;
+      }
+      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">';
+      summaryItems.forEach(function(item) {
+        var type = item.connectorType || '';
+        var total = item.totalTags || 0;
+        var active = item.activeTags || 0;
+        var avgQ = item.avgQuality != null ? item.avgQuality : 0;
+        var pct = Math.min(avgQ, 100);
+        var barColor = avgQ >= 90 ? '#22c55e' : (avgQ >= 70 ? '#f59e0b' : '#ef4444');
+
+        html += '<div style="border:1px solid var(--border-color,#e2e8f0);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:8px;">';
+        html += '<div style="display:flex;align-items:center;gap:10px;">';
+        html += '<div style="width:36px;height:36px;border-radius:8px;background:rgba(59,130,246,0.1);display:flex;align-items:center;justify-content:center;color:#3b82f6;"><i class="fas ' + getConnectorIcon(type) + '"></i></div>';
+        html += '<div><div class="fw-600">' + getConnectorName(type) + '</div>';
+        html += '<div class="fs-12 text-muted">' + __t('page.metadata.summary_total_count') + ' ' + fmtNum(total) + __t('common.ea') + ' / ' + __t('page.metadata.summary_active_count') + ' ' + fmtNum(active) + __t('common.ea') + '</div></div>';
+        html += '</div>';
+        html += '<div style="display:flex;align-items:center;gap:8px;">';
+        html += '<span class="fs-12 text-muted">' + __t('page.metadata.summary_quality_label') + '</span>';
+        html += '<div class="progress" style="flex:1;height:6px;"><div class="progress-bar" style="width:' + pct + '%;background:' + barColor + ';"></div></div>';
+        html += '<span class="fs-12 fw-600" style="color:' + barColor + ';">' + avgQ.toFixed(1) + '%</span>';
+        html += '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+      $('#summaryContainer').html(html);
+    },
+    error: function() {
+      $('#summaryContainer').html('<div class="text-center text-muted" style="padding:24px 0;">' + __t('page.metadata.summary_load_fail') + '</div>');
+    }
+  });
+}
+
+// ── Load Tags ──
+function loadTags(page) {
+  currentTagPage = page || 1;
+  var params = {
+    page: currentTagPage,
+    size: PAGE_SIZE,
+    connector_type: $('#filterConnectorType').val(),
+    search: $('#filterSearch').val()
+  };
+  if ($('#filterActiveOnly').is(':checked')) {
+    params.active = true;
+  }
+
+  $('#tagsTableBody').html('<tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</td></tr>');
+
+  $.ajax({
+    url: '/api/metadata/tags',
+    method: 'GET',
+    data: params,
+    success: function(res) {
+      var data = res.data || res;
+      var items = data.items || [];
+      var total = data.total || 0;
+      var totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+
+      // Update stats
+      if (data.totalTags != null) $('#statTotalTags').text(fmtNum(data.totalTags));
+      if (data.activeTags != null) $('#statActiveTags').text(fmtNum(data.activeTags));
+      if (data.avgQuality != null) $('#statAvgQuality').html(data.avgQuality.toFixed(1) + '<span style="font-size:14px">%</span>');
+      if (data.lineageCount != null) $('#statLineageCount').text(fmtNum(data.lineageCount));
+
+      if (!items.length) {
+        $('#tagsTableBody').html('<tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.no_data') + '</td></tr>');
+        $('#tagsPagination').empty();
+        return;
+      }
+
+      var html = '';
+      items.forEach(function(tag) {
+        var q = tag.qualityScore != null ? tag.qualityScore : 0;
+        var isActive = tag.isActive;
+        html += '<tr style="cursor:pointer;" onclick="showTagDetail(' + tag.id + ')">';
+        html += '<td class="mono fw-600">' + (tag.tagName || '-') + '</td>';
+        html += '<td><span class="tag tag-blue"><i class="fas ' + getConnectorIcon(tag.connectorType) + '" style="margin-right:4px;"></i>' + getConnectorName(tag.connectorType) + '</span>';
+        if (tag.connectorName) {
+          html += ' <span class="fs-12 text-muted">' + tag.connectorName + '</span>';
+        }
+        html += '</td>';
+        html += '<td class="mono fs-12">' + (tag.dataType || '-') + '</td>';
+        html += '<td class="mono">' + (tag.minObserved != null ? tag.minObserved.toFixed(2) : '-') + '</td>';
+        html += '<td class="mono">' + (tag.maxObserved != null ? tag.maxObserved.toFixed(2) : '-') + '</td>';
+        html += '<td class="mono">' + (tag.avgObserved != null ? tag.avgObserved.toFixed(2) : '-') + '</td>';
+        html += '<td class="mono">' + (tag.sampleCount != null ? fmtNum(tag.sampleCount) : '-') + '</td>';
+        html += '<td><span class="badge-sm ' + qualityBadge(q) + '">' + q.toFixed(1) + '%</span></td>';
+        html += '<td class="fs-12">' + fmtTime(tag.lastSeenAt) + '</td>';
+        html += '<td>';
+        if (isActive) {
+          html += '<span class="badge-sm badge-success">' + __t('common.active') + '</span>';
+        } else {
+          html += '<span class="badge-sm badge-warning">' + __t('common.inactive') + '</span>';
+        }
+        html += '</td>';
+        html += '</tr>';
+      });
+      $('#tagsTableBody').html(html);
+      renderPagination('tagsPagination', currentTagPage, totalPages, 'loadTags');
+    },
+    error: function() {
+      $('#tagsTableBody').html('<tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.tags_load_fail') + '</td></tr>');
+      $('#tagsPagination').empty();
+    }
+  });
+}
+
+// ── Load Lineage ──
+function loadLineage(page) {
+  currentLineagePage = page || 1;
+  var params = {
+    page: currentLineagePage,
+    size: PAGE_SIZE,
+    pipeline_id: $('#filterLineagePipeline').val(),
+    connector_type: $('#filterLineageConnector').val()
+  };
+
+  $('#lineageTableBody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</td></tr>');
+
+  $.ajax({
+    url: '/api/metadata/lineage',
+    method: 'GET',
+    data: params,
+    success: function(res) {
+      var data = res.data || res;
+      var items = data.items || [];
+      var total = data.total || 0;
+      var totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+
+      if (data.lineageCount != null) $('#statLineageCount').text(fmtNum(data.lineageCount));
+
+      if (!items.length) {
+        $('#lineageTableBody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.no_data') + '</td></tr>');
+        $('#lineagePagination').empty();
+        return;
+      }
+
+      var html = '';
+      items.forEach(function(row) {
+        html += '<tr>';
+        html += '<td class="mono fs-12">' + (row.batchId || '-') + '</td>';
+        html += '<td><span class="tag tag-blue"><i class="fas ' + getConnectorIcon(row.sourceConnectorType) + '" style="margin-right:4px;"></i>' + getConnectorName(row.sourceConnectorType) + '</span></td>';
+        html += '<td class="mono fw-600">' + (row.sourceTag || '-') + '</td>';
+        html += '<td class="fw-600">' + (row.pipelineName || row.pipelineId || '-') + '</td>';
+        html += '<td>';
+        var stages = row.stepsApplied || [];
+        if (Array.isArray(stages) && stages.length) {
+          stages.forEach(function(s) {
+            html += '<span class="tag" style="margin:1px 2px;">' + s + '</span>';
+          });
+        } else if (typeof stages === 'string' && stages) {
+          html += '<span class="tag">' + stages + '</span>';
+        } else {
+          html += '-';
+        }
+        html += '</td>';
+        html += '<td>' + (row.destinationTarget || '-') + '</td>';
+        html += '<td class="mono">' + (row.recordCount != null ? fmtNum(row.recordCount) : '-') + '</td>';
+        html += '<td class="mono">' + (row.processingMs != null ? row.processingMs + 'ms' : '-') + '</td>';
+        html += '<td class="fs-12">' + fmtTime(row.createdAt) + '</td>';
+        html += '</tr>';
+      });
+      $('#lineageTableBody').html(html);
+      renderPagination('lineagePagination', currentLineagePage, totalPages, 'loadLineage');
+    },
+    error: function() {
+      $('#lineageTableBody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.lineage_load_fail') + '</td></tr>');
+      $('#lineagePagination').empty();
+    }
+  });
+}
+
+// ── Show Tag Detail Modal ──
+function showTagDetail(id) {
+  $.ajax({
+    url: '/api/metadata/tags/' + id,
+    method: 'GET',
+    success: function(res) {
+      var tag = res.data || res;
+      var q = tag.qualityScore != null ? tag.qualityScore : 0;
+      var isActive = tag.isActive;
+
+      var body = '';
+      body += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;">';
+
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_tag_name') + '</label><div class="mono fw-600">' + (tag.tagName || '-') + '</div></div>';
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('common.status') + '</label><div>' + (isActive ? '<span class="badge-sm badge-success">' + __t('common.active') + '</span>' : '<span class="badge-sm badge-warning">' + __t('common.inactive') + '</span>') + '</div></div>';
+
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_connector_type') + '</label><div><i class="fas ' + getConnectorIcon(tag.connectorType) + '" style="margin-right:4px;color:#3b82f6;"></i>' + getConnectorName(tag.connectorType) + '</div></div>';
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_connector_name') + '</label><div class="mono fs-12">' + (tag.connectorName || 'ID: ' + (tag.connectorId || '-')) + '</div></div>';
+
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_data_type') + '</label><div class="mono">' + (tag.dataType || '-') + '</div></div>';
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_unit') + '</label><div>' + (tag.unit || '-') + '</div></div>';
+
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_mqtt_topic') + '</label><div class="mono fs-12" style="word-break:break-all;">' + (tag.mqttTopic || '-') + '</div></div>';
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_last_value') + '</label><div class="mono">' + (tag.lastValue || '-') + '</div></div>';
+
+      body += '</div>';
+
+      body += '<hr style="margin:16px 0;border:0;border-top:1px solid var(--border-color,#e2e8f0);">';
+      body += '<h4 style="font-size:14px;margin-bottom:12px;"><i class="fas fa-chart-line" style="margin-right:6px;color:#3b82f6;"></i>' + __t('page.metadata.detail_stats_title') + '</h4>';
+      body += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;text-align:center;">';
+
+      body += '<div style="background:#f8fafc;border-radius:8px;padding:12px;"><div class="fs-11 text-muted">' + __t('page.metadata.detail_min_value') + '</div><div class="mono fw-600">' + (tag.minObserved != null ? tag.minObserved.toFixed(2) : '-') + '</div></div>';
+      body += '<div style="background:#f8fafc;border-radius:8px;padding:12px;"><div class="fs-11 text-muted">' + __t('page.metadata.detail_max_value') + '</div><div class="mono fw-600">' + (tag.maxObserved != null ? tag.maxObserved.toFixed(2) : '-') + '</div></div>';
+      body += '<div style="background:#f8fafc;border-radius:8px;padding:12px;"><div class="fs-11 text-muted">' + __t('page.metadata.detail_avg_value') + '</div><div class="mono fw-600">' + (tag.avgObserved != null ? tag.avgObserved.toFixed(2) : '-') + '</div></div>';
+      body += '<div style="background:#f8fafc;border-radius:8px;padding:12px;"><div class="fs-11 text-muted">' + __t('page.metadata.detail_sample_count') + '</div><div class="mono fw-600">' + (tag.sampleCount != null ? fmtNum(tag.sampleCount) : '-') + '</div></div>';
+
+      body += '</div>';
+
+      body += '<hr style="margin:16px 0;border:0;border-top:1px solid var(--border-color,#e2e8f0);">';
+      body += '<h4 style="font-size:14px;margin-bottom:12px;"><i class="fas fa-shield-halved" style="margin-right:6px;color:#3b82f6;"></i>' + __t('page.metadata.detail_quality_title') + '</h4>';
+      body += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;">';
+
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_quality_score') + '</label><div style="display:flex;align-items:center;gap:8px;"><div class="progress" style="width:80px;height:6px;"><div class="progress-bar" style="width:' + Math.min(q, 100) + '%;background:' + (q >= 90 ? '#22c55e' : (q >= 70 ? '#f59e0b' : '#ef4444')) + ';"></div></div><span class="fw-600 ' + qualityClass(q) + '">' + q.toFixed(1) + '%</span></div></div>';
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_null_ratio') + '</label><div class="mono">' + (tag.nullRatio != null ? (tag.nullRatio * 100).toFixed(1) + '%' : '-') + '</div></div>';
+
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_anomaly_ratio') + '</label><div class="mono">' + (tag.anomalyRatio != null ? (tag.anomalyRatio * 100).toFixed(1) + '%' : '-') + '</div></div>';
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_last_collected') + '</label><div class="fs-12">' + fmtTime(tag.lastSeenAt) + '</div></div>';
+
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_first_collected') + '</label><div class="fs-12">' + fmtTime(tag.firstSeenAt) + '</div></div>';
+      body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_updated_at') + '</label><div class="fs-12">' + fmtTime(tag.updatedAt) + '</div></div>';
+
+      body += '</div>';
+
+      // Additional metadata if present
+      if (tag.metadata || tag.extra) {
+        var extra = tag.metadata || tag.extra;
+        body += '<hr style="margin:16px 0;border:0;border-top:1px solid var(--border-color,#e2e8f0);">';
+        body += '<h4 style="font-size:14px;margin-bottom:12px;"><i class="fas fa-info-circle" style="margin-right:6px;color:#3b82f6;"></i>' + __t('page.metadata.detail_extra_metadata') + '</h4>';
+        body += '<pre style="background:#f8fafc;padding:12px;border-radius:8px;font-size:12px;max-height:200px;overflow:auto;margin:0;">' + JSON.stringify(extra, null, 2) + '</pre>';
+      }
+
+      if (tag.catalog) {
+        body += '<hr style="margin:16px 0;border:0;border-top:1px solid var(--border-color,#e2e8f0);">';
+        body += '<h4 style="font-size:14px;margin-bottom:12px;"><i class="fas fa-book" style="margin-right:6px;color:#8b5cf6;"></i>' + __t('page.metadata.detail_catalog_title') + '</h4>';
+        body += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;">';
+        body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_catalog_name') + '</label><div class="fw-600">' + (tag.catalog.name || '-') + '</div></div>';
+        body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_catalog_owner') + '</label><div>' + (tag.catalog.owner || '-') + '</div></div>';
+        body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_catalog_category') + '</label><div>' + (tag.catalog.category || '-') + '</div></div>';
+        body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_catalog_data_level') + '</label><div>' + (tag.catalog.dataLevel || '-') + '</div></div>';
+        body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_catalog_sensitivity') + '</label><div>' + (tag.catalog.sensitivity || '-') + '</div></div>';
+        body += '<div class="form-group"><label class="form-label" style="font-weight:600;color:#64748b;font-size:12px;">' + __t('page.metadata.detail_catalog_published') + '</label><div>' + (tag.catalog.isPublished ? '<span class="badge-sm badge-success">' + __t('page.metadata.detail_catalog_published_yes') + '</span>' : '<span class="badge-sm badge-warning">' + __t('page.metadata.detail_catalog_published_no') + '</span>') + '</div></div>';
+        body += '</div>';
+        body += '<div style="margin-top:8px;"><a href="/pipeline/catalog?id=' + tag.catalog.id + '" class="btn btn-outline btn-sm"><i class="fas fa-external-link-alt" style="margin-right:4px;"></i>' + __t('page.metadata.detail_catalog_link') + '</a></div>';
+      }
+
+      openModal(__t('page.metadata.modal_tag_detail'), body,
+        '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>',
+        'modal-lg'
+      );
+    },
+    error: function() {
+      showToast(__t('page.metadata.detail_load_fail'), 'error');
+    }
+  });
+}
+
+// ── Export CSV ──
+function exportCSV() {
+  var params = {
+    page: 1,
+    size: 10000,
+    connector_type: $('#filterConnectorType').val(),
+    search: $('#filterSearch').val()
+  };
+  if ($('#filterActiveOnly').is(':checked')) {
+    params.active = true;
+  }
+  showToast(__t('page.metadata.csv_generating'), 'info');
+  $.ajax({
+    url: '/api/metadata/tags',
+    method: 'GET',
+    data: params,
+    success: function(res) {
+      var data = res.data || res;
+      var items = data.items || [];
+      if (!items.length) {
+        showToast(__t('page.metadata.csv_no_data'), 'warning');
+        return;
+      }
+      var BOM = '\uFEFF';
+      var header = __t('page.metadata.csv_headers');
+      var rows = [header];
+      items.forEach(function(t) {
+        rows.push([
+          t.id,
+          '"' + (t.tagName || '').replace(/"/g, '""') + '"',
+          t.connectorType || '',
+          t.connectorId || '',
+          '"' + (t.connectorName || '').replace(/"/g, '""') + '"',
+          t.dataType || '',
+          '"' + (t.unit || '').replace(/"/g, '""') + '"',
+          t.minObserved != null ? t.minObserved : '',
+          t.maxObserved != null ? t.maxObserved : '',
+          t.avgObserved != null ? t.avgObserved : '',
+          t.sampleCount != null ? t.sampleCount : '',
+          t.qualityScore != null ? t.qualityScore : '',
+          t.nullRatio != null ? t.nullRatio : '',
+          t.anomalyRatio != null ? t.anomalyRatio : '',
+          t.isActive ? 'Y' : 'N',
+          '"' + (t.lastValue || '').replace(/"/g, '""') + '"',
+          '"' + (t.mqttTopic || '').replace(/"/g, '""') + '"',
+          t.firstSeenAt || '',
+          t.lastSeenAt || ''
+        ].join(','));
+      });
+      var blob = new Blob([BOM + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'tag_metadata_' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(__t('page.metadata.csv_downloaded') + ' (' + items.length + __t('page.metadata.csv_download_count') + ')', 'success');
+    },
+    error: function() {
+      showToast(__t('page.metadata.csv_query_fail'), 'error');
+    }
+  });
+}
+
+// ── Refresh All ──
+function refreshAll() {
+  loadSummary();
+  loadTags(1);
+  loadLineage(1);
+
+  // Load stats separately for initial stat cards
+  $.ajax({
+    url: '/api/metadata/tags',
+    method: 'GET',
+    data: { page: 1, size: 1 },
+    success: function(res) {
+      var data = res.data || res;
+      if (data.totalTags != null) $('#statTotalTags').text(fmtNum(data.totalTags));
+      if (data.activeTags != null) $('#statActiveTags').text(fmtNum(data.activeTags));
+      if (data.avgQuality != null) $('#statAvgQuality').html(data.avgQuality.toFixed(1) + '<span style="font-size:14px">%</span>');
+      if (data.lineageCount != null) $('#statLineageCount').text(fmtNum(data.lineageCount));
+    }
+  });
+}
+
+// ── Init ──
+$(function() {
+  refreshAll();
+});
+</script>
+{% endblock %}

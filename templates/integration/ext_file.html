@@ -1,0 +1,481 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.ext_file.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.ext_file.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('page.ext_file.breadcrumb_integration') }}</a></li>
+<li>{{ t('page.ext_file.breadcrumb_current') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.ext_file.btn_add_connection') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_file.stat_total_connections') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-folder-open"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_file.stat_active') }}</h4>
+      <div class="stat-value" id="stat-active">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_file.stat_connected') }}</h4>
+      <div class="stat-value" id="stat-connected">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-plug-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_file.stat_error') }}</h4>
+      <div class="stat-value" id="stat-error">-</div>
+    </div>
+    <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
+  </div>
+</div>
+
+<!-- Connection List Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-list"></i> {{ t('page.ext_file.table_title') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <input type="text" class="form-control" id="searchInput" placeholder="{{ t('page.ext_file.placeholder_search') }}" style="width:200px;padding:6px 10px;" onkeydown="if(event.key==='Enter')loadList(1)">
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.ext_file.th_name') }}</th>
+            <th>{{ t('page.ext_file.th_host') }}</th>
+            <th>{{ t('page.ext_file.th_storage_type') }}</th>
+            <th>{{ t('page.ext_file.th_bucket_path') }}</th>
+            <th>{{ t('page.ext_file.th_status') }}</th>
+            <th>{{ t('page.ext_file.th_enabled') }}</th>
+            <th>{{ t('page.ext_file.th_last_tested') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('page.ext_file.td_loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer" id="pagination"></div>
+</div>
+
+<!-- Detail Panel -->
+<div class="card hidden" id="detailPanel">
+  <div class="card-header">
+    <h3><i class="fas fa-info-circle"></i> {{ t('page.ext_file.detail_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#detailPanel').addClass('hidden')"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body" id="detailBody"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/integration';
+var CONN_TYPE = 'file_storage';
+var _editId = null;
+var _currentPage = 1;
+var _pageSize = 20;
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+function statusBadge(s) {
+  var map = {connected:'badge-running', error:'badge-error', unknown:'badge-stopped'};
+  var label = {connected:__t('page.ext_file.badge_connected'), error:__t('page.ext_file.badge_error'), unknown:__t('page.ext_file.badge_unknown')};
+  return '<span class="badge-status '+(map[s]||'badge-stopped')+'">'+(label[s]||s)+'</span>';
+}
+
+/* ── Stats ── */
+function loadStats() {
+  $.getJSON(API, {type: CONN_TYPE, page: 1, size: 1}, function(r) {
+    if (!r.success) return;
+    var d = r.data;
+    $('#stat-total').text(fmt(d.total));
+    $('#stat-active').text(fmt(d.activeCount));
+    $('#stat-connected').text(fmt(d.connectedCount));
+    $('#stat-error').text(fmt(d.errorCount));
+  });
+}
+
+/* ── List ── */
+function loadList(page) {
+  page = page || 1;
+  _currentPage = page;
+  var params = {
+    type: CONN_TYPE,
+    page: page,
+    size: _pageSize
+  };
+  var q = ($('#searchInput').val() || '').trim();
+  if (q) params.search = q;
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var items = r.data.items || [];
+    var total = r.data.total || 0;
+    var $tb = $('#connTbody').empty();
+
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' + __t('page.ext_file.td_no_data') + '</td></tr>');
+      $('#pagination').empty();
+      return;
+    }
+
+    items.forEach(function(item) {
+      var cfg = item.config || {};
+      var storageType = cfg.storage_type || 'S3';
+      var bucketPath = cfg.bucket || cfg.base_path || '-';
+      var enabledLabel = item.enabled
+        ? '<span class="badge-status badge-running">' + __t('page.ext_file.badge_active') + '</span>'
+        : '<span class="badge-status badge-stopped">' + __t('page.ext_file.badge_inactive') + '</span>';
+      var lastTested = item.lastTestedAt
+        ? '<span class="mono fs-12">' + item.lastTestedAt.replace('T',' ').slice(0,19) + '</span>'
+        : '<span class="text-muted">-</span>';
+
+      $tb.append(
+        '<tr>' +
+        '<td>' +
+          '<div class="fw-600">' + escHtml(item.name) + '</div>' +
+          (item.description ? '<div class="fs-11 text-muted">' + escHtml(item.description) + '</div>' : '') +
+        '</td>' +
+        '<td class="mono">' + escHtml(item.host || '-') + (item.port ? ':' + item.port : '') + '</td>' +
+        '<td><span class="tag tag-blue">' + escHtml(storageType) + '</span></td>' +
+        '<td class="mono fs-12">' + escHtml(bucketPath) + '</td>' +
+        '<td>' + statusBadge(item.status) + '</td>' +
+        '<td>' + enabledLabel + '</td>' +
+        '<td>' + lastTested + '</td>' +
+        '<td>' +
+          '<div class="d-flex gap-8">' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.detail') + '" onclick="showDetail(' + item.id + ')"><i class="fas fa-eye"></i></button>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.test_connection') + '" onclick="testConn(' + item.id + ')"><i class="fas fa-plug"></i></button>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + item.id + ')"><i class="fas fa-pen"></i></button>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteConn(' + item.id + ')"><i class="fas fa-trash text-danger"></i></button>' +
+          '</div>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+
+    /* Pagination */
+    var totalPages = Math.ceil(total / _pageSize);
+    var $pg = $('#pagination').empty();
+    if (totalPages > 1) {
+      var html = '<div class="d-flex gap-8 align-center" style="justify-content:center;padding:8px 0;">';
+      html += '<button class="btn btn-outline btn-sm" ' + (page <= 1 ? 'disabled' : 'onclick="loadList(' + (page-1) + ')"') + '><i class="fas fa-chevron-left"></i></button>';
+      for (var i = 1; i <= totalPages; i++) {
+        if (i === page) {
+          html += '<button class="btn btn-primary btn-sm">' + i + '</button>';
+        } else {
+          html += '<button class="btn btn-outline btn-sm" onclick="loadList(' + i + ')">' + i + '</button>';
+        }
+      }
+      html += '<button class="btn btn-outline btn-sm" ' + (page >= totalPages ? 'disabled' : 'onclick="loadList(' + (page+1) + ')"') + '><i class="fas fa-chevron-right"></i></button>';
+      html += '</div>';
+      $pg.html(html);
+    }
+  });
+}
+
+/* ── Refresh All ── */
+function refreshAll() {
+  loadStats();
+  loadList(_currentPage);
+}
+
+/* ── Storage type field visibility ── */
+function toggleStorageFields() {
+  var st = $('#f-storage-type').val();
+  /* S3 fields */
+  var s3 = st === 'S3';
+  $('#grp-bucket, #grp-access-key, #grp-secret-key, #grp-secure').toggle(s3);
+  /* NFS fields */
+  var nfs = st === 'NFS';
+  $('#grp-base-path').toggle(nfs || s3);
+  /* FTP fields */
+  var ftp = st === 'FTP';
+  $('#grp-ftp-user, #grp-ftp-pass').toggle(ftp);
+
+  /* Adjust base_path visibility for S3: show but optional */
+  if (s3) { $('#grp-base-path').show(); }
+
+  /* Hide access/secret for non-S3 */
+  if (!s3) {
+    $('#grp-access-key, #grp-secret-key, #grp-secure').hide();
+  }
+  /* Hide FTP user/pass for non-FTP */
+  if (!ftp) {
+    $('#grp-ftp-user, #grp-ftp-pass').hide();
+  }
+
+  /* Port defaults */
+  var ports = {S3: 9000, NFS: 2049, FTP: 21};
+  if (!_editId) {
+    $('#f-port').val(ports[st] || 9000);
+  }
+}
+
+/* ── Modal: Add ── */
+function openAddModal() {
+  _editId = null;
+  var body =
+    '<form id="conn-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.ext_file.th_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="S3-Production-Export">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.ext_file.th_storage_type') + ' <span class="text-danger">*</span></label>' +
+    '    <select class="form-select" id="f-storage-type" onchange="toggleStorageFields()">' +
+    '      <option value="S3" selected>S3</option>' +
+    '      <option value="NFS">NFS</option>' +
+    '      <option value="FTP">FTP</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.ext_file.th_host') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-host" placeholder="s3.example.com">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('common.port') + '</label>' +
+    '    <input type="number" class="form-control" id="f-port" value="9000">' +
+    '  </div>' +
+    '  <div class="form-group" id="grp-bucket">' +
+    '    <label class="form-label">' + __t('page.ext_file.label_bucket_path') + '</label>' +
+    '    <input type="text" class="form-control" id="f-bucket" placeholder="my-bucket">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row" id="grp-keys-row">' +
+    '  <div class="form-group" id="grp-access-key">' +
+    '    <label class="form-label">Access Key</label>' +
+    '    <input type="text" class="form-control" id="f-access-key" placeholder="Access Key">' +
+    '  </div>' +
+    '  <div class="form-group" id="grp-secret-key">' +
+    '    <label class="form-label">Secret Key</label>' +
+    '    <input type="password" class="form-control" id="f-secret-key" placeholder="Secret Key">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group" id="grp-base-path">' +
+    '  <label class="form-label">Base Path</label>' +
+    '  <input type="text" class="form-control" id="f-base-path" placeholder="/data/exports">' +
+    '</div>' +
+    '<div class="form-group" id="grp-secure">' +
+    '  <div class="form-check">' +
+    '    <input type="checkbox" id="f-secure"><label for="f-secure">TLS/SSL ' + __t('page.ext_file.label_tls_ssl_enabled') + '</label>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group" id="grp-ftp-user" style="display:none">' +
+    '    <label class="form-label">FTP ' + __t('common.username') + '</label>' +
+    '    <input type="text" class="form-control" id="f-ftp-user" placeholder="FTP ' + __t('common.username') + '">' +
+    '  </div>' +
+    '  <div class="form-group" id="grp-ftp-pass" style="display:none">' +
+    '    <label class="form-label">FTP ' + __t('common.password') + '</label>' +
+    '    <input type="password" class="form-control" id="f-ftp-pass" placeholder="FTP ' + __t('common.password') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.ext_file.form_label_description') + '</label>' +
+    '  <textarea class="form-control" id="f-desc" rows="3" placeholder="' + __t('page.ext_file.form_placeholder_description') + '"></textarea>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <div class="form-check">' +
+    '    <input type="checkbox" id="f-enabled" checked><label for="f-enabled">' + __t('page.ext_file.form_label_enabled') + '</label>' +
+    '  </div>' +
+    '</div>' +
+    '</form>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-outline" onclick="testConnDirect()"><i class="fas fa-plug"></i> ' + __t('common.test_connection') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnection()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+
+  openModal(__t('page.ext_file.modal_add_title'), body, footer, 'modal-lg');
+  setTimeout(function() { toggleStorageFields(); }, 50);
+}
+
+/* ── Collect form data ── */
+function _collectForm() {
+  var st = $('#f-storage-type').val();
+  var config = {
+    storage_type: st,
+    bucket: $('#f-bucket').val().trim(),
+    access_key: $('#f-access-key').val().trim(),
+    secret_key: $('#f-secret-key').val(),
+    base_path: $('#f-base-path').val().trim(),
+    secure: $('#f-secure').is(':checked')
+  };
+
+  return {
+    name: $('#f-name').val().trim(),
+    connection_type: CONN_TYPE,
+    host: $('#f-host').val().trim(),
+    port: parseInt($('#f-port').val()) || 9000,
+    username: $('#f-ftp-user').val().trim(),
+    password: $('#f-ftp-pass').val(),
+    config: config,
+    description: $('#f-desc').val().trim(),
+    enabled: $('#f-enabled').is(':checked')
+  };
+}
+
+/* ── Save ── */
+function saveConnection() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.ext_file.toast_name_required'), 'error'); return; }
+  if (!d.host) { showToast(__t('page.ext_file.toast_host_required'), 'error'); return; }
+
+  var method = _editId ? 'PUT' : 'POST';
+  var url = _editId ? (API + '/' + _editId) : API;
+
+  $.ajax({
+    url: url, type: method, contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) {
+        closeModal();
+        showToast(_editId ? __t('page.ext_file.toast_connection_updated') : __t('page.ext_file.toast_connection_registered'), 'success');
+        refreshAll();
+      } else {
+        showToast((r.error && r.error.message) || __t('page.ext_file.toast_save_failed'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON;
+      showToast((e && e.error && e.error.message) || __t('page.ext_file.toast_save_failed'), 'error');
+    }
+  });
+}
+
+/* ── Edit ── */
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.ext_file.toast_connection_info_failed'), 'error'); return; }
+    var c = r.data;
+    var cfg = c.config || {};
+
+    openAddModal();
+    _editId = id;
+    setTimeout(function() {
+      $('#f-name').val(c.name);
+      $('#f-storage-type').val(cfg.storage_type || 'S3');
+      $('#f-host').val(c.host);
+      $('#f-port').val(c.port);
+      $('#f-bucket').val(cfg.bucket || '');
+      $('#f-access-key').val(cfg.access_key || '');
+      $('#f-secret-key').val('').attr('placeholder', __t('page.ext_file.form_placeholder_password_edit'));
+      $('#f-base-path').val(cfg.base_path || '');
+      $('#f-secure').prop('checked', !!cfg.secure);
+      $('#f-ftp-user').val(c.username || '');
+      $('#f-ftp-pass').val('').attr('placeholder', __t('page.ext_file.form_placeholder_password_edit'));
+      $('#f-desc').val(c.description || '');
+      $('#f-enabled').prop('checked', c.enabled !== false);
+
+      toggleStorageFields();
+      $('#modal-title').text(__t('page.ext_file.modal_edit_title_prefix') + ' - ' + c.name);
+    }, 100);
+  });
+}
+
+/* ── Delete ── */
+function deleteConn(id) {
+  confirmAction(__t('page.ext_file.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.ext_file.toast_connection_deleted') : __t('page.ext_file.toast_delete_failed'), r.success ? 'success' : 'error');
+        refreshAll();
+      },
+      error: function() { showToast(__t('page.ext_file.toast_delete_failed'), 'error'); }
+    });
+  });
+}
+
+/* ── Test Connection ── */
+function testConn(id) {
+  showToast(__t('page.ext_file.toast_testing_connection'), 'info');
+  $.post(API + '/' + id + '/test', function(r) {
+    if (r.success && r.data) {
+      showToast(r.data.message || __t('page.ext_file.toast_test_complete'), r.data.success ? 'success' : 'error');
+      refreshAll();
+    } else {
+      showToast(__t('page.ext_file.toast_test_failed'), 'error');
+    }
+  }).fail(function() { showToast(__t('page.ext_file.toast_test_failed'), 'error'); });
+}
+
+function testConnDirect() {
+  var d = _collectForm();
+  if (!d.host) { showToast(__t('page.ext_file.toast_host_required'), 'error'); return; }
+  showToast(__t('page.ext_file.toast_testing_connection'), 'info');
+  $.ajax({
+    url: API + '/test-connection', type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success && r.data) {
+        showToast(r.data.message || __t('page.ext_file.toast_test_complete'), r.data.success ? 'success' : 'error');
+      }
+    },
+    error: function() { showToast(__t('page.ext_file.toast_test_failed'), 'error'); }
+  });
+}
+
+/* ── Detail Panel ── */
+function showDetail(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.ext_file.toast_detail_failed'), 'error'); return; }
+    var c = r.data;
+    var cfg = c.config || {};
+    var html =
+      '<div class="kv-list">' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_name') + '</span><span class="kv-value">' + escHtml(c.name) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_storage_type') + '</span><span class="kv-value">' + escHtml(cfg.storage_type || 'S3') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_host') + '</span><span class="kv-value mono">' + escHtml(c.host || '-') + ':' + (c.port || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_status') + '</span><span class="kv-value">' + statusBadge(c.status) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_bucket_path') + '</span><span class="kv-value mono">' + escHtml(cfg.bucket || cfg.base_path || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">TLS/SSL</span><span class="kv-value">' + (cfg.secure ? __t('page.ext_file.label_tls_ssl_enabled') : __t('page.ext_file.label_tls_ssl_disabled')) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_enabled') + '</span><span class="kv-value">' + (c.enabled ? __t('page.ext_file.badge_active') : __t('page.ext_file.badge_inactive')) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_description') + '</span><span class="kv-value">' + escHtml(c.description || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_last_tested') + '</span><span class="kv-value mono">' + (c.lastTestedAt ? c.lastTestedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_created_at') + '</span><span class="kv-value mono">' + (c.createdAt ? c.createdAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_file.label_updated_at') + '</span><span class="kv-value mono">' + (c.updatedAt ? c.updatedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '</div>';
+
+    $('#detailBody').html(html);
+    $('#detailPanel').removeClass('hidden');
+
+    /* Scroll to detail panel */
+    $('html, body').animate({ scrollTop: $('#detailPanel').offset().top - 80 }, 300);
+  });
+}
+
+/* ── Init ── */
+$(document).ready(function() {
+  refreshAll();
+});
+</script>
+{% endblock %}

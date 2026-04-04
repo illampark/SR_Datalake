@@ -1,0 +1,764 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.api_connector.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.api_connector.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('nav.data_collection') }}</a></li>
+<li>{{ t('page.api_connector.breadcrumb_connector') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').toggle();if($('#crossSearchPanel').is(':visible'))loadCrossSearch()"><i class="fas fa-search-plus"></i> {{ t('page.opcua.btn_cross_search') }}</button>
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.api_connector.btn_add_connector') }}</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .ep-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .ep-row .form-control,
+  .ep-row .form-select { font-size: 12px; padding: 4px 8px; height: 32px; }
+  .ep-row .ep-tag   { flex: 1.5; min-width: 0; }
+  .ep-row .ep-method { width: 90px; flex-shrink: 0; }
+  .ep-row .ep-path   { flex: 2; min-width: 0; }
+  .ep-row .ep-resp   { flex: 1.2; min-width: 0; }
+  .ep-row .ep-dtype  { width: 80px; flex-shrink: 0; }
+  .ep-row .btn       { flex-shrink: 0; height: 32px; width: 32px; padding: 0; display: flex; align-items: center; justify-content: center; }
+  .ep-header { display: flex; gap: 6px; margin-bottom: 4px; font-size: 11px; color: var(--text-secondary); font-weight: 600; }
+  .ep-header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ep-header .ep-tag   { flex: 1.5; }
+  .ep-header .ep-method { width: 90px; flex-shrink: 0; }
+  .ep-header .ep-path   { flex: 2; }
+  .ep-header .ep-resp   { flex: 1.2; }
+  .ep-header .ep-dtype  { width: 80px; flex-shrink: 0; }
+  .ep-header .ep-act    { width: 32px; flex-shrink: 0; }
+  #ep-list { max-height: 240px; overflow-y: auto; }
+  .custom-headers-hint { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .truncate { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Cross-Connector Tag Search (UC-1, UC-5) -->
+<div class="card" id="crossSearchPanel" style="display:none;margin-bottom:16px;">
+  <div class="card-header">
+    <h3><i class="fas fa-search-plus"></i> {{ t('page.opcua.cross_search_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body">
+    <div class="d-flex gap-8 align-center" style="margin-bottom:12px;flex-wrap:wrap;">
+      <input type="text" class="form-control" id="cross-q" placeholder="{{ t('page.opcua.cross_search_placeholder') }}" style="flex:1;min-width:200px;padding:6px 10px;" onkeydown="if(event.key==='Enter')loadCrossSearch()">
+      <select class="form-select" id="cross-type" style="width:auto;min-width:140px;padding:6px 10px;">
+        <option value="">{{ t('page.opcua.cross_filter_all') }}</option>
+        <option value="opcua">OPC-UA</option>
+        <option value="opcda">OPC-DA</option>
+        <option value="modbus">Modbus</option>
+        <option value="mqtt">MQTT</option>
+        <option value="api">REST API</option>
+        <option value="file">{{ t('page.opcua.cross_filter_file') }}</option>
+        <option value="db">DB</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="loadCrossSearch()"><i class="fas fa-search"></i> {{ t('common.search') }}</button>
+      <button class="btn btn-outline btn-sm" onclick="loadPatterns()"><i class="fas fa-tags"></i> {{ t('page.opcua.cross_naming_pattern') }}</button>
+    </div>
+    <div class="table-wrapper" style="max-height:350px;overflow-y:auto;">
+      <table>
+        <thead><tr>
+          <th>{{ t('page.opcua.cross_th_tag_name') }}</th><th>{{ t('page.opcua.cross_th_connector') }}</th><th>{{ t('page.opcua.cross_th_connector_name') }}</th><th>{{ t('page.opcua.cross_th_value_range') }}</th><th>{{ t('page.opcua.cross_th_avg') }}</th><th>{{ t('page.opcua.cross_th_quality') }}</th><th>{{ t('page.opcua.cross_th_pipeline') }}</th><th>{{ t('page.opcua.cross_th_samples') }}</th>
+        </tr></thead>
+        <tbody id="crossSearchTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:30px">{{ t('page.opcua.cross_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="patternResults" style="display:none;margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.opcua.stat_total_connectors') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-code"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.api_connector.stat_running') }}</h4>
+      <div class="stat-value" id="stat-running">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-play"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.api_connector.stat_api_calls') }}</h4>
+      <div class="stat-value" id="stat-requests">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-arrow-right-arrow-left"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.api_connector.stat_avg_response') }}</h4>
+      <div class="stat-value" id="stat-avgms">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+  </div>
+</div>
+
+<!-- Benthos Engine Status -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-body" style="padding:10px 16px;display:flex;align-items:center;gap:12px">
+    <span class="fw-600" style="font-size:13px"><i class="fas fa-microchip"></i> {{ t('page.opcua.benthos_engine') }}</span>
+    <span id="benthos-badge" class="badge-status badge-stopped">{{ t('page.mqtt.checking') }}</span>
+  </div>
+</div>
+
+<!-- Connector Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.opcua.connector_list') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('page.opcua.filter_status_label') }}</label>
+        <select class="form-select" id="filter-status" onchange="loadConnectors()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="running">{{ t('page.opcua.filter_running') }}</option>
+          <option value="stopped">{{ t('page.opcua.filter_stopped') }}</option>
+          <option value="error">{{ t('page.opcua.filter_error') }}</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>{{ t('page.opcua.filter_search_label') }}</label>
+        <input type="text" class="form-control" id="filter-search" placeholder="{{ t('page.opcua.filter_search_placeholder') }}" oninput="loadConnectors()">
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="connector-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.opcua.th_connector_name') }}</th>
+            <th>{{ t('page.api_connector.th_base_url') }}</th>
+            <th>{{ t('page.api_connector.th_auth_type') }}</th>
+            <th>{{ t('page.api_connector.th_schedule') }}</th>
+            <th>{{ t('page.opcua.th_status') }}</th>
+            <th>{{ t('page.api_connector.th_last_call') }}</th>
+            <th>{{ t('page.opcua.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connector-tbody">
+          <tr><td colspan="7" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/connectors/api';
+
+/* ── Helpers ── */
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+var authBadge = {
+  none:   '<span class="badge-sm badge-secondary">' + __t('common.none') + '</span>',
+  basic:  '<span class="badge-sm badge-warning"><i class="fas fa-key"></i> Basic</span>',
+  bearer: '<span class="badge-sm badge-primary"><i class="fas fa-key"></i> Bearer</span>',
+  apikey: '<span class="badge-sm badge-warning"><i class="fas fa-key"></i> API Key</span>',
+  oauth2: '<span class="badge-sm badge-primary"><i class="fas fa-key"></i> OAuth 2.0</span>',
+};
+
+var statusBadge = {
+  running: '<span class="badge-status badge-running">' + __t('common.running') + '</span>',
+  stopped: '<span class="badge-status badge-stopped">' + __t('common.stopped') + '</span>',
+  error:   '<span class="badge-status badge-error">' + __t('common.error') + '</span>',
+};
+
+var authLabel = {
+  none: __t('page.api_connector.auth_none'), basic: 'Basic Auth', bearer: 'Bearer Token',
+  apikey: 'API Key', oauth2: 'OAuth 2.0',
+};
+
+/* ── Summary ── */
+function loadSummary() {
+  $.getJSON(API + '/summary', function(r) {
+    if (!r.success) return;
+    var d = r.data;
+    $('#stat-total').text(fmt(d.totalConnectors));
+    $('#stat-running').text(fmt(d.runningConnectors));
+    $('#stat-requests').text(fmt(d.totalRequests));
+    var ms = d.avgResponseMs;
+    $('#stat-avgms').html(ms > 0 ? fmt(Math.round(ms)) + ' <span style="font-size:14px;color:var(--text-secondary)">ms</span>' : '-');
+    $('#benthos-badge').attr('class', d.benthos_running ? 'badge-status badge-running' : 'badge-status badge-stopped')
+      .text(d.benthos_running ? __t('common.running') : __t('common.stopped'));
+  });
+}
+
+/* ── List ── */
+function loadConnectors() {
+  var params = {};
+  var st = $('#filter-status').val(); if (st) params.status = st;
+  var search = ($('#filter-search').val() || '').trim().toLowerCase();
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var items = r.data;
+    var $tb = $('#connector-tbody').empty();
+
+    if (search) {
+      items = items.filter(function(c) {
+        return c.name.toLowerCase().indexOf(search) !== -1 ||
+               (c.description || '').toLowerCase().indexOf(search) !== -1 ||
+               (c.baseUrl || '').toLowerCase().indexOf(search) !== -1;
+      });
+    }
+
+    if (!items.length) {
+      $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.opcua.no_connectors') + '</td></tr>');
+      return;
+    }
+
+    items.forEach(function(c) {
+      var actionBtns = '';
+      if (c.status === 'running') {
+        actionBtns =
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.stop') + '" onclick="stopConnector('+c.id+')"><i class="fas fa-stop"></i></button>' +
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.refresh') + '" onclick="restartConnector('+c.id+')"><i class="fas fa-redo"></i></button>';
+      } else {
+        actionBtns = '<button class="btn btn-success btn-sm" title="' + __t('common.start') + '" onclick="startConnector('+c.id+')"><i class="fas fa-play"></i></button>';
+      }
+      actionBtns +=
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.test_connection') + '" onclick="testConnector('+c.id+')"><i class="fas fa-plug"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteConnector('+c.id+',\''+escAttr(c.name)+'\')"><i class="fas fa-trash text-danger"></i></button>';
+
+      // Last call info
+      var lastCallHtml = '<span class="text-muted">-</span>';
+      if (c.lastCalledAt) {
+        lastCallHtml = '<div class="mono">' + c.lastCalledAt.replace('T',' ').slice(0,19) + '</div>';
+        if (c.lastStatusCode) {
+          var isOk = c.lastStatusCode >= 200 && c.lastStatusCode < 400;
+          var respMs = c.avgResponseMs ? ' (' + Math.round(c.avgResponseMs) + 'ms)' : '';
+          lastCallHtml += '<div class="fs-11 ' + (isOk ? 'text-success' : 'text-danger') + '">' +
+            '<i class="fas fa-' + (isOk ? 'check' : 'xmark') + '"></i> ' +
+            c.lastStatusCode + (isOk ? ' OK' : ' Error') + respMs + '</div>';
+        }
+        if (c.lastError && c.status === 'error') {
+          lastCallHtml += '<div class="fs-11 text-danger" title="'+escAttr(c.lastError)+'">' + escHtml(c.lastError.substring(0, 40)) + '</div>';
+        }
+      }
+
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(c.name) + '</div>' +
+          '<div class="fs-11 text-muted">' + escHtml(c.description || '') + '</div></td>' +
+        '<td><div class="mono truncate" title="'+escAttr(c.baseUrl)+'">' + escHtml(c.baseUrl) + '</div>' +
+          '<div class="fs-11 text-muted">' + __t('page.api_connector.form_endpoint_list') + ' ' + fmt(c.endpointCount) + __t('page.api_connector.endpoint_count_suffix') + '</div></td>' +
+        '<td>' + (authBadge[c.authType] || escHtml(c.authType)) + '</td>' +
+        '<td><div class="fw-600 mono">' + escHtml(c.schedule || '') + '</div></td>' +
+        '<td>' + (statusBadge[c.status] || escHtml(c.status)) + '</td>' +
+        '<td>' + lastCallHtml + '</td>' +
+        '<td><div class="d-flex gap-8">' + actionBtns + '</div></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+/* ── Control ── */
+function startConnector(id) {
+  showToast(__t('page.api_connector.toast_starting'), 'info');
+  $.post(API + '/' + id + '/start', function(r) {
+    showToast(r.success ? __t('page.opcua.toast_started') : (r.error && r.error.message) || __t('page.opcua.toast_start_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_start_fail'), 'error');
+  });
+}
+
+function stopConnector(id) {
+  confirmAction(__t('page.opcua.confirm_stop'), function() {
+    $.post(API + '/' + id + '/stop', function(r) {
+      showToast(r.success ? __t('page.opcua.toast_stopped') : __t('page.opcua.toast_stop_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    }).fail(function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_stop_fail'), 'error');
+    });
+  });
+}
+
+function restartConnector(id) {
+  showToast(__t('page.api_connector.toast_restarting'), 'info');
+  $.post(API + '/' + id + '/restart', function(r) {
+    showToast(r.success ? __t('page.opcua.toast_restarted') : __t('page.opcua.toast_restart_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_restart_fail'), 'error');
+  });
+}
+
+function testConnector(id) {
+  showToast(__t('page.api_connector.toast_testing'), 'info');
+  $.post(API + '/' + id + '/test', function(r) {
+    if (r.success && r.data) {
+      var d = r.data;
+      var msg = d.message || (d.success ? __t('page.api_connector.toast_test_success') : __t('page.api_connector.toast_test_fail'));
+      if (d.info && d.info.statusCode) msg += ' (' + d.info.statusCode + ')';
+      if (d.info && d.info.responseMs) msg += ' ' + d.info.responseMs + 'ms';
+      showToast(msg, d.success ? 'success' : 'error');
+    }
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_test_fail'), 'error');
+  });
+}
+
+function deleteConnector(id, name) {
+  confirmAction(name +  + __t('page.opcua.confirm_delete'), function() {
+    $.ajax({ url: API + '/' + id, type: 'DELETE', success: function(r) {
+      showToast(r.success ? __t('page.opcua.toast_deleted') : __t('page.opcua.toast_delete_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    }, error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_delete_fail'), 'error');
+    }});
+  });
+}
+
+/* ── Auth field toggle ── */
+function toggleAuthFields() {
+  var t = $('#f-auth-type').val();
+  $('#auth-none, #auth-basic, #auth-bearer, #auth-apikey, #auth-oauth2').hide();
+  if (t && t !== 'none') $('#auth-' + t).show();
+}
+
+/* ── Endpoint inline management ── */
+var _endpoints = [];
+
+function renderEndpoints() {
+  var $list = $('#ep-list').empty();
+  if (!_endpoints.length) {
+    $list.html('<div class="text-muted text-center" style="padding:12px;font-size:12px">' + __t('page.api_connector.ep_empty') + '</div>');
+    return;
+  }
+  _endpoints.forEach(function(ep, idx) {
+    $list.append(
+      '<div class="ep-row" data-idx="'+idx+'">' +
+      '  <input type="text" class="form-control ep-tag" value="'+escAttr(ep.tagName)+'" placeholder="' + __t('page.api_connector.form_ep_tag_name') + '" onchange="updateEp('+idx+',\'tagName\',this.value)">' +
+      '  <select class="form-select ep-method" onchange="updateEp('+idx+',\'method\',this.value)">' +
+      '    <option value="GET"'+(ep.method==='GET'?' selected':'')+'>GET</option>' +
+      '    <option value="POST"'+(ep.method==='POST'?' selected':'')+'>POST</option>' +
+      '    <option value="PUT"'+(ep.method==='PUT'?' selected':'')+'>PUT</option>' +
+      '    <option value="DELETE"'+(ep.method==='DELETE'?' selected':'')+'>DELETE</option>' +
+      '  </select>' +
+      '  <input type="text" class="form-control ep-path" value="'+escAttr(ep.path)+'" placeholder="/path" onchange="updateEp('+idx+',\'path\',this.value)">' +
+      '  <input type="text" class="form-control ep-resp" value="'+escAttr(ep.responsePath)+'" placeholder="$.data" onchange="updateEp('+idx+',\'responsePath\',this.value)">' +
+      '  <select class="form-select ep-dtype" onchange="updateEp('+idx+',\'dataType\',this.value)">' +
+      '    <option value="json"'+(ep.dataType==='json'?' selected':'')+'>json</option>' +
+      '    <option value="float"'+(ep.dataType==='float'?' selected':'')+'>float</option>' +
+      '    <option value="int"'+(ep.dataType==='int'?' selected':'')+'>int</option>' +
+      '    <option value="string"'+(ep.dataType==='string'?' selected':'')+'>string</option>' +
+      '  </select>' +
+      '  <button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="removeEp('+idx+')"><i class="fas fa-xmark text-danger"></i></button>' +
+      '</div>'
+    );
+  });
+}
+
+function addEp() {
+  _endpoints.push({ tagName: '', method: 'GET', path: '/', responsePath: '', dataType: 'json', enabled: true, description: '' });
+  renderEndpoints();
+  var $list = $('#ep-list');
+  $list.scrollTop($list[0].scrollHeight);
+}
+
+function removeEp(idx) {
+  _endpoints.splice(idx, 1);
+  renderEndpoints();
+}
+
+function updateEp(idx, field, val) {
+  _endpoints[idx][field] = val;
+}
+
+/* ── Collect form data ── */
+function _collectAuthConfig() {
+  var t = $('#f-auth-type').val();
+  if (t === 'basic') return { username: $('#f-auth-user').val().trim(), password: $('#f-auth-pass').val() };
+  if (t === 'bearer') return { token: $('#f-auth-token').val().trim() };
+  if (t === 'apikey') return { keyName: $('#f-auth-keyname').val().trim(), keyValue: $('#f-auth-keyvalue').val().trim() };
+  if (t === 'oauth2') return { clientId: $('#f-auth-clientid').val().trim(), clientSecret: $('#f-auth-clientsecret').val(), tokenUrl: $('#f-auth-tokenurl').val().trim() };
+  return {};
+}
+
+function _parseHeaders() {
+  var raw = ($('#f-headers').val() || '').trim();
+  if (!raw) return {};
+  var headers = {};
+  raw.split('\n').forEach(function(line) {
+    var idx = line.indexOf(':');
+    if (idx > 0) {
+      var key = line.substring(0, idx).trim();
+      var val = line.substring(idx + 1).trim();
+      if (key) headers[key] = val;
+    }
+  });
+  return headers;
+}
+
+function _headersToString(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  var lines = [];
+  for (var k in obj) {
+    if (obj.hasOwnProperty(k)) lines.push(k + ': ' + obj[k]);
+  }
+  return lines.join('\n');
+}
+
+function _collectForm() {
+  return {
+    name: $('#f-name').val().trim(),
+    description: $('#f-desc').val().trim(),
+    baseUrl: $('#f-baseurl').val().trim(),
+    authType: $('#f-auth-type').val(),
+    authConfig: _collectAuthConfig(),
+    requestFormat: $('#f-format').val(),
+    schedule: $('#f-schedule').val().trim(),
+    timeout: parseInt($('#f-timeout').val()) || 30,
+    customHeaders: _parseHeaders(),
+    endpoints: _endpoints,
+  };
+}
+
+/* ── Modal: Add ── */
+function openAddModal() {
+  _endpoints = [];
+  var body =
+    '<form id="api-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_connector_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="' + __t('page.api_connector.placeholder_name_example') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_description') + '</label>' +
+    '  <input type="text" class="form-control" id="f-desc" placeholder="' + __t('page.api_connector.form_desc_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">Base URL <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-baseurl" placeholder="https://api.example.com/v1">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.api_connector.form_auth_type') + '</label>' +
+    '    <select class="form-select" id="f-auth-type" onchange="toggleAuthFields()">' +
+    '      <option value="none">' + __t('page.api_connector.form_auth_none') + '</option>' +
+    '      <option value="basic">Basic Auth</option>' +
+    '      <option value="bearer">Bearer Token</option>' +
+    '      <option value="apikey">API Key</option>' +
+    '      <option value="oauth2">OAuth 2.0</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.api_connector.form_request_format') + '</label>' +
+    '    <select class="form-select" id="f-format">' +
+    '      <option value="json" selected>JSON</option>' +
+    '      <option value="xml">XML</option>' +
+    '      <option value="form">Form Data</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+
+    /* Auth: none */
+    '<div id="auth-none" style="display:none"></div>' +
+
+    /* Auth: basic */
+    '<div id="auth-basic" class="form-row" style="display:none">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.opcua.form_username') + '</label>' +
+    '    <input type="text" class="form-control" id="f-auth-user" placeholder="Username">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.opcua.form_password') + '</label>' +
+    '    <input type="password" class="form-control" id="f-auth-pass" placeholder="Password">' +
+    '  </div>' +
+    '</div>' +
+
+    /* Auth: bearer */
+    '<div id="auth-bearer" style="display:none">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Bearer Token</label>' +
+    '    <input type="password" class="form-control" id="f-auth-token" placeholder="' + __t('page.api_connector.form_bearer_token_placeholder') + '">' +
+    '  </div>' +
+    '</div>' +
+
+    /* Auth: apikey */
+    '<div id="auth-apikey" class="form-row" style="display:none">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.api_connector.form_key_name') + '</label>' +
+    '    <input type="text" class="form-control" id="f-auth-keyname" placeholder="' + __t('page.api_connector.placeholder_key_name_example') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.api_connector.form_key_value') + '</label>' +
+    '    <input type="password" class="form-control" id="f-auth-keyvalue" placeholder="' + __t('page.api_connector.form_key_value_placeholder') + '">' +
+    '  </div>' +
+    '</div>' +
+
+    /* Auth: oauth2 */
+    '<div id="auth-oauth2" style="display:none">' +
+    '  <div class="form-row">' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">Client ID</label>' +
+    '      <input type="text" class="form-control" id="f-auth-clientid" placeholder="OAuth Client ID">' +
+    '    </div>' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">Client Secret</label>' +
+    '      <input type="password" class="form-control" id="f-auth-clientsecret" placeholder="OAuth Client Secret">' +
+    '    </div>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Token URL</label>' +
+    '    <input type="text" class="form-control" id="f-auth-tokenurl" placeholder="https://auth.example.com/oauth/token">' +
+    '  </div>' +
+    '</div>' +
+
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.api_connector.form_schedule_cron') + '</label>' +
+    '    <input type="text" class="form-control" id="f-schedule" value="*/5 * * * *" placeholder="*/5 * * * *">' +
+    '    <div class="form-hint">' + __t('page.api_connector.form_schedule_hint') + '</div>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.api_connector.form_timeout_sec') + '</label>' +
+    '    <input type="number" class="form-control" id="f-timeout" value="30" min="5" max="300">' +
+    '  </div>' +
+    '</div>' +
+
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.api_connector.form_custom_headers') + '</label>' +
+    '  <textarea class="form-control" id="f-headers" rows="2" placeholder="X-Custom-Header: value&#10;Accept-Language: ko-KR"></textarea>' +
+    '  <div class="custom-headers-hint">' + __t('page.api_connector.form_headers_hint') + '</div>' +
+    '</div>' +
+
+    /* Endpoint section */
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.api_connector.form_endpoint_list') + '</label>' +
+    '  <div class="ep-header">' +
+    '    <span class="ep-tag">' + __t('page.api_connector.form_ep_tag_name') + '</span>' +
+    '    <span class="ep-method">' + __t('page.api_connector.form_ep_method') + '</span>' +
+    '    <span class="ep-path">' + __t('page.api_connector.form_ep_path') + '</span>' +
+    '    <span class="ep-resp">' + __t('page.api_connector.form_ep_response_path') + '</span>' +
+    '    <span class="ep-dtype">' + __t('page.api_connector.form_ep_type') + '</span>' +
+    '    <span class="ep-act"></span>' +
+    '  </div>' +
+    '  <div id="ep-list"></div>' +
+    '  <button type="button" class="btn btn-outline btn-sm" style="margin-top:4px" onclick="addEp()"><i class="fas fa-plus"></i> ' + __t('page.api_connector.btn_add_endpoint') + '</button>' +
+    '</div>' +
+
+    '</form>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-outline" onclick="testConnectionDirect()"><i class="fas fa-plug"></i> ' + __t('page.opcua.btn_connection_test') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnector()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+
+  openModal(__t('page.api_connector.modal_add_title'), body, footer, 'modal-lg');
+  setTimeout(function() { toggleAuthFields(); renderEndpoints(); }, 50);
+}
+
+/* ── Modal: Edit ── */
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.opcua.toast_query_fail'), 'error'); return; }
+    var c = r.data;
+    var eps = c.endpoints || [];
+
+    _endpoints = eps.map(function(ep) {
+      return {
+        tagName: ep.tagName || '',
+        method: ep.method || 'GET',
+        path: ep.path || '/',
+        bodyTemplate: ep.bodyTemplate || '',
+        responsePath: ep.responsePath || '',
+        dataType: ep.dataType || 'json',
+        enabled: ep.enabled !== false,
+        description: ep.description || '',
+      };
+    });
+
+    openAddModal();
+    setTimeout(function() {
+      $('#f-name').val(c.name).prop('readonly', true).css('background', '#f1f5f9');
+      $('#f-desc').val(c.description || '');
+      $('#f-baseurl').val(c.baseUrl || '');
+      $('#f-auth-type').val(c.authType || 'none');
+      toggleAuthFields();
+
+      // Fill auth fields (masked values from API shown as placeholder)
+      var ac = c.authConfig || {};
+      if (c.authType === 'basic') {
+        $('#f-auth-user').val(ac.username || '');
+        $('#f-auth-pass').attr('placeholder', ac.password === '****' ? __t('page.api_connector.auth_change_hint') : 'Password');
+      } else if (c.authType === 'bearer') {
+        $('#f-auth-token').attr('placeholder', ac.token === '****' ? __t('page.api_connector.auth_change_hint') : __t('page.api_connector.form_bearer_token_placeholder'));
+      } else if (c.authType === 'apikey') {
+        $('#f-auth-keyname').val(ac.keyName || '');
+        $('#f-auth-keyvalue').attr('placeholder', ac.keyValue === '****' ? __t('page.api_connector.auth_change_hint') : __t('page.api_connector.form_key_value_placeholder'));
+      } else if (c.authType === 'oauth2') {
+        $('#f-auth-clientid').val(ac.clientId || '');
+        $('#f-auth-clientsecret').attr('placeholder', ac.clientSecret === '****' ? __t('page.api_connector.auth_change_hint') : 'OAuth Client Secret');
+        $('#f-auth-tokenurl').val(ac.tokenUrl || '');
+      }
+
+      $('#f-format').val(c.requestFormat || 'json');
+      $('#f-schedule').val(c.schedule || '*/5 * * * *');
+      $('#f-timeout').val(c.timeout || 30);
+      $('#f-headers').val(_headersToString(c.customHeaders));
+
+      renderEndpoints();
+
+      // Update modal title and rebind save to PUT
+      $('.modal-title').text(__t('page.api_connector.modal_edit_title') + c.name);
+      window._editId = id;
+      $('.modal-footer .btn-primary').removeAttr('onclick').off('click').on('click', function() { updateConnector(id); });
+    }, 100);
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_query_fail'), 'error');
+  });
+}
+
+/* ── Save (POST) ── */
+function saveConnector() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.opcua.validate_name'), 'error'); return; }
+  if (!d.baseUrl) { showToast(__t('page.api_connector.validate_base_url'), 'error'); return; }
+
+  $.ajax({ url: API, type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.opcua.toast_registered'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_register_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_register_fail'), 'error');
+    }
+  });
+}
+
+/* ── Update (PUT) ── */
+function updateConnector(id) {
+  var d = _collectForm();
+  if (!d.baseUrl) { showToast(__t('page.api_connector.validate_base_url'), 'error'); return; }
+
+  // Do not send empty auth secrets (keep server-side values)
+  var ac = d.authConfig;
+  if (d.authType === 'basic' && !ac.password) delete ac.password;
+  if (d.authType === 'bearer' && !ac.token) delete ac.token;
+  if (d.authType === 'apikey' && !ac.keyValue) delete ac.keyValue;
+  if (d.authType === 'oauth2' && !ac.clientSecret) delete ac.clientSecret;
+
+  $.ajax({ url: API + '/' + id, type: 'PUT', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.opcua.toast_updated'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_update_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_update_fail'), 'error');
+    }
+  });
+}
+
+/* ── Test before create ── */
+function testConnectionDirect() {
+  var d = _collectForm();
+  if (!d.baseUrl) { showToast(__t('page.api_connector.validate_base_url'), 'error'); return; }
+  showToast(__t('page.api_connector.toast_testing'), 'info');
+  $.ajax({ url: API + '/test-connection', type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success && r.data) {
+        var info = r.data;
+        var msg = info.message || (info.success ? __t('page.api_connector.toast_test_success') : __t('page.api_connector.toast_test_fail'));
+        if (info.info && info.info.statusCode) msg += ' (' + info.info.statusCode + ')';
+        if (info.info && info.info.responseMs) msg += ' ' + info.info.responseMs + 'ms';
+        showToast(msg, info.success ? 'success' : 'error');
+      }
+    },
+    error: function() { showToast(__t('page.opcua.toast_test_fail'), 'error'); }
+  });
+}
+
+/* ── Refresh ── */
+function refreshAll() { loadSummary(); loadConnectors(); }
+
+/* ── Cross-Connector Tag Search (UC-1, UC-5) ── */
+function loadCrossSearch() {
+  var params = { size: 100, active: 'true' };
+  var q = ($('#cross-q').val() || '').trim();
+  var ct = $('#cross-type').val();
+  if (q) params.q = q;
+  if (ct) params.connector_type = ct;
+
+  var $tb = $('#crossSearchTbody').html('<tr><td colspan="8" class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.opcua.cross_searching') + '</td></tr>');
+  $('#patternResults').hide();
+
+  $.getJSON('/api/metadata/search/unified', params, function(r) {
+    if (!r.success || !r.data) return;
+    var items = r.data.items || [];
+    $tb = $('#crossSearchTbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:30px">' + __t('page.opcua.cross_no_results') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(t) {
+      var pipeStatus = t.pipelineLinked
+        ? '<span class="badge-status badge-running" style="font-size:11px">' + t.pipelines.length + __t('common.ea') + '</span>'
+        : '<span class="badge-status badge-stopped" style="font-size:11px">' + __t('page.opcua.cross_pipe_none') + '</span>';
+      var range = (t.minObserved != null && t.maxObserved != null)
+        ? t.minObserved + '~' + t.maxObserved : '-';
+      $tb.append(
+        '<tr>' +
+        '<td class="fw-600">' + escHtml(t.tagName) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(t.connectorLabel || t.connectorType) + '</span> <span class="mono text-muted fs-11">#' + t.connectorId + '</span></td>' +
+        '<td class="fs-12">' + escHtml(t.connectorName || '-') + '</td>' +
+        '<td class="mono fs-12">' + range + '</td>' +
+        '<td class="mono fs-12">' + (t.avgObserved != null ? Number(t.avgObserved).toFixed(1) : '-') + '</td>' +
+        '<td>' + (t.qualityScore != null ? '<span class="badge-sm ' + (t.qualityScore >= 80 ? 'badge-success' : 'badge-danger') + '">' + t.qualityScore + '</span>' : '-') + '</td>' +
+        '<td>' + pipeStatus + '</td>' +
+        '<td class="mono fs-12">' + (t.sampleCount || 0) + '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function loadPatterns() {
+  var ct = $('#cross-type').val();
+  var params = ct ? { connector_type: ct } : {};
+  var $el = $('#patternResults').show().html('<div class="text-center text-muted" style="padding:16px"><i class="fas fa-spinner fa-spin"></i></div>');
+
+  $.getJSON('/api/metadata/search/patterns', params, function(r) {
+    if (!r.success || !r.data) return;
+    var patterns = r.data.patterns || [];
+    var html = '<div class="fw-600 fs-12 mb-8"><i class="fas fa-tags"></i> ' + __t('page.opcua.cross_pattern_title') + ' (' + r.data.totalTags + __t('page.opcua.cross_pattern_count_suffix') + ')</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+    patterns.forEach(function(p) {
+      html += '<div style="background:var(--bg-secondary);border-radius:6px;padding:6px 12px;border:1px solid var(--border);">' +
+        '<span class="fw-600">' + escHtml(p.prefix) + '_*</span>' +
+        ' <span class="badge-sm badge-primary">' + p.count + __t('common.ea') + '</span>' +
+        '<div class="fs-11 text-muted" style="margin-top:2px;">' + p.sampleTags.slice(0,3).map(function(t){return escHtml(t)}).join(', ') + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    $el.html(html);
+  });
+}
+
+$(document).ready(function() { refreshAll(); });
+</script>
+{% endblock %}

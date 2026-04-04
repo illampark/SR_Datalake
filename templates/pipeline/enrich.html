@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.enrich.title') }}{% endblock %}
+{% block page_title %}{{ t('page.enrich.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.normalize.breadcrumb_module') }}</li>
+<li>{{ t('page.enrich.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadRules()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.enrich.btn_add_config') }}</button>
+{% endblock %}
+
+{% block content %}
+<div class="grid-4 mb-24">
+  <div class="stat-card">
+    <div class="stat-value" id="stat-total">0</div>
+    <div class="stat-label">{{ t('page.enrich.stat_total_configs') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-primary" id="stat-fields">0</div>
+    <div class="stat-label">{{ t('page.enrich.stat_fields') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-success" id="stat-lookup">0</div>
+    <div class="stat-label">{{ t('page.enrich.th_meta_join') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-warning" id="stat-timestamp">0</div>
+    <div class="stat-label">{{ t('page.enrich.stat_timestamp') }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-puzzle-piece"></i> {{ t('page.enrich.table_title') }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.enrich.form_config_name') }}</th>
+            <th>{{ t('page.enrich.th_added_fields') }}</th>
+            <th>{{ t('page.enrich.th_meta_join') }}</th>
+            <th>{{ t('page.enrich.th_timestamp') }}</th>
+            <th>{{ t('page.enrich.th_created_at') }}</th>
+            <th style="width:120px">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="rules-tbody">
+          <tr><td colspan="6" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-24">
+  <div class="card-header">
+    <h3><i class="fas fa-link"></i> {{ t('page.enrich.linkage_title') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-hint" style="font-size:13px;line-height:1.8;">
+      {{ t('page.enrich.linkage_desc') }}<br>
+      <span class="mono" style="font-size:12px;">{{ t('page.enrich.linkage_path') }}</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+var API = '/api/pipeline/modules/enrich-configs';
+
+function _fieldsToText(obj) {
+  var lines = []; for (var k in obj) { if (obj.hasOwnProperty(k)) lines.push(k + '=' + obj[k]); } return lines.join('\n');
+}
+function _textToFields(text) {
+  var obj = {};
+  (text || '').split('\n').forEach(function(ln) {
+    var eq = ln.indexOf('=');
+    if (eq > 0) { var k = ln.substring(0, eq).trim(), v = ln.substring(eq + 1).trim(); if (k) obj[k] = v; }
+  });
+  return obj;
+}
+
+function loadRules() {
+  $.getJSON(API, function(r) {
+    if (!r.success) return;
+    var rules = r.data || [];
+
+    $('#stat-total').text(rules.length);
+    $('#stat-fields').text(rules.filter(function(x){ return x.fields && Object.keys(x.fields).length > 0; }).length);
+    $('#stat-lookup').text(rules.filter(function(x){ return x.lookupTable; }).length);
+    $('#stat-timestamp').text(rules.filter(function(x){ return x.addTimestamp; }).length);
+
+    var $tb = $('#rules-tbody').empty();
+    if (!rules.length) {
+      $tb.html('<tr><td colspan="6" class="text-center text-muted" style="padding:40px">' +
+        '<i class="fas fa-inbox" style="font-size:24px;display:block;margin-bottom:8px;"></i>' +
+        __t('page.enrich.empty_message') + '</td></tr>');
+      return;
+    }
+    rules.forEach(function(rule) {
+      var fc = rule.fields ? Object.keys(rule.fields).length : 0;
+      var fieldsSummary = fc > 0 ? Object.keys(rule.fields).slice(0, 3).join(', ') + (fc > 3 ? ' +' + (fc - 3) : '') : '<span class="text-muted">-</span>';
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(rule.name) + '</div></td>' +
+        '<td class="fs-12">' + (fc > 0 ? '<span class="tag tag-blue">' + fc + __t('page.enrich.field_count_unit') + '</span> ' + fieldsSummary : '<span class="text-muted">-</span>') + '</td>' +
+        '<td>' + (rule.lookupTable ? '<span class="tag tag-green">' + escHtml(rule.lookupTable) + '</span>' : '<span class="text-muted">-</span>') + '</td>' +
+        '<td>' + (rule.addTimestamp ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-minus text-muted"></i>') + '</td>' +
+        '<td class="fs-12 mono">' + (rule.createdAt ? rule.createdAt.replace('T',' ').slice(0,16) : '-') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + rule.id + ')"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteRule(' + rule.id + ',\'' + escAttr(rule.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function _formHtml(c) {
+  c = c || {};
+  return '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.enrich.form_config_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" value="' + escAttr(c.name || '') + '" placeholder="' + __t('page.enrich.form_config_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.enrich.form_fields_label') + '</label>' +
+    '  <textarea class="form-control" id="f-fields" rows="4" placeholder="area=Line1&#10;equipment=CNC-01&#10;processType=Machining">' +
+    _fieldsToText(c.fields || {}) + '</textarea>' +
+    '  <span class="form-hint">' + __t('page.enrich.form_fields_hint') + '</span>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.enrich.form_lookup_table') + '</label>' +
+    '  <select class="form-select" id="f-lookupTable">' +
+    '    <option value=""' + (!c.lookupTable ? ' selected' : '') + '>' + __t('page.enrich.form_lookup_none') + '</option>' +
+    '    <option value="tag_metadata"' + (c.lookupTable === 'tag_metadata' ? ' selected' : '') + '>' + __t('page.enrich.form_lookup_tag_meta') + '</option>' +
+    '  </select>' +
+    '  <span class="form-hint">' + __t('page.enrich.form_lookup_hint') + '</span>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">' +
+    '    <input type="checkbox" id="f-addTimestamp"' + (c.addTimestamp !== false ? ' checked' : '') + '>' +
+    '    ' + __t('page.enrich.form_add_timestamp') +
+    '  </label>' +
+    '</div>';
+}
+
+function _collectForm() {
+  return {
+    name: $('#f-name').val().trim(),
+    fields: _textToFields($('#f-fields').val()),
+    lookupTable: $('#f-lookupTable').val(),
+    addTimestamp: $('#f-addTimestamp').is(':checked')
+  };
+}
+
+function openAddModal() {
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveRule()"><i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.enrich.modal_add_title'), _formHtml({}), footer);
+}
+
+function saveRule() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.enrich.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API, type: 'POST', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.enrich.toast_added'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.enrich.toast_load_fail'), 'error'); return; }
+    var rule = r.data;
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="updateRule(' + id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+    openModal(__t('page.enrich.modal_edit_title') + ' — ' + escHtml(rule.name), _formHtml(rule), footer);
+  });
+}
+
+function updateRule(id) {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.enrich.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API + '/' + id, type: 'PUT', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.enrich.toast_updated'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function deleteRule(id, name) {
+  confirmAction('"' + name + '" ' + __t('page.enrich.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.enrich.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        loadRules();
+      }
+    });
+  });
+}
+
+$(document).ready(function() { loadRules(); });
+</script>
+{% endblock %}

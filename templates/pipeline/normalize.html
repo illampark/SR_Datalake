@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.normalize.title') }}{% endblock %}
+{% block page_title %}{{ t('page.normalize.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.normalize.breadcrumb_module') }}</li>
+<li>{{ t('page.normalize.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadRules()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.normalize.btn_add_rule') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="grid-4 mb-24">
+  <div class="stat-card">
+    <div class="stat-value" id="stat-total">0</div>
+    <div class="stat-label">{{ t('page.normalize.stat_total_rules') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-primary" id="stat-float">0</div>
+    <div class="stat-label">{{ t('page.normalize.stat_float') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-success" id="stat-int">0</div>
+    <div class="stat-label">{{ t('page.normalize.stat_int') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-warning" id="stat-string">0</div>
+    <div class="stat-label">{{ t('page.normalize.stat_string') }}</div>
+  </div>
+</div>
+
+<!-- Rules Table -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-right-left"></i> {{ t('page.normalize.table_title') }}</h3>
+    <div class="d-flex gap-8">
+      <select class="form-select" style="width:auto;min-width:140px;padding:5px 10px;" id="filterTargetType" onchange="loadRules()">
+        <option value="">{{ t('page.normalize.filter_all_types') }}</option>
+        <option value="float">Float</option>
+        <option value="int">Integer</option>
+        <option value="string">String</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.normalize.th_rule_name') }}</th>
+            <th>{{ t('page.normalize.th_source_type') }}</th>
+            <th>{{ t('page.normalize.th_target_type') }}</th>
+            <th>{{ t('page.normalize.th_null_strategy') }}</th>
+            <th>{{ t('page.normalize.th_trim_whitespace') }}</th>
+            <th>{{ t('page.normalize.th_default_value') }}</th>
+            <th>{{ t('page.normalize.th_created_at') }}</th>
+            <th style="width:120px">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="rules-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pipeline Step Linkage Info -->
+<div class="card mt-24">
+  <div class="card-header">
+    <h3><i class="fas fa-link"></i> {{ t('page.normalize.linkage_title') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-hint" style="font-size:13px;line-height:1.8;">
+      {{ t('page.normalize.linkage_desc') }}<br>
+      <span class="mono" style="font-size:12px;">{{ t('page.normalize.linkage_path') }}</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+var API = '/api/pipeline/modules/normalize-rules';
+
+var _nullLabels = {
+  skip: __t('page.normalize.null_label_skip'), zero: __t('page.normalize.null_label_zero'),
+  last: __t('page.normalize.null_label_last'), 'default': __t('page.normalize.null_label_default'),
+  interpolate: __t('page.normalize.null_label_interpolate')
+};
+var _typeColors = { float: 'tag-blue', int: 'tag-green', string: 'tag-orange' };
+
+/* ── Load Rules ── */
+function loadRules() {
+  $.getJSON(API, function(r) {
+    if (!r.success) return;
+    var rules = r.data || [];
+    var filter = $('#filterTargetType').val();
+    if (filter) rules = rules.filter(function(x) { return x.targetType === filter; });
+
+    // Stats
+    var all = r.data || [];
+    $('#stat-total').text(all.length);
+    $('#stat-float').text(all.filter(function(x){ return x.targetType === 'float'; }).length);
+    $('#stat-int').text(all.filter(function(x){ return x.targetType === 'int'; }).length);
+    $('#stat-string').text(all.filter(function(x){ return x.targetType === 'string'; }).length);
+
+    // Table
+    var $tb = $('#rules-tbody').empty();
+    if (!rules.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' +
+        '<i class="fas fa-inbox" style="font-size:24px;display:block;margin-bottom:8px;"></i>' +
+        __t('page.normalize.empty_message') + '</td></tr>');
+      return;
+    }
+    rules.forEach(function(rule) {
+      var cfg = rule.config || {};
+      var defVal = cfg.defaultValue != null ? cfg.defaultValue : '-';
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(rule.name) + '</div></td>' +
+        '<td>' + (rule.sourceType ? '<span class="tag">' + escHtml(rule.sourceType) + '</span>' : '<span class="text-muted fs-12">any</span>') + '</td>' +
+        '<td><span class="tag ' + (_typeColors[rule.targetType] || '') + '">' + escHtml((rule.targetType || 'float').toUpperCase()) + '</span></td>' +
+        '<td>' + escHtml(_nullLabels[rule.nullStrategy] || rule.nullStrategy || 'skip') + '</td>' +
+        '<td>' + (rule.trimWhitespace ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-minus text-muted"></i>') + '</td>' +
+        '<td class="mono fs-12">' + escHtml(String(defVal)) + '</td>' +
+        '<td class="fs-12 mono">' + (rule.createdAt ? rule.createdAt.replace('T',' ').slice(0,16) : '-') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + rule.id + ')"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteRule(' + rule.id + ',\'' + escAttr(rule.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+/* ── Form HTML ── */
+function _formHtml(c) {
+  c = c || {};
+  var cfg = c.config || {};
+  return '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.normalize.form_rule_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" value="' + escAttr(c.name || '') + '" placeholder="' + __t('page.normalize.form_rule_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.normalize.form_source_type') + '</label>' +
+    '    <select class="form-select" id="f-sourceType">' +
+    '      <option value=""' + (!c.sourceType ? ' selected' : '') + '>' + __t('page.normalize.form_source_type_any') + '</option>' +
+    '      <option value="raw"' + (c.sourceType === 'raw' ? ' selected' : '') + '>Raw</option>' +
+    '      <option value="string"' + (c.sourceType === 'string' ? ' selected' : '') + '>String</option>' +
+    '      <option value="float"' + (c.sourceType === 'float' ? ' selected' : '') + '>Float</option>' +
+    '      <option value="int"' + (c.sourceType === 'int' ? ' selected' : '') + '>Integer</option>' +
+    '      <option value="json"' + (c.sourceType === 'json' ? ' selected' : '') + '>JSON</option>' +
+    '    </select>' +
+    '    <span class="form-hint">' + __t('page.normalize.form_source_type_hint') + '</span>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.normalize.form_target_type') + '</label>' +
+    '    <select class="form-select" id="f-targetType">' +
+    '      <option value="float"' + ((c.targetType || 'float') === 'float' ? ' selected' : '') + '>Float (' + __t('page.builder.opt_float').replace('Float (','').replace(')','') + ')</option>' +
+    '      <option value="int"' + (c.targetType === 'int' ? ' selected' : '') + '>Integer (' + __t('page.builder.opt_int').replace('Integer (','').replace(')','') + ')</option>' +
+    '      <option value="string"' + (c.targetType === 'string' ? ' selected' : '') + '>String (' + __t('page.builder.opt_string').replace('String (','').replace(')','') + ')</option>' +
+    '    </select>' +
+    '    <span class="form-hint">' + __t('page.normalize.form_target_type_hint') + '</span>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.normalize.form_null_strategy') + '</label>' +
+    '    <select class="form-select" id="f-nullStrategy">' +
+    '      <option value="skip"' + ((c.nullStrategy || 'skip') === 'skip' ? ' selected' : '') + '>' + __t('page.builder.opt_null_skip') + '</option>' +
+    '      <option value="zero"' + (c.nullStrategy === 'zero' ? ' selected' : '') + '>' + __t('page.builder.opt_null_zero') + '</option>' +
+    '      <option value="last"' + (c.nullStrategy === 'last' ? ' selected' : '') + '>' + __t('page.builder.opt_null_last') + '</option>' +
+    '      <option value="default"' + (c.nullStrategy === 'default' ? ' selected' : '') + '>' + __t('page.builder.opt_null_default') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.normalize.form_default_value') + '</label>' +
+    '    <input type="text" class="form-control" id="f-defaultValue" value="' + escAttr(cfg.defaultValue != null ? String(cfg.defaultValue) : '0') + '" placeholder="0">' +
+    '    <span class="form-hint">' + __t('page.normalize.form_default_value_hint') + '</span>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">' +
+    '    <input type="checkbox" id="f-trimWhitespace"' + (c.trimWhitespace !== false ? ' checked' : '') + '>' +
+    '    ' + __t('page.normalize.form_trim_whitespace') +
+    '  </label>' +
+    '  <span class="form-hint">' + __t('page.normalize.form_trim_hint') + '</span>' +
+    '</div>';
+}
+
+/* ── Collect Form Values ── */
+function _collectForm() {
+  var dv = $('#f-defaultValue').val().trim();
+  var dvNum = parseFloat(dv);
+  return {
+    name: $('#f-name').val().trim(),
+    sourceType: $('#f-sourceType').val(),
+    targetType: $('#f-targetType').val(),
+    nullStrategy: $('#f-nullStrategy').val(),
+    trimWhitespace: $('#f-trimWhitespace').is(':checked'),
+    config: {
+      defaultValue: isNaN(dvNum) ? (dv || 0) : dvNum
+    }
+  };
+}
+
+/* ── Add ── */
+function openAddModal() {
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveRule()"><i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.normalize.modal_add_title'), _formHtml({}), footer);
+}
+
+function saveRule() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.normalize.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API, type: 'POST', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) {
+        showToast(__t('page.normalize.toast_added'), 'success');
+        closeModal(); loadRules();
+      } else {
+        showToast((r.error && r.error.message) || __t('common.save_failed'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON;
+      showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error');
+    }
+  });
+}
+
+/* ── Edit ── */
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.normalize.toast_load_fail'), 'error'); return; }
+    var rule = r.data;
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="updateRule(' + id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+    openModal(__t('page.normalize.modal_edit_title') + ' — ' + escHtml(rule.name), _formHtml(rule), footer);
+  });
+}
+
+function updateRule(id) {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.normalize.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API + '/' + id, type: 'PUT', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) {
+        showToast(__t('page.normalize.toast_updated'), 'success');
+        closeModal(); loadRules();
+      } else {
+        showToast((r.error && r.error.message) || __t('common.save_failed'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON;
+      showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error');
+    }
+  });
+}
+
+/* ── Delete ── */
+function deleteRule(id, name) {
+  confirmAction('"' + name + '" ' + __t('page.normalize.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.normalize.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        loadRules();
+      }
+    });
+  });
+}
+
+/* ── Init ── */
+$(document).ready(function() { loadRules(); });
+</script>
+{% endblock %}

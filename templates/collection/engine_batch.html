@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.engine_batch.title') }}{% endblock %}
+{% block page_title %}{{ t('page.engine_batch.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.data_collection') }}</li>
+<li>{{ t('nav.collection_engine') }}</li>
+<li>{{ t('page.engine_batch.breadcrumb_batch') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Default Parameters (read-only summary) -->
+<div class="stat-grid mb-24">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_batch.stat_default_polling') }}</h4>
+      <div class="stat-value" style="font-size:16px" id="stat-polling">-</div>
+      <div class="stat-change">{{ t('page.engine_batch.stat_polling_sub') }}</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-clock"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_batch.stat_benthos_concurrent') }}</h4>
+      <div class="stat-value" id="stat-inflight">-</div>
+      <div class="stat-change">max_in_flight</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-layer-group"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_batch.stat_sink_batch_size') }}</h4>
+      <div class="stat-value" style="font-size:16px" id="stat-sink">-</div>
+      <div class="stat-change">{{ t('page.engine_batch.stat_sink_sub') }}</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-cubes"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_batch.stat_retry_policy') }}</h4>
+      <div class="stat-value" id="stat-retry">-</div>
+      <div class="stat-change">{{ t('page.engine_batch.stat_retry_sub') }}</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-rotate-right"></i></div>
+  </div>
+</div>
+
+<!-- Connector Polling / Batch Settings -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-plug"></i> {{ t('page.engine_batch.connector_polling_title') }}</h3>
+    <select class="form-select" id="filter-type" style="width:auto;min-width:120px;padding:5px 10px;">
+      <option value="">{{ t('page.engine_status.filter_all_types') }}</option>
+      <option value="opcua">OPC-UA</option>
+      <option value="opcda">OPC-DA</option>
+      <option value="modbus">Modbus</option>
+      <option value="mqtt">MQTT</option>
+      <option value="api">API</option>
+      <option value="file">File</option>
+      <option value="db">DB</option>
+    </select>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.engine_status.th_type') }}</th>
+            <th>{{ t('common.name') }}</th>
+            <th>{{ t('common.status') }}</th>
+            <th>{{ t('page.engine_batch.th_polling_interval') }}</th>
+            <th>{{ t('page.engine_batch.th_batch_size') }}</th>
+            <th>{{ t('page.engine_batch.th_benthos_settings') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connector-tbody">
+          <tr><td colspan="7" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pipeline Sink Batch Settings -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-diagram-project"></i> {{ t('page.engine_batch.pipeline_sink_title') }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.engine_batch.th_pipeline_name') }}</th>
+            <th>{{ t('common.status') }}</th>
+            <th>{{ t('page.engine_batch.th_sink_type') }}</th>
+            <th>{{ t('page.engine_batch.th_batch_size') }}</th>
+            <th>{{ t('page.engine_batch.th_write_mode') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="pipeline-tbody">
+          <tr><td colspan="6" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Last Updated -->
+<div style="text-align:right;font-size:12px;color:var(--text-muted);padding:4px 0;">
+  {{ t('page.engine_status.last_updated') }}<span id="last-updated">-</span>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API_BASE = '/api/engine/batch';
+var _data = null;
+
+/* ── Type badge color map ── */
+var TYPE_COLORS = {
+  'opcua': 'tag-blue', 'opcda': 'tag-blue', 'modbus': 'tag-green',
+  'mqtt': 'tag-green', 'api': 'tag-yellow', 'file': 'tag-cyan', 'db': 'tag-cyan'
+};
+
+var SINK_COLORS = {
+  'internal_tsdb_sink': 'tag-blue',
+  'internal_rdbms_sink': 'tag-green',
+  'internal_file_sink': 'tag-cyan'
+};
+
+/* ── Helpers ── */
+function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+/* ── Load All ── */
+function loadAll() {
+  $.getJSON(API_BASE, function(res) {
+    if (!res.success) { showToast(__t('page.engine_batch.toast_load_fail') + (res.error && res.error.message || ''), 'error'); return; }
+    _data = res.data;
+    renderDefaults();
+    renderConnectors();
+    renderPipelines();
+    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+  }).fail(function() {
+    showToast(__t('page.engine_batch.toast_load_api_fail'), 'error');
+  });
+}
+
+/* ── Default Parameter Cards ── */
+function renderDefaults() {
+  var d = _data.defaults;
+  if (!d) return;
+
+  var pollingParts = [];
+  if (d.pollingInterval) {
+    var pi = d.pollingInterval;
+    pollingParts.push('OPC: ' + fmtNum(pi.opcua || 1000) + 'ms');
+    pollingParts.push('File: ' + (pi.file || 30) + __t('common.sec'));
+    pollingParts.push('DB: ' + (pi.db || 60) + __t('common.sec'));
+  }
+  $('#stat-polling').text(pollingParts.join(' / '));
+
+  $('#stat-inflight').text(d.maxInFlight || 64);
+
+  var sinkParts = [];
+  if (d.sinkBatchSize) {
+    var sb = d.sinkBatchSize;
+    sinkParts.push('TSDB: ' + (sb.internal_tsdb_sink || 100));
+    sinkParts.push('RDBMS: ' + (sb.internal_rdbms_sink || 100));
+    sinkParts.push('File: ' + (sb.internal_file_sink || 50));
+  }
+  $('#stat-sink').text(sinkParts.join(' / '));
+
+  $('#stat-retry').text((d.retries || 3) + __t('page.engine_batch.retry_suffix') + (d.retryPeriod || '1s'));
+}
+
+/* ── Connector Table ── */
+function renderConnectors() {
+  var typeFilter = $('#filter-type').val();
+  var list = (_data.connectors || []).filter(function(c) {
+    if (typeFilter && c.connectorType !== typeFilter) return false;
+    return true;
+  });
+  var html = '';
+  if (list.length === 0) {
+    html = '<tr><td colspan="7" class="text-center text-muted" style="padding:32px">' + __t('page.engine_batch.no_matching_connectors') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var typeCls = TYPE_COLORS[c.connectorType] || 'tag-blue';
+      var badgeCls = c.status === 'running' ? 'badge-running' : c.status === 'error' ? 'badge-error' : 'badge-stopped';
+      var badgeLabel = c.status === 'running' ? __t('common.running') : c.status === 'error' ? __t('common.error') : __t('common.stopped');
+
+      // Polling interval display
+      var pollingDisp;
+      if (c.pollingInterval === null || c.pollingInterval === undefined) {
+        pollingDisp = '<span class="text-muted">' + __t('page.engine_batch.event_based') + '</span>';
+      } else if (c.pollingUnit === 'cron') {
+        pollingDisp = '<code style="font-size:11px">' + escHtml(String(c.pollingInterval)) + '</code>';
+      } else {
+        pollingDisp = '<span class="mono">' + fmtNum(c.pollingInterval) + '</span><span class="text-muted" style="font-size:11px">' + escHtml(c.pollingUnit || '') + '</span>';
+      }
+
+      // Batch size display
+      var batchDisp = (c.batchSize !== null && c.batchSize !== undefined)
+        ? '<span class="mono">' + fmtNum(c.batchSize) + '</span>'
+        : '<span class="text-muted">-</span>';
+
+      // Benthos settings
+      var benthosDisp = 'in_flight: ' + (c.maxInFlight || 64) + ', retry: ' + (c.retries || 3);
+
+      // Edit button (not for MQTT - event-based)
+      var editBtn = c.connectorType !== 'mqtt'
+        ? '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="editConnector(\'' +
+          c.connectorType + '\',' + c.id + ',\'' + escHtml(c.name).replace(/'/g, "\\'") + '\',' +
+          (c.pollingInterval === null ? 'null' : c.pollingInterval) + ',' +
+          (c.batchSize === null ? 'null' : c.batchSize) + ',\'' + (c.pollingUnit || '') + '\')"><i class="fas fa-edit"></i></button>'
+        : '<span class="text-muted">-</span>';
+
+      html += '<tr>' +
+        '<td><span class="tag ' + typeCls + '">' + escHtml(c.connectorTypeLabel) + '</span></td>' +
+        '<td class="fw-600">' + escHtml(c.name) + '</td>' +
+        '<td><span class="badge-status ' + badgeCls + '">' + badgeLabel + '</span></td>' +
+        '<td>' + pollingDisp + '</td>' +
+        '<td>' + batchDisp + '</td>' +
+        '<td class="mono" style="font-size:11px">' + benthosDisp + '</td>' +
+        '<td>' + editBtn + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#connector-tbody').html(html);
+}
+
+/* ── Pipeline Sink Table ── */
+function renderPipelines() {
+  var list = _data.pipelines || [];
+  var html = '';
+  if (list.length === 0) {
+    html = '<tr><td colspan="6" class="text-center text-muted" style="padding:32px">' + __t('page.engine_batch.no_sink_pipelines') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      var badgeCls = p.status === 'running' ? 'badge-running' : 'badge-stopped';
+      var badgeLabel = p.status === 'running' ? __t('common.running') : __t('common.stopped');
+      var sinkCls = SINK_COLORS[p.sinkType] || 'tag-blue';
+      var wmLabel = p.writeMode === 'single' ? __t('page.engine_batch.write_mode_single') : __t('page.engine_batch.write_mode_batch');
+      var wmBadge = p.writeMode === 'single' ? 'badge-warning' : 'badge-success';
+
+      html += '<tr>' +
+        '<td class="fw-600">' + escHtml(p.name) + '</td>' +
+        '<td><span class="badge-status ' + badgeCls + '">' + badgeLabel + '</span></td>' +
+        '<td><span class="tag ' + sinkCls + '">' + escHtml(p.sinkLabel) + '</span></td>' +
+        '<td class="mono">' + fmtNum(p.batchSize) + '</td>' +
+        '<td><span class="badge-sm ' + wmBadge + '">' + wmLabel + '</span></td>' +
+        '<td><button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="editPipeline(' +
+          p.id + ',\'' + escHtml(p.name).replace(/'/g, "\\'") + '\',' + p.batchSize + ',\'' + (p.writeMode || 'batch') + '\')"><i class="fas fa-edit"></i></button></td>' +
+        '</tr>';
+    }
+  }
+  $('#pipeline-tbody').html(html);
+}
+
+/* ── Edit Connector Modal ── */
+function editConnector(connType, connId, name, currentInterval, currentBatch, unit) {
+  var unitLabel = unit === 'ms' ? __t('page.engine_batch.modal_unit_ms') : unit === '초' ? __t('page.engine_batch.modal_unit_sec') : unit === 'cron' ? __t('page.engine_batch.modal_unit_cron') : '';
+  var inputType = unit === 'cron' ? 'text' : 'number';
+  var placeholder = unit === 'cron' ? 'e.g. */5 * * * *' : '';
+
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.engine_batch.modal_connector_label') + '</label>' +
+    '<input type="text" class="form-control" value="' + escHtml(name) + '" disabled>' +
+    '</div>';
+
+  body += '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.engine_batch.modal_polling_label') + ' (' + unitLabel + ')</label>' +
+    '<input type="' + inputType + '" class="form-control" id="modal-polling" value="' + (currentInterval !== null ? currentInterval : '') + '"' +
+    (placeholder ? ' placeholder="' + placeholder + '"' : '') +
+    (inputType === 'number' ? ' min="1"' : '') + '>' +
+    '<span class="form-hint">';
+
+  if (unit === 'ms') body += __t('page.engine_batch.modal_polling_hint_ms');
+  else if (unit === '초') body += __t('page.engine_batch.modal_polling_hint_sec');
+  else if (unit === 'cron') body += __t('page.engine_batch.modal_polling_hint_cron');
+
+  body += '</span></div>';
+
+  // DB connector has batchSize
+  if (connType === 'db') {
+    body += '<div class="form-group">' +
+      '<label class="form-label">' + __t('page.engine_batch.modal_batch_size_rows') + '</label>' +
+      '<input type="number" class="form-control" id="modal-batch" value="' + (currentBatch !== null ? currentBatch : 1000) + '" min="1" max="100000">' +
+      '<span class="form-hint">' + __t('page.engine_batch.modal_batch_hint') + '</span>' +
+      '</div>';
+  }
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnector(\'' + connType + '\',' + connId + ')">' + __t('common.save') + '</button>';
+
+  openModal(escHtml(name) + __t('page.engine_batch.modal_title_suffix'), body, footer);
+}
+
+function saveConnector(connType, connId) {
+  var payload = { connectorType: connType };
+  var pollingVal = $('#modal-polling').val();
+  if (pollingVal !== '' && pollingVal !== null) {
+    payload.pollingInterval = connType === 'api' ? pollingVal : Number(pollingVal);
+  }
+  if (connType === 'db') {
+    var batchVal = $('#modal-batch').val();
+    if (batchVal) payload.batchSize = Number(batchVal);
+  }
+
+  $.ajax({
+    url: API_BASE + '/connector/' + connId,
+    method: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(res) {
+      closeModal();
+      if (res.success) {
+        showToast(res.data.message || __t('page.engine_batch.toast_saved'), 'success');
+        if (res.data.warning) showToast(res.data.warning, 'warning');
+        loadAll();
+      } else {
+        showToast(__t('page.engine_batch.toast_save_fail') + (res.error && res.error.message || ''), 'error');
+      }
+    },
+    error: function() { showToast(__t('page.engine_batch.toast_api_fail'), 'error'); }
+  });
+}
+
+/* ── Edit Pipeline Modal ── */
+function editPipeline(pipelineId, name, currentBatch, currentWriteMode) {
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.engine_batch.modal_pipeline_label') + '</label>' +
+    '<input type="text" class="form-control" value="' + escHtml(name) + '" disabled>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.engine_batch.modal_pipeline_batch_size') + '</label>' +
+    '<input type="number" class="form-control" id="modal-pip-batch" value="' + currentBatch + '" min="1" max="10000">' +
+    '<span class="form-hint">' + __t('page.engine_batch.modal_pipeline_batch_hint') + '</span>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.engine_batch.modal_write_mode') + '</label>' +
+    '<select class="form-select" id="modal-pip-writemode">' +
+    '<option value="batch"' + (currentWriteMode === 'batch' ? ' selected' : '') + '>' + __t('page.engine_batch.modal_write_batch') + '</option>' +
+    '<option value="single"' + (currentWriteMode === 'single' ? ' selected' : '') + '>' + __t('page.engine_batch.modal_write_single') + '</option>' +
+    '</select>' +
+    '<span class="form-hint">' + __t('page.engine_batch.modal_write_hint') + '</span>' +
+    '</div>';
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="savePipeline(' + pipelineId + ')">' + __t('common.save') + '</button>';
+
+  openModal(escHtml(name) + __t('page.engine_batch.modal_pipeline_title_suffix'), body, footer);
+}
+
+function savePipeline(pipelineId) {
+  var payload = {
+    batchSize: Number($('#modal-pip-batch').val()),
+    writeMode: $('#modal-pip-writemode').val()
+  };
+
+  $.ajax({
+    url: API_BASE + '/pipeline/' + pipelineId,
+    method: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+    success: function(res) {
+      closeModal();
+      if (res.success) {
+        showToast(res.data.message || __t('page.engine_batch.toast_saved'), 'success');
+        if (res.data.warning) showToast(res.data.warning, 'warning');
+        loadAll();
+      } else {
+        showToast(__t('page.engine_batch.toast_save_fail') + (res.error && res.error.message || ''), 'error');
+      }
+    },
+    error: function() { showToast(__t('page.engine_batch.toast_api_fail'), 'error'); }
+  });
+}
+
+/* ── Client-side filter ── */
+$('#filter-type').on('change', function() {
+  if (_data) renderConnectors();
+});
+
+/* ── Init ── */
+$(function() { loadAll(); });
+</script>
+{% endblock %}

@@ -1,0 +1,2190 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.builder.title') }}{% endblock %}
+{% block page_title %}{{ t('page.builder.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('page.builder.breadcrumb_dashboard') }}</a></li>
+<li><a href="#">{{ t('page.builder.breadcrumb_pipeline') }}</a></li>
+<li>{{ t('page.builder.title') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-outline btn-sm"><i class="fas fa-file-import"></i> {{ t('page.builder.btn_import') }}</button>
+<button class="btn btn-outline btn-sm"><i class="fas fa-file-export"></i> {{ t('page.builder.btn_export') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.builder.stat_total_pipelines') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-diagram-project"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.builder.stat_running') }}</h4>
+      <div class="stat-value" id="stat-running">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-play"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.builder.stat_processed_count') }}</h4>
+      <div class="stat-value" id="stat-processed">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-gauge-high"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.builder.stat_mqtt_broker') }}</h4>
+      <div class="stat-value" id="stat-mqtt">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-satellite-dish"></i></div>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar mb-16">
+  <div class="toolbar-left">
+    <select class="form-select" style="width:auto;min-width:220px;padding:6px 10px;" id="pipelineSelect" onchange="onPipelineSelect()">
+      <option value="">{{ t('page.builder.pipeline_select_placeholder') }}</option>
+    </select>
+    <span class="badge-status badge-stopped" id="selectedPipelineStatus" style="display:none"></span>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-outline btn-sm" id="btnTagSearch" onclick="toggleTagSearch()" style="display:none"><i class="fas fa-search"></i> {{ t('page.builder.btn_tag_search') }}</button>
+    <button class="btn btn-outline btn-sm" onclick="openNewPipelineModal()"><i class="fas fa-plus"></i> {{ t('page.builder.btn_new_pipeline') }}</button>
+    <button class="btn btn-primary btn-sm" id="btnSave" onclick="savePipeline()" disabled><i class="fas fa-save"></i> {{ t('common.save') }}</button>
+    <button class="btn btn-success btn-sm" id="btnStart" onclick="startSelectedPipeline()" style="display:none"><i class="fas fa-play"></i> {{ t('common.start') }}</button>
+    <button class="btn btn-outline btn-sm" id="btnStop" onclick="stopSelectedPipeline()" style="display:none"><i class="fas fa-stop"></i> {{ t('common.stop') }}</button>
+  </div>
+</div>
+
+<!-- Builder Area: Palette + Canvas -->
+<div class="grid-12 mb-24">
+  <!-- Node Palette -->
+  <div class="col-4">
+    <div class="node-palette mb-16 collapsed">
+      <h4 onclick="togglePalette(this)"><span><i class="fas fa-database"></i> {{ t('page.builder.palette_source_nodes') }}</span><i class="fas fa-chevron-down palette-toggle"></i></h4>
+      <div class="palette-body">
+        <div class="palette-item" draggable="true" data-module="opcua_source"><i class="fas fa-plug-circle-bolt text-primary"></i> {{ t('page.builder.node_opcua_source') }}</div>
+        <div class="palette-item" draggable="true" data-module="opcda_source"><i class="fas fa-plug text-primary"></i> {{ t('page.builder.node_opcda_source') }}</div>
+        <div class="palette-item" draggable="true" data-module="modbus_source"><i class="fas fa-microchip text-primary"></i> {{ t('page.builder.node_modbus_source') }}</div>
+        <div class="palette-item" draggable="true" data-module="mqtt_source"><i class="fas fa-satellite-dish text-primary"></i> {{ t('page.builder.node_mqtt_source') }}</div>
+        <div class="palette-item" draggable="true" data-module="api_source"><i class="fas fa-code text-primary"></i> {{ t('page.builder.node_api_source') }}</div>
+        <div class="palette-item" draggable="true" data-module="file_source"><i class="fas fa-file-import text-primary"></i> {{ t('page.builder.node_file_source') }}</div>
+        <div class="palette-item" draggable="true" data-module="db_source"><i class="fas fa-database text-primary"></i> {{ t('page.builder.node_db_source') }}</div>
+      </div>
+    </div>
+    <div class="node-palette mb-16 collapsed">
+      <h4 onclick="togglePalette(this)"><span><i class="fas fa-cogs"></i> {{ t('page.builder.palette_processing_nodes') }}</span><i class="fas fa-chevron-down palette-toggle"></i></h4>
+      <div class="palette-body">
+        <div class="palette-item" draggable="true" data-module="normalize"><i class="fas fa-right-left text-warning"></i> {{ t('page.builder.node_normalize') }}</div>
+        <div class="palette-item" draggable="true" data-module="unit_convert"><i class="fas fa-ruler-combined text-warning"></i> {{ t('page.builder.node_unit_convert') }}</div>
+        <div class="palette-item" draggable="true" data-module="filter"><i class="fas fa-filter text-warning"></i> {{ t('page.builder.node_filter') }}</div>
+        <div class="palette-item" draggable="true" data-module="anomaly"><i class="fas fa-triangle-exclamation text-warning"></i> {{ t('page.builder.node_anomaly') }}</div>
+        <div class="palette-item" draggable="true" data-module="aggregate"><i class="fas fa-chart-bar text-warning"></i> {{ t('page.builder.node_aggregate') }}</div>
+        <div class="palette-item" draggable="true" data-module="enrich"><i class="fas fa-puzzle-piece text-warning"></i> {{ t('page.builder.node_enrich') }}</div>
+        <div class="palette-item" draggable="true" data-module="script"><i class="fas fa-terminal text-warning"></i> {{ t('page.builder.node_script') }}</div>
+      </div>
+    </div>
+    <div class="node-palette mb-16 collapsed">
+      <h4 onclick="togglePalette(this)"><span><i class="fas fa-arrow-right-from-bracket"></i> {{ t('page.builder.palette_sink_internal') }}</span><i class="fas fa-chevron-down palette-toggle"></i></h4>
+      <div class="palette-body">
+        <div class="palette-item" draggable="true" data-module="internal_tsdb_sink"><i class="fas fa-clock-rotate-left text-success"></i> {{ t('page.builder.node_internal_tsdb') }}</div>
+        <div class="palette-item" draggable="true" data-module="internal_rdbms_sink"><i class="fas fa-table text-success"></i> {{ t('page.builder.node_internal_rdbms') }}</div>
+        <div class="palette-item" draggable="true" data-module="internal_file_sink"><i class="fas fa-folder text-success"></i> {{ t('page.builder.node_internal_file') }}</div>
+      </div>
+    </div>
+    <div class="node-palette collapsed">
+      <h4 onclick="togglePalette(this)"><span><i class="fas fa-arrow-up-right-from-square"></i> {{ t('page.builder.palette_sink_external') }}</span><i class="fas fa-chevron-down palette-toggle"></i></h4>
+      <div class="palette-body">
+        <div class="palette-item" draggable="true" data-module="external_tsdb_sink"><i class="fas fa-clock-rotate-left text-success"></i> {{ t('page.builder.node_external_tsdb') }}</div>
+        <div class="palette-item" draggable="true" data-module="external_rdbms_sink"><i class="fas fa-table text-success"></i> {{ t('page.builder.node_external_rdbms') }}</div>
+        <div class="palette-item" draggable="true" data-module="external_kafka_sink"><i class="fas fa-rotate text-success"></i> {{ t('page.builder.node_external_kafka') }}</div>
+        <div class="palette-item" draggable="true" data-module="external_file_sink"><i class="fas fa-folder-open text-success"></i> {{ t('page.builder.node_external_file') }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline Canvas -->
+  <div class="col-8">
+    <div class="pipeline-canvas" id="pipelineCanvas" style="min-height:500px;">
+      <div class="canvas-hint" id="canvasHint">
+        <i class="fas fa-wand-magic-sparkles"></i>
+        <p>{{ t('page.builder.canvas_hint') }}</p>
+        <p class="fs-12 text-muted mt-8">{{ t('page.builder.canvas_hint_sub') }}</p>
+      </div>
+      <!-- Step List (shown when pipeline selected) -->
+      <div id="stepList" style="display:none;padding:16px;">
+        <h4 style="margin-bottom:12px;"><i class="fas fa-layer-group"></i> {{ t('page.builder.pipeline_steps') }}</h4>
+        <div id="stepListBody"></div>
+        <div style="margin-top:12px;padding:12px;border:2px dashed var(--border);border-radius:8px;text-align:center;color:var(--text-secondary);font-size:13px;" id="dropZone">
+          <i class="fas fa-plus-circle"></i> {{ t('page.builder.drop_zone_hint') }}
+        </div>
+      </div>
+    </div>
+    <!-- Bindings Section -->
+    <div class="card mt-16" id="bindingsCard" style="display:none;">
+      <div class="card-header">
+        <h3><i class="fas fa-link"></i> {{ t('page.builder.data_source_binding') }}</h3>
+        <button class="btn btn-outline btn-sm" onclick="openAddBindingModal()"><i class="fas fa-plus"></i> {{ t('page.builder.btn_add_binding') }}</button>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>{{ t('page.builder.th_connector_type') }}</th>
+                <th>{{ t('page.builder.th_connector') }}</th>
+                <th>{{ t('page.builder.th_tag_filter') }}</th>
+                <th style="width:60px">{{ t('common.actions') }}</th>
+              </tr>
+            </thead>
+            <tbody id="bindingsTbody">
+              <tr><td colspan="4" class="text-center text-muted" style="padding:20px">{{ t('page.builder.binding_empty') }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <!-- Tag Search Panel (UC-3,4,6) -->
+    <div class="card mt-16" id="tagSearchCard" style="display:none;">
+      <div class="card-header">
+        <h3><i class="fas fa-search"></i> {{ t('page.builder.tag_search_title') }}</h3>
+        <button class="btn btn-outline btn-sm" onclick="$('#tagSearchCard').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+      </div>
+      <div class="card-body">
+        <div class="d-flex gap-8 align-center" style="margin-bottom:12px;flex-wrap:wrap;">
+          <input type="text" class="form-control" id="tag-search-q" placeholder="{{ t('page.builder.tag_search_placeholder') }}" style="flex:1;min-width:200px;padding:6px 10px;" onkeydown="if(event.key==='Enter')loadTagSearch()">
+          <select class="form-select" id="tag-search-type" style="width:auto;min-width:140px;padding:6px 10px;" onchange="loadTagSearch()">
+            <option value="">{{ t('page.builder.tag_search_all_connectors') }}</option>
+            <option value="opcua">OPC-UA</option>
+            <option value="opcda">OPC-DA</option>
+            <option value="modbus">Modbus</option>
+            <option value="mqtt">MQTT</option>
+            <option value="api">REST API</option>
+            <option value="file">{{ t('page.builder.tag_search_file') }}</option>
+            <option value="db">DB</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="loadTagSearch()"><i class="fas fa-search"></i> {{ t('common.search') }}</button>
+        </div>
+        <div class="table-wrapper" style="max-height:400px;overflow-y:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>{{ t('page.builder.th_tag_name') }}</th>
+                <th>{{ t('page.builder.th_connector') }}</th>
+                <th>{{ t('page.builder.th_connector_name') }}</th>
+                <th>{{ t('page.builder.th_value_range') }}</th>
+                <th>{{ t('page.builder.th_quality') }}</th>
+                <th>{{ t('page.builder.th_pipeline') }}</th>
+                <th>{{ t('page.builder.th_catalog') }}</th>
+                <th style="width:50px">{{ t('page.builder.th_select') }}</th>
+              </tr>
+            </thead>
+            <tbody id="tagSearchTbody">
+              <tr><td colspan="8" class="text-center text-muted" style="padding:30px">{{ t('page.builder.tag_search_hint') }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Pipeline List -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-list"></i> {{ t('page.builder.pipeline_list_title') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('page.builder.filter_status_label') }}</label>
+        <select class="form-select" id="filter-status" style="width:auto;min-width:120px;padding:5px 10px;" onchange="loadPipelines()">
+          <option value="">{{ t('page.builder.filter_status_all') }}</option>
+          <option value="running">{{ t('page.builder.filter_status_running') }}</option>
+          <option value="stopped">{{ t('page.builder.filter_status_stopped') }}</option>
+          <option value="draft">{{ t('page.builder.filter_status_draft') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="pipeline-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.builder.th_pipeline_name') }}</th>
+            <th>{{ t('common.status') }}</th>
+            <th>{{ t('page.builder.th_step_count') }}</th>
+            <th>{{ t('page.builder.th_binding_count') }}</th>
+            <th>{{ t('page.builder.th_processed_count') }}</th>
+            <th>{{ t('page.builder.th_error_count') }}</th>
+            <th>{{ t('page.builder.th_last_processed') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="pipeline-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function togglePalette(el) {
+  el.closest('.node-palette').classList.toggle('collapsed');
+}
+
+var API = '/api/pipeline';
+var selectedPipelineId = null;
+var selectedPipelineData = null;
+var currentSteps = [];
+var currentBindings = [];
+
+var sourceToConnectorType = {
+  'opcua_source': 'opcua', 'opcda_source': 'opcda', 'modbus_source': 'modbus',
+  'mqtt_source': 'mqtt', 'api_source': 'api', 'file_source': 'file', 'db_source': 'db'
+};
+var connectorTypeLabels = {
+  'opcua': 'OPC-UA', 'opcda': 'OPC-DA', 'modbus': 'Modbus',
+  'mqtt': 'MQTT', 'api': 'REST API', 'file': __t('page.builder.tag_search_file'), 'db': 'DB'
+};
+
+function escHtml(s) { return $('<span>').text(s || '').html(); }
+function escAttr(s) { return (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+// ── Module type label mapping ──
+var moduleLabels = {
+  'opcua_source': __t('page.builder.node_opcua_source'), 'opcda_source': __t('page.builder.node_opcda_source'), 'modbus_source': __t('page.builder.node_modbus_source'),
+  'mqtt_source': __t('page.builder.node_mqtt_source'), 'api_source': __t('page.builder.node_api_source'), 'file_source': __t('page.builder.node_file_source'), 'db_source': __t('page.builder.node_db_source'),
+  'normalize': __t('page.builder.node_normalize'), 'unit_convert': __t('page.builder.node_unit_convert'), 'filter': __t('page.builder.node_filter'),
+  'anomaly': __t('page.builder.node_anomaly'), 'aggregate': __t('page.builder.node_aggregate'), 'enrich': __t('page.builder.node_enrich'), 'script': __t('page.builder.node_script'),
+  'internal_tsdb_sink': __t('page.builder.node_internal_tsdb'), 'internal_rdbms_sink': __t('page.builder.node_internal_rdbms'), 'internal_file_sink': __t('page.builder.node_internal_file'),
+  'external_tsdb_sink': __t('page.builder.node_external_tsdb'), 'external_rdbms_sink': __t('page.builder.node_external_rdbms'), 'external_kafka_sink': __t('page.builder.node_external_kafka'), 'external_file_sink': __t('page.builder.node_external_file')
+};
+
+var moduleIcons = {
+  'opcua_source': 'fa-plug-circle-bolt', 'opcda_source': 'fa-plug', 'modbus_source': 'fa-microchip',
+  'mqtt_source': 'fa-satellite-dish', 'api_source': 'fa-code', 'file_source': 'fa-file-import', 'db_source': 'fa-database',
+  'normalize': 'fa-right-left', 'unit_convert': 'fa-ruler-combined', 'filter': 'fa-filter',
+  'anomaly': 'fa-triangle-exclamation', 'aggregate': 'fa-chart-bar', 'enrich': 'fa-puzzle-piece', 'script': 'fa-terminal',
+  'internal_tsdb_sink': 'fa-clock-rotate-left', 'internal_rdbms_sink': 'fa-table', 'internal_file_sink': 'fa-folder',
+  'external_tsdb_sink': 'fa-clock-rotate-left', 'external_rdbms_sink': 'fa-table', 'external_kafka_sink': 'fa-rotate', 'external_file_sink': 'fa-folder-open'
+};
+
+function getModuleColor(type) {
+  if (type.indexOf('source') !== -1) return 'text-primary';
+  if (type.indexOf('sink') !== -1) return 'text-success';
+  return 'text-warning';
+}
+
+// ── Load Summary Stats ──
+function loadStats() {
+  $.getJSON(API, { size: 9999 }, function(res) {
+    if (!res.success) return;
+    var list = res.data || [];
+    var total = list.length;
+    var running = 0;
+    var processed = 0;
+    list.forEach(function(p) {
+      if (p.status === 'running') running++;
+      processed += (p.processedCount || 0);
+    });
+    $('#stat-total').text(fmtNum(total));
+    $('#stat-running').text(fmtNum(running));
+    $('#stat-processed').text(fmtNum(processed));
+  });
+
+  $.getJSON(API + '/mqtt/status', function(res) {
+    if (res.success && res.data) {
+      var d = res.data;
+      if (d.connected || d.status === 'connected' || d.status === 'running') {
+        $('#stat-mqtt').html('<span style="color:var(--color-success)">' + __t('page.builder.mqtt_connected') + '</span>');
+      } else {
+        $('#stat-mqtt').html('<span style="color:var(--color-danger)">' + __t('page.builder.mqtt_disconnected') + '</span>');
+      }
+    } else {
+      $('#stat-mqtt').html('<span style="color:var(--text-secondary)">' + __t('page.builder.mqtt_unknown') + '</span>');
+    }
+  }).fail(function() {
+    $('#stat-mqtt').html('<span style="color:var(--text-secondary)">' + __t('page.builder.mqtt_unknown') + '</span>');
+  });
+}
+
+// ── Load Pipeline Selector ──
+function loadPipelineSelector() {
+  $.getJSON(API, { size: 9999 }, function(res) {
+    if (!res.success) return;
+    var $sel = $('#pipelineSelect');
+    var curVal = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (res.data || []).forEach(function(p) {
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) + '</option>');
+    });
+    if (curVal) $sel.val(curVal);
+  });
+}
+
+// ── Load Pipeline List Table ──
+function loadPipelines() {
+  var status = $('#filter-status').val();
+  var params = { page: 1, size: 100 };
+  if (status) params.status = status;
+
+  $.getJSON(API, params, function(res) {
+    if (!res.success) return;
+    var rows = res.data || [];
+    var $tbody = $('#pipeline-tbody');
+    $tbody.empty();
+
+    if (!rows.length) {
+      $tbody.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' +
+        __t('page.builder.no_pipelines') + '</td></tr>');
+      return;
+    }
+
+    rows.forEach(function(p) {
+      var statusBadge = '';
+      if (p.status === 'running') {
+        statusBadge = '<span class="badge-status badge-running">' + __t('common.running') + '</span>';
+      } else if (p.status === 'stopped') {
+        statusBadge = '<span class="badge-status badge-stopped">' + __t('common.stopped') + '</span>';
+      } else if (p.status === 'error') {
+        statusBadge = '<span class="badge-status badge-error">' + __t('page.builder.status_error') + '</span>';
+      } else {
+        statusBadge = '<span class="badge-status badge-warning">' + __t('page.builder.filter_status_draft') + '</span>';
+      }
+
+      var stepCount = (p.steps && p.steps.length) || p.stepCount || 0;
+      var bindingCount = (p.bindings && p.bindings.length) || p.bindingCount || 0;
+      var processedCount = p.processedCount || 0;
+      var errorCount = p.errorCount || 0;
+      var lastProcessed = p.lastProcessed || p.updatedAt || '-';
+
+      var errorClass = '';
+      if (errorCount > 0) errorClass = 'text-danger';
+      else if (p.status === 'running') errorClass = 'text-success';
+      else errorClass = 'text-muted';
+
+      var actions = '';
+      actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="editPipeline(' + p.id + ')"><i class="fas fa-edit"></i></button>';
+      if (p.status === 'running') {
+        actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.stop') + '" onclick="stopPipeline(' + p.id + ')"><i class="fas fa-stop"></i></button>';
+      } else {
+        actions += '<button class="btn btn-success btn-sm btn-icon" title="' + __t('common.start') + '" onclick="startPipeline(' + p.id + ')"><i class="fas fa-play"></i></button>';
+      }
+      actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deletePipeline(' + p.id + ',\'' + escAttr(p.name) + '\')"><i class="fas fa-trash text-danger"></i></button>';
+
+      $tbody.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(p.name) + '</div>' +
+          (p.description ? '<div class="fs-11 text-muted">' + escHtml(p.description) + '</div>' : '') + '</td>' +
+        '<td>' + statusBadge + '</td>' +
+        '<td>' + stepCount + '</td>' +
+        '<td>' + bindingCount + '</td>' +
+        '<td class="mono">' + fmtNum(processedCount) + '</td>' +
+        '<td class="' + errorClass + '">' + fmtNum(errorCount) + '</td>' +
+        '<td>' + escHtml(lastProcessed) + '</td>' +
+        '<td><div class="d-flex gap-8">' + actions + '</div></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+// ── Load Pipeline Detail ──
+function loadPipelineDetail(id) {
+  $.getJSON(API + '/' + id, function(res) {
+    if (!res.success) { showToast(__t('page.builder.pipeline_load_fail'), 'error'); return; }
+    var p = res.data;
+    selectedPipelineId = p.id;
+    selectedPipelineData = p;
+    currentSteps = (p.steps || []).slice();
+    currentBindings = (p.bindings || []).slice();
+
+    // Update toolbar status badge
+    var $badge = $('#selectedPipelineStatus');
+    $badge.show();
+    if (p.status === 'running') {
+      $badge.attr('class', 'badge-status badge-running').text(__t('common.running'));
+      $('#btnStart').hide();
+      $('#btnStop').show();
+    } else if (p.status === 'stopped') {
+      $badge.attr('class', 'badge-status badge-stopped').text(__t('common.stopped'));
+      $('#btnStart').show();
+      $('#btnStop').hide();
+    } else {
+      $badge.attr('class', 'badge-status badge-warning').text(__t('page.builder.filter_status_draft'));
+      $('#btnStart').show();
+      $('#btnStop').hide();
+    }
+    $('#btnSave').prop('disabled', false);
+    $('#btnTagSearch').show();
+
+    // Render steps
+    renderSteps();
+
+    // Render bindings
+    renderBindings();
+  });
+}
+
+// ── Render Steps in Canvas ──
+function renderSteps() {
+  if (!currentSteps.length) {
+    $('#canvasHint').show();
+    $('#stepList').hide();
+    return;
+  }
+  $('#canvasHint').hide();
+  $('#stepList').show();
+  var $body = $('#stepListBody');
+  $body.empty();
+
+  currentSteps.forEach(function(step, idx) {
+    var moduleType = step.moduleType || step.module_type || '';
+    var label = moduleLabels[moduleType] || moduleType;
+    var icon = moduleIcons[moduleType] || 'fa-cube';
+    var color = getModuleColor(moduleType);
+    var enabled = step.enabled !== false;
+    var enabledBadge = enabled
+      ? '<span class="badge-sm badge-success">' + __t('page.builder.badge_enabled') + '</span>'
+      : '<span class="badge-sm badge-outline">' + __t('page.builder.badge_disabled') + '</span>';
+
+    $body.append(
+      '<div class="step-item" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:8px;">' +
+        '<span class="fs-12 text-muted" style="min-width:24px;text-align:center;">' + (idx + 1) + '</span>' +
+        '<i class="fas ' + icon + ' ' + color + '" style="font-size:16px;width:20px;text-align:center;"></i>' +
+        '<span class="fw-600" style="flex:1;">' + escHtml(label) +
+          (step.config && step.config.connectorName
+            ? ' <span class="fs-11 text-muted">— ' + escHtml(step.config.connectorName) +
+              (step.config.tagFilter ? ' [' + escHtml(step.config.tagFilter) + ']' : '') +
+              '</span>'
+            : _procConfigSummary(moduleType, step.config)) +
+        '</span>' +
+        enabledBadge +
+        (!sourceToConnectorType[moduleType] && (moduleType.indexOf('_sink') === -1 || moduleType === 'internal_tsdb_sink')
+          ? '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.builder.btn_settings') + '" onclick="editStepConfig(' + idx + ')"><i class="fas fa-gear"></i></button>'
+          : '') +
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="removeStep(' + idx + ')"><i class="fas fa-times text-danger"></i></button>' +
+      '</div>'
+    );
+
+    if (idx < currentSteps.length - 1) {
+      $body.append(
+        '<div style="text-align:center;padding:2px 0;color:var(--text-secondary);"><i class="fas fa-arrow-down"></i></div>'
+      );
+    }
+  });
+}
+
+// ── Render Bindings ──
+function renderBindings() {
+  var $card = $('#bindingsCard');
+  var $tbody = $('#bindingsTbody');
+  $card.show();
+  $tbody.empty();
+
+  if (!currentBindings.length) {
+    $tbody.html('<tr><td colspan="4" class="text-center text-muted" style="padding:20px">' +
+      __t('page.builder.no_bindings_hint') + '</td></tr>');
+    return;
+  }
+
+  currentBindings.forEach(function(b, idx) {
+    var typeLabel = connectorTypeLabels[b.connectorType] || b.connectorType || '-';
+    $tbody.append(
+      '<tr>' +
+      '<td><span class="badge-status badge-info">' + escHtml(typeLabel) + '</span></td>' +
+      '<td>' + escHtml(b.connectorName || 'ID ' + (b.connectorId || '-')) +
+        ' <span class="mono text-muted fs-11">(#' + (b.connectorId || '-') + ')</span></td>' +
+      '<td><code>' + escHtml(b.tagFilter || '*') + '</code></td>' +
+      '<td><button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="removeBinding(' + idx + ')">' +
+        '<i class="fas fa-times text-danger"></i></button></td>' +
+      '</tr>'
+    );
+  });
+}
+
+// ── Remove Step ──
+function removeStep(idx) {
+  var step = currentSteps[idx];
+  currentSteps.splice(idx, 1);
+  // If source step with binding, remove corresponding binding
+  if (step.config && step.config.connectorType && step.config.connectorId) {
+    var ct = step.config.connectorType, ci = step.config.connectorId;
+    currentBindings = currentBindings.filter(function(b) {
+      return !(b.connectorType === ct && b.connectorId === ci);
+    });
+    renderBindings();
+  }
+  renderSteps();
+}
+
+// ── Add Step (from drag/drop or click) ──
+function addStep(moduleType) {
+  if (!selectedPipelineId) {
+    showToast(__t('page.builder.select_pipeline_first'), 'warning');
+    return;
+  }
+  // Source node → open connector selection modal
+  if (sourceToConnectorType[moduleType]) {
+    openSourceConnectorModal(moduleType);
+    return;
+  }
+  // Processing node → open config modal
+  if (moduleType.indexOf('_sink') === -1) {
+    openProcessingConfigModal(moduleType);
+    return;
+  }
+  // Sink node → open sink config modal
+  if (moduleType.indexOf('_sink') !== -1) {
+    openSinkConfigModal(moduleType);
+    return;
+  }
+  currentSteps.push({ moduleType: moduleType, enabled: true, config: {} });
+  $('#canvasHint').hide();
+  $('#stepList').show();
+  renderSteps();
+}
+
+// ── Source Connector Selection Modal ──
+function openSourceConnectorModal(moduleType) {
+  var connType = sourceToConnectorType[moduleType];
+  var label = connectorTypeLabels[connType] || connType;
+  var connUrl = '/collection/connectors/' + (connType === 'file' ? 'file' : connType === 'api' ? 'api' : connType);
+
+  var body =
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.builder.connector_type_label') + '</label>' +
+    '  <input type="text" class="form-control" value="' + escAttr(label) + '" readonly style="background:var(--bg-secondary)">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.builder.connector_select_label') + ' <span class="text-danger">*</span></label>' +
+    '  <select class="form-select" id="f-src-connector">' +
+    '    <option value="">' + __t('page.builder.connector_loading') + '</option>' +
+    '  </select>' +
+    '  <div class="fs-11 text-muted mt-4" id="f-src-empty" style="display:none">' +
+    '    ' + __t('page.builder.no_connectors') + ' <a href="' + connUrl + '">' + __t('page.builder.no_connectors_hint') + '</a> ' + __t('page.builder.no_connectors_hint_suffix') + '</div>' +
+    '</div>' +
+    (connType === 'db'
+      ? '<div class="form-group" id="f-src-tables-group" style="display:none">' +
+        '  <label class="form-label">' + __t('page.builder.db_table_select_label') + '</label>' +
+        '  <div style="margin-bottom:8px">' +
+        '    <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;font-size:13px;">' +
+        '      <input type="checkbox" id="f-src-table-all" onchange="toggleAllDbTables(this.checked)" checked> ' + __t('page.builder.db_table_select_all') +
+        '    </label>' +
+        '  </div>' +
+        '  <div id="f-src-table-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--bg-secondary);"></div>' +
+        '  <div class="fs-11 text-muted mt-4">' + __t('page.builder.db_table_select_hint') + '</div>' +
+        '</div>'
+      : '<div class="form-group">' +
+        '  <label class="form-label">' + __t('page.builder.tag_filter_label') + '</label>' +
+        '  <input type="text" class="form-control" id="f-src-tagfilter" value="*" placeholder="' + __t('page.builder.tag_filter_placeholder') + '">' +
+        '  <div class="fs-11 text-muted mt-4">' + __t('page.builder.tag_filter_hint') + '</div>' +
+        '</div>'
+    );
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" id="btn-src-confirm" onclick="confirmSourceConnector(\'' + moduleType + '\',\'' + connType + '\')" disabled>' +
+    '<i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+
+  openModal(label + ' ' + __t('page.builder.modal_node_add'), body, footer);
+
+  // Load available connectors
+  $.getJSON(API + '/connectors/' + connType, function(res) {
+    var $sel = $('#f-src-connector');
+    $sel.empty();
+    if (res.success && res.data && res.data.length) {
+      $sel.append('<option value="">' + __t('page.builder.connector_select_prompt') + '</option>');
+      res.data.forEach(function(c) {
+        var st = c.status === 'running' ? ' [' + __t('page.builder.connector_status_running') + ']' : '';
+        $sel.append('<option value="' + c.id + '" data-name="' + escAttr(c.name) + '">' +
+          escHtml(c.name) + st + '</option>');
+      });
+      $sel.on('change', function() {
+        var v = $(this).val();
+        $('#btn-src-confirm').prop('disabled', !v);
+        if (connType === 'db' && v) { loadDbConnectorTables(v); }
+        else if (connType === 'db') { $('#f-src-tables-group').hide(); }
+      });
+    } else {
+      $sel.html('<option value="">' + __t('page.builder.no_connectors_option') + '</option>').prop('disabled', true);
+      $('#f-src-empty').show();
+    }
+  }).fail(function() {
+    $('#f-src-connector').html('<option value="">' + __t('page.builder.connector_load_fail') + '</option>');
+  });
+}
+
+function confirmSourceConnector(moduleType, connType) {
+  var $sel = $('#f-src-connector');
+  var connId = parseInt($sel.val());
+  if (!connId) { showToast(__t('page.builder.connector_select_warning'), 'warning'); return; }
+  var connName = $sel.find('option:selected').data('name') || $sel.find('option:selected').text().replace(/ \[.+\]$/, '');
+
+  // Duplicate check (same connector type + id)
+  var dup = currentBindings.some(function(b) {
+    return b.connectorType === connType && b.connectorId === connId;
+  });
+  if (dup) { showToast(__t('page.builder.duplicate_connector'), 'warning'); return; }
+
+  if (connType === 'db') {
+    // DB type: read selected tables from checkboxes
+    var allChecked = $('#f-src-table-all').is(':checked');
+    var selectedItems = [];
+    $('.f-src-table-cb:checked').each(function() {
+      selectedItems.push({ mqttName: $(this).val(), tableName: $(this).data('table') });
+    });
+    if (!allChecked && !selectedItems.length) {
+      showToast(__t('page.builder.db_select_tables_warning'), 'warning'); return;
+    }
+
+    var displayNames = allChecked ? [__t('common.all')] : selectedItems.map(function(t) { return t.mqttName; });
+    var tagFilterDisplay = allChecked ? '*' : displayNames.join(', ');
+
+    // Add source step
+    currentSteps.push({
+      moduleType: moduleType, enabled: true,
+      config: {
+        connectorType: connType, connectorId: connId, connectorName: connName,
+        tagFilter: tagFilterDisplay
+      }
+    });
+
+    // Add bindings: one per selected table (or single wildcard)
+    if (allChecked) {
+      currentBindings.push({
+        connectorType: connType, connectorId: connId, connectorName: connName,
+        tagFilter: '*', enabled: true
+      });
+    } else {
+      selectedItems.forEach(function(t) {
+        currentBindings.push({
+          connectorType: connType, connectorId: connId, connectorName: connName,
+          tagFilter: t.mqttName, enabled: true
+        });
+      });
+    }
+
+    closeModal();
+    $('#canvasHint').hide();
+    $('#stepList').show();
+    renderSteps();
+    renderBindings();
+    showToast(connName + ' ' + __t('page.builder.db_source_added') + ' (' + displayNames.length + __t('common.ea') + ')', 'success');
+  } else {
+    // Non-DB types: use tag filter text input
+    var tagFilter = ($('#f-src-tagfilter').val() || '*').trim() || '*';
+
+    currentSteps.push({
+      moduleType: moduleType, enabled: true,
+      config: { connectorType: connType, connectorId: connId, connectorName: connName, tagFilter: tagFilter }
+    });
+    currentBindings.push({
+      connectorType: connType, connectorId: connId, connectorName: connName,
+      tagFilter: tagFilter, enabled: true
+    });
+
+    closeModal();
+    $('#canvasHint').hide();
+    $('#stepList').show();
+    renderSteps();
+    renderBindings();
+    showToast(connName + ' ' + __t('page.builder.source_added'), 'success');
+  }
+}
+
+// ── DB Connector Table Loading for Pipeline Builder ──
+function loadDbConnectorTables(connectorId) {
+  var $group = $('#f-src-tables-group');
+  var $list = $('#f-src-table-list');
+  $group.show();
+  $list.html('<div class="text-muted fs-12" style="padding:8px;text-align:center;">' + __t('page.builder.db_tables_loading') + '</div>');
+
+  $.getJSON(API + '/connectors/db/' + connectorId + '/tables', function(res) {
+    $list.empty();
+    if (!res.success || !res.data || !res.data.length) {
+      $list.html('<div class="text-muted fs-12" style="padding:12px;text-align:center;">' +
+        __t('page.builder.db_no_tables') + '</div>');
+      $('#f-src-table-all').prop('checked', false);
+      return;
+    }
+    res.data.forEach(function(t) {
+      var tagBadge = t.isTag
+        ? ' <span class="badge-sm badge-primary" style="font-size:10px;">' + __t('page.builder.badge_tag') + ': ' + escHtml(t.mqttName) + '</span>'
+        : ' <span class="badge-sm badge-outline" style="font-size:10px;">' + __t('page.builder.badge_table_name') + '</span>';
+      var descText = t.description ? ' <span class="fs-11 text-muted">— ' + escHtml(t.description) + '</span>' : '';
+      $list.append(
+        '<label style="display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;border-bottom:1px solid var(--border);">' +
+        '  <input type="checkbox" class="f-src-table-cb" value="' + escAttr(t.mqttName) + '" data-table="' + escAttr(t.tableName) + '" checked' +
+        '    onchange="onDbTableCheckChange()">' +
+        '  <span style="flex:1;">' +
+        '    <span class="mono fw-600 fs-13">' + escHtml(t.tableName) + '</span>' + tagBadge + descText +
+        '  </span>' +
+        '</label>'
+      );
+    });
+    $('#f-src-table-all').prop('checked', true);
+    $('#btn-src-confirm').prop('disabled', false);
+  }).fail(function() {
+    $list.html('<div class="text-muted fs-12" style="padding:8px;text-align:center;">' + __t('page.builder.db_table_load_fail') + '</div>');
+  });
+}
+
+function toggleAllDbTables(checked) {
+  $('.f-src-table-cb').prop('checked', checked);
+}
+
+function onDbTableCheckChange() {
+  var total = $('.f-src-table-cb').length;
+  var checked = $('.f-src-table-cb:checked').length;
+  $('#f-src-table-all').prop('checked', total > 0 && checked === total);
+}
+
+// ══════════════════════════════════════════════
+// Processing Node Configuration Modals
+// ══════════════════════════════════════════════
+
+function openProcessingConfigModal(moduleType, editIdx) {
+  var isEdit = typeof editIdx === 'number' && editIdx >= 0;
+  var cfg = isEdit ? (currentSteps[editIdx].config || {}) : {};
+  var label = moduleLabels[moduleType] || moduleType;
+  var formHtml = _procFormHtml(moduleType, cfg);
+
+  if (!formHtml) {
+    if (!isEdit) {
+      currentSteps.push({ moduleType: moduleType, enabled: true, config: {} });
+      $('#canvasHint').hide(); $('#stepList').show(); renderSteps();
+    }
+    return;
+  }
+
+  var body =
+    '<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg-secondary);border-radius:6px;font-size:12px;">' +
+    '<i class="fas ' + (moduleIcons[moduleType] || 'fa-cube') + ' text-warning"></i> ' +
+    escHtml(label) + ' ' + __t('page.builder.module_config_label') + '</div>' + formHtml;
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="confirmProcessingStep(\'' + moduleType + '\',' +
+    (isEdit ? editIdx : -1) + ')">' +
+    '<i class="fas fa-' + (isEdit ? 'save' : 'plus') + '"></i> ' +
+    (isEdit ? __t('common.save') : __t('common.add')) + '</button>';
+
+  openModal((isEdit ? __t('page.builder.modal_config_edit') : __t('page.builder.modal_node_add')) + ' \u2014 ' + label, body, footer);
+
+  // Dynamic field visibility + preset loading
+  setTimeout(function() {
+    if (moduleType === 'normalize') {
+      _loadNormPresets();
+      $('#f-proc-preset').on('change', function() {
+        var id = $(this).val();
+        if (!id) return;
+        $.getJSON('/api/pipeline/modules/normalize-rules/' + id, function(r) {
+          if (!r.success) return;
+          var p = r.data, cfg = p.config || {};
+          $('#f-proc-targetType').val(p.targetType || 'float');
+          $('#f-proc-nullStrategy').val(p.nullStrategy || 'skip');
+          $('#f-proc-defaultValue').val(cfg.defaultValue != null ? cfg.defaultValue : 0);
+          $('#f-proc-trimWhitespace').prop('checked', p.trimWhitespace !== false);
+          showToast(p.name + ' ' + __t('page.builder.preset_applied'), 'success');
+        });
+      });
+    }
+    if (moduleType === 'unit_convert') {
+      _loadUnitPresets();
+      $('#f-proc-preset').on('change', function() {
+        var id = $(this).val();
+        if (!id) return;
+        $.getJSON('/api/pipeline/modules/unit-conversions/' + id, function(r) {
+          if (!r.success) return;
+          var p = r.data;
+          $('#f-proc-sourceUnit').val(p.sourceUnit || '').trigger('change');
+          $('#f-proc-targetUnit').val(p.targetUnit || '').trigger('change');
+          $('#f-proc-factor').val(p.factor != null ? p.factor : 1.0);
+          $('#f-proc-offset').val(p.offset != null ? p.offset : 0.0);
+          showToast(p.name + ' ' + __t('page.builder.preset_applied'), 'success');
+        });
+      });
+    }
+    if (moduleType === 'filter') {
+      _loadFilterPresets();
+      $('#f-proc-preset').on('change', function() {
+        var id = $(this).val();
+        if (!id) return;
+        $.getJSON('/api/pipeline/modules/filter-rules/' + id, function(r) {
+          if (!r.success) return;
+          var p = r.data;
+          $('#f-proc-filterType').val(p.filterType || 'range').trigger('change');
+          $('#f-proc-action').val(p.action || 'drop');
+          if (p.filterType === 'range') {
+            $('#f-proc-minValue').val(p.minValue != null ? p.minValue : '');
+            $('#f-proc-maxValue').val(p.maxValue != null ? p.maxValue : '');
+          } else if (p.filterType === 'deadband') {
+            $('#f-proc-deadband').val(p.deadband || 0.5);
+          } else if (p.filterType === 'condition') {
+            $('#f-proc-condition').val(p.condition || '');
+          }
+          showToast(p.name + ' ' + __t('page.builder.preset_applied'), 'success');
+        });
+      });
+      $('#f-proc-filterType').on('change', function() {
+        var v = $(this).val();
+        $('#f-proc-range-grp').toggle(v === 'range');
+        $('#f-proc-deadband-grp').toggle(v === 'deadband');
+        $('#f-proc-condition-grp').toggle(v === 'condition');
+      });
+    }
+    if (moduleType === 'anomaly') {
+      _loadAnomalyPresets();
+      $('#f-proc-preset').on('change', function() {
+        var id = $(this).val();
+        if (!id) return;
+        $.getJSON('/api/pipeline/modules/anomaly-configs/' + id, function(r) {
+          if (!r.success) return;
+          var p = r.data;
+          $('#f-proc-method').val(p.method || 'zscore');
+          $('#f-proc-threshold').val(p.threshold || 3.0);
+          $('#f-proc-windowSize').val(p.windowSize || 60);
+          $('#f-proc-action').val(p.action || 'flag').trigger('change');
+          if (p.action === 'replace') $('#f-proc-replaceStrategy').val(p.replaceStrategy || 'mean');
+          showToast(p.name + ' ' + __t('page.builder.preset_applied'), 'success');
+        });
+      });
+      $('#f-proc-action').on('change', function() {
+        $('#f-proc-replace-grp').toggle($(this).val() === 'replace');
+      });
+    }
+    if (moduleType === 'aggregate') {
+      _loadAggPresets();
+      $('#f-proc-preset').on('change', function() {
+        var id = $(this).val();
+        if (!id) return;
+        $.getJSON('/api/pipeline/modules/aggregate-configs/' + id, function(r) {
+          if (!r.success) return;
+          var p = r.data;
+          $('#f-proc-windowSeconds').val(p.windowSeconds || 60);
+          var fns = p.functions || ['avg'];
+          $('.f-proc-agg-fn').each(function() { $(this).prop('checked', fns.indexOf($(this).val()) !== -1); });
+          showToast(p.name + ' ' + __t('page.builder.preset_applied'), 'success');
+        });
+      });
+    }
+    if (moduleType === 'enrich') {
+      _loadEnrichPresets();
+      $('#f-proc-preset').on('change', function() {
+        var id = $(this).val();
+        if (!id) return;
+        $.getJSON('/api/pipeline/modules/enrich-configs/' + id, function(r) {
+          if (!r.success) return;
+          var p = r.data;
+          $('#f-proc-fields').val(_fieldsToText(p.fields || {}));
+          $('#f-proc-lookupTable').val(p.lookupTable || '');
+          $('#f-proc-addTimestamp').prop('checked', p.addTimestamp !== false);
+          showToast(p.name + ' ' + __t('page.builder.preset_applied'), 'success');
+        });
+      });
+    }
+    if (moduleType === 'script') {
+      _loadScriptPresets();
+      $('#f-proc-preset').on('change', function() {
+        var id = $(this).val();
+        if (!id) return;
+        $.getJSON('/api/pipeline/modules/script-configs/' + id, function(r) {
+          if (!r.success) return;
+          var p = r.data;
+          $('#f-proc-language').val(p.language || 'python');
+          $('#f-proc-code').val(p.code || '');
+          $('#f-proc-timeout').val(p.timeout || 5);
+          showToast(p.name + ' ' + __t('page.builder.preset_applied'), 'success');
+        });
+      });
+    }
+    if (moduleType === 'unit_convert') {
+      var builtinPairs = [
+        'celsius-fahrenheit','fahrenheit-celsius','celsius-kelvin','kelvin-celsius',
+        'bar-psi','psi-bar','kpa-psi','psi-kpa','mm-inch','inch-mm',
+        'm-ft','ft-m','kg-lb','lb-kg','lpm-gpm','gpm-lpm'
+      ];
+      function _chkConv() {
+        var s = $('#f-proc-sourceUnit').val(), t = $('#f-proc-targetUnit').val();
+        $('#f-proc-custom-conv').toggle(!(s && t && builtinPairs.indexOf(s + '-' + t) !== -1));
+      }
+      $('#f-proc-sourceUnit, #f-proc-targetUnit').on('change', _chkConv);
+      _chkConv();
+    }
+  }, 50);
+}
+
+function editStepConfig(idx) {
+  var step = currentSteps[idx];
+  var mt = step.moduleType || step.module_type;
+  if (mt.indexOf('_sink') !== -1) {
+    openSinkConfigModal(mt, idx);
+    return;
+  }
+  openProcessingConfigModal(mt, idx);
+}
+
+function confirmProcessingStep(moduleType, editIdx) {
+  var config = _collectProcConfig(moduleType);
+  if (editIdx >= 0) {
+    currentSteps[editIdx].config = config;
+  } else {
+    currentSteps.push({ moduleType: moduleType, enabled: true, config: config });
+  }
+  closeModal();
+  $('#canvasHint').hide();
+  $('#stepList').show();
+  renderSteps();
+  showToast(moduleLabels[moduleType] + ' ' + (editIdx >= 0 ? __t('page.builder.step_config_saved') : __t('page.builder.step_added')), 'success');
+}
+
+// ── Form element helpers ──
+function _sel(lbl, id, opts, val) {
+  var h = '<div class="form-group"><label class="form-label">' + lbl + '</label><select class="form-select" id="f-proc-' + id + '">';
+  opts.forEach(function(o) { h += '<option value="' + escAttr(o[0]) + '"' + (o[0] == val ? ' selected' : '') + '>' + escHtml(o[1]) + '</option>'; });
+  return h + '</select></div>';
+}
+function _num(lbl, id, val, step) {
+  return '<div class="form-group"><label class="form-label">' + lbl + '</label>' +
+    '<input type="number" class="form-control" id="f-proc-' + id + '" value="' + (val != null && val !== '' ? val : '') + '"' +
+    (step ? ' step="' + step + '"' : '') + '></div>';
+}
+function _txt(lbl, id, val, ph) {
+  return '<div class="form-group"><label class="form-label">' + lbl + '</label>' +
+    '<input type="text" class="form-control" id="f-proc-' + id + '" value="' + escAttr(val || '') + '" placeholder="' + escAttr(ph || '') + '"></div>';
+}
+function _chk(lbl, id, checked) {
+  return '<div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;">' +
+    '<input type="checkbox" id="f-proc-' + id + '"' + (checked ? ' checked' : '') + '> ' + lbl + '</label></div>';
+}
+function _mchk(val, lbl, checked) {
+  return '<label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;cursor:pointer;">' +
+    '<input type="checkbox" class="f-proc-agg-fn" value="' + val + '"' + (checked ? ' checked' : '') + '> ' + lbl + '</label>';
+}
+function _fieldsToText(obj) {
+  var lines = []; for (var k in obj) { if (obj.hasOwnProperty(k)) lines.push(k + '=' + obj[k]); } return lines.join('\n');
+}
+function _textToFields(text) {
+  var obj = {};
+  (text || '').split('\n').forEach(function(ln) {
+    var eq = ln.indexOf('=');
+    if (eq > 0) { var k = ln.substring(0, eq).trim(), v = ln.substring(eq + 1).trim(); if (k) obj[k] = v; }
+  });
+  return obj;
+}
+
+// ── Target field helper (DB/API JSON row field selector) ──
+function _tfHtml(c) {
+  return '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.builder.target_field_label') + ' <span class="fs-11 text-muted">(' + __t('page.builder.target_field_json_hint') + ')</span></label>' +
+    '<input type="text" class="form-control" id="f-proc-targetField" value="' + escAttr(c.targetField || '') + '" ' +
+    'placeholder="' + __t('page.builder.target_field_placeholder') + '">' +
+    '<div class="form-hint">' + __t('page.builder.target_field_hint') + '</div>' +
+    '</div>';
+}
+
+// ── Module-specific form HTML ──
+function _procFormHtml(moduleType, cfg) {
+  var c = cfg || {};
+  switch (moduleType) {
+    case 'normalize':
+      return _tfHtml(c) +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.preset_load_label') + '</label>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<select class="form-select" id="f-proc-preset" style="flex:1"><option value="">' + __t('page.builder.preset_direct_option') + '</option></select>' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_loadNormPresets()" title="' + __t('common.refresh') + '"><i class="fas fa-sync-alt"></i></button>' +
+        '</div>' +
+        '<div class="form-hint">' + __t('page.builder.preset_norm_hint') + '</div>' +
+        '</div>' +
+        '<hr style="border:none;border-top:1px dashed var(--border-color,#e2e8f0);margin:12px 0;">' +
+        _sel(__t('page.builder.proc_target_type'), 'targetType', [
+          ['float',__t('page.builder.opt_float')],['int',__t('page.builder.opt_int')],['string',__t('page.builder.opt_string')]
+        ], c.targetType || 'float') +
+        _sel(__t('page.builder.proc_null_strategy'), 'nullStrategy', [
+          ['skip',__t('page.builder.opt_null_skip')],['zero',__t('page.builder.opt_null_zero')],
+          ['last',__t('page.builder.opt_null_last')],['default',__t('page.builder.opt_null_default')]
+        ], c.nullStrategy || 'skip') +
+        _num(__t('page.builder.proc_default_value'), 'defaultValue', c.defaultValue || 0) +
+        _chk(__t('page.builder.proc_trim_whitespace'), 'trimWhitespace', c.trimWhitespace !== false);
+
+    case 'unit_convert':
+      var unitOpts = [['',__t('page.builder.opt_direct_input')],
+        ['celsius','Celsius (°C)'],['fahrenheit','Fahrenheit (°F)'],['kelvin','Kelvin (K)'],
+        ['bar','Bar'],['psi','PSI'],['kpa','kPa'],
+        ['mm','mm'],['inch','Inch'],['m','m'],['ft','ft'],
+        ['kg','kg'],['lb','lb'],['lpm','L/min'],['gpm','Gal/min']];
+      return _tfHtml(c) +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.preset_load_label') + '</label>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<select class="form-select" id="f-proc-preset" style="flex:1"><option value="">' + __t('page.builder.preset_direct_option') + '</option></select>' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_loadUnitPresets()" title="' + __t('common.refresh') + '"><i class="fas fa-sync-alt"></i></button>' +
+        '</div><div class="form-hint">' + __t('page.builder.preset_unit_hint') + '</div></div>' +
+        '<hr style="border:none;border-top:1px dashed var(--border-color,#e2e8f0);margin:12px 0;">' +
+        _sel(__t('page.builder.proc_source_unit'), 'sourceUnit', unitOpts, c.sourceUnit || '') +
+        _sel(__t('page.builder.proc_target_unit'), 'targetUnit', unitOpts, c.targetUnit || '') +
+        '<div id="f-proc-custom-conv">' +
+        '<div class="form-hint" style="margin-bottom:8px;">' + __t('page.builder.proc_custom_conv_hint') + '</div>' +
+        _num(__t('page.builder.proc_factor'), 'factor', c.factor != null ? c.factor : 1.0, '0.000001') +
+        _num(__t('page.builder.proc_offset'), 'offset', c.offset != null ? c.offset : 0.0, '0.000001') +
+        '</div>';
+
+    case 'filter':
+      var ft = c.filterType || 'range';
+      return _tfHtml(c) +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.preset_load_label') + '</label>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<select class="form-select" id="f-proc-preset" style="flex:1"><option value="">' + __t('page.builder.preset_direct_option') + '</option></select>' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_loadFilterPresets()" title="' + __t('common.refresh') + '"><i class="fas fa-sync-alt"></i></button>' +
+        '</div><div class="form-hint">' + __t('page.builder.preset_filter_hint') + '</div></div>' +
+        '<hr style="border:none;border-top:1px dashed var(--border-color,#e2e8f0);margin:12px 0;">' +
+        _sel(__t('page.builder.proc_filter_type'), 'filterType', [
+          ['range',__t('page.builder.opt_filter_range')],['deadband',__t('page.builder.proc_deadband_width')],['condition',__t('page.builder.proc_condition')]
+        ], ft) +
+        '<div id="f-proc-range-grp"' + (ft !== 'range' ? ' style="display:none"' : '') + '>' +
+        '<div style="display:flex;gap:12px;">' +
+        '<div style="flex:1"><label class="form-label">' + __t('page.builder.proc_min_value') + '</label>' +
+        '<input type="number" class="form-control" id="f-proc-minValue" value="' + (c.minValue != null ? c.minValue : '') + '" step="any" placeholder="' + __t('common.none') + '"></div>' +
+        '<div style="flex:1"><label class="form-label">' + __t('page.builder.proc_max_value') + '</label>' +
+        '<input type="number" class="form-control" id="f-proc-maxValue" value="' + (c.maxValue != null ? c.maxValue : '') + '" step="any" placeholder="' + __t('common.none') + '"></div>' +
+        '</div></div>' +
+        '<div id="f-proc-deadband-grp"' + (ft !== 'deadband' ? ' style="display:none"' : '') + '>' +
+        _num(__t('page.builder.proc_deadband_width'), 'deadband', c.deadband || 0.5, '0.01') +
+        '</div>' +
+        '<div id="f-proc-condition-grp"' + (ft !== 'condition' ? ' style="display:none"' : '') + '>' +
+        _txt(__t('page.builder.proc_condition'), 'condition', c.condition || '', 'value > 0 and value < 100') +
+        '</div>' +
+        _sel(__t('page.builder.proc_out_of_range_action'), 'action', [
+          ['drop',__t('page.builder.opt_action_drop')],['flag',__t('page.builder.opt_action_flag')],['clamp',__t('page.builder.opt_action_clamp')]
+        ], c.action || 'drop');
+
+    case 'anomaly':
+      var act = c.action || 'flag';
+      return _tfHtml(c) +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.preset_load_label') + '</label>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<select class="form-select" id="f-proc-preset" style="flex:1"><option value="">' + __t('page.builder.preset_direct_option') + '</option></select>' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_loadAnomalyPresets()" title="' + __t('common.refresh') + '"><i class="fas fa-sync-alt"></i></button>' +
+        '</div><div class="form-hint">' + __t('page.builder.preset_anomaly_hint') + '</div></div>' +
+        '<hr style="border:none;border-top:1px dashed var(--border-color,#e2e8f0);margin:12px 0;">' +
+        _sel(__t('page.builder.proc_detect_method'), 'method', [
+          ['zscore','Z-Score'],['iqr',__t('page.builder.opt_method_iqr')],['moving_avg',__t('page.builder.opt_method_moving_avg')],['sigma',__t('page.builder.opt_method_sigma')]
+        ], c.method || 'zscore') +
+        _num(__t('page.builder.proc_threshold'), 'threshold', c.threshold || 3.0, '0.1') +
+        _num(__t('page.builder.proc_window_size'), 'windowSize', c.windowSize || 60, '1') +
+        _sel(__t('page.builder.proc_anomaly_action'), 'action', [
+          ['flag',__t('page.builder.opt_action_flag')],['drop',__t('page.builder.opt_action_drop')],
+          ['clamp',__t('page.builder.opt_action_clamp')],['replace',__t('page.builder.opt_action_replace')]
+        ], act) +
+        '<div id="f-proc-replace-grp"' + (act !== 'replace' ? ' style="display:none"' : '') + '>' +
+        _sel(__t('page.builder.proc_replace_strategy'), 'replaceStrategy', [
+          ['mean',__t('page.builder.opt_replace_mean')],['median',__t('page.builder.opt_replace_median')],['last',__t('page.builder.opt_replace_last')]
+        ], c.replaceStrategy || 'mean') +
+        '</div>';
+
+    case 'aggregate':
+      var fns = c.functions || ['avg'];
+      return _tfHtml(c) +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.preset_load_label') + '</label>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<select class="form-select" id="f-proc-preset" style="flex:1"><option value="">' + __t('page.builder.preset_direct_option') + '</option></select>' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_loadAggPresets()" title="' + __t('common.refresh') + '"><i class="fas fa-sync-alt"></i></button>' +
+        '</div><div class="form-hint">' + __t('page.builder.preset_agg_hint') + '</div></div>' +
+        '<hr style="border:none;border-top:1px dashed var(--border-color,#e2e8f0);margin:12px 0;">' +
+        _num(__t('page.builder.proc_agg_window'), 'windowSeconds', c.windowSeconds || 60, '1') +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.proc_agg_functions') + '</label><div style="padding:4px 0;">' +
+        _mchk('avg', __t('page.builder.proc_agg_avg'), fns.indexOf('avg') !== -1) +
+        _mchk('min', __t('page.builder.proc_agg_min'), fns.indexOf('min') !== -1) +
+        _mchk('max', __t('page.builder.proc_agg_max'), fns.indexOf('max') !== -1) +
+        _mchk('count', __t('page.builder.proc_agg_count'), fns.indexOf('count') !== -1) +
+        _mchk('sum', __t('page.builder.proc_agg_sum'), fns.indexOf('sum') !== -1) +
+        '</div></div>';
+
+    case 'enrich':
+      return '<div class="form-group"><label class="form-label">' + __t('page.builder.preset_load_label') + '</label>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<select class="form-select" id="f-proc-preset" style="flex:1"><option value="">' + __t('page.builder.preset_direct_option') + '</option></select>' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_loadEnrichPresets()" title="' + __t('common.refresh') + '"><i class="fas fa-sync-alt"></i></button>' +
+        '</div><div class="form-hint">' + __t('page.builder.preset_enrich_hint') + '</div></div>' +
+        '<hr style="border:none;border-top:1px dashed var(--border-color,#e2e8f0);margin:12px 0;">' +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.proc_enrich_fields') + '</label>' +
+        '<textarea class="form-control" id="f-proc-fields" rows="4" ' +
+        'placeholder="area=Line1&#10;equipment=CNC-01&#10;processType=Machining">' +
+        _fieldsToText(c.fields || {}) + '</textarea>' +
+        '<div class="form-hint">' + __t('page.builder.proc_enrich_fields_hint') + '</div></div>' +
+        _sel(__t('page.builder.proc_meta_join'), 'lookupTable', [
+          ['',__t('page.builder.proc_meta_join_none')],['tag_metadata',__t('page.builder.proc_meta_join_tag')]
+        ], c.lookupTable || '') +
+        _chk(__t('page.builder.proc_add_timestamp'), 'addTimestamp', c.addTimestamp !== false);
+
+    case 'script':
+      return '<div class="form-group"><label class="form-label">' + __t('page.builder.preset_load_label') + '</label>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<select class="form-select" id="f-proc-preset" style="flex:1"><option value="">' + __t('page.builder.preset_direct_option') + '</option></select>' +
+        '<button class="btn btn-outline btn-sm" type="button" onclick="_loadScriptPresets()" title="' + __t('common.refresh') + '"><i class="fas fa-sync-alt"></i></button>' +
+        '</div><div class="form-hint">' + __t('page.builder.preset_script_hint') + '</div></div>' +
+        '<hr style="border:none;border-top:1px dashed var(--border-color,#e2e8f0);margin:12px 0;">' +
+        _sel(__t('page.builder.proc_script_language'), 'language', [['python','Python']], c.language || 'python') +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.proc_script_code') + '</label>' +
+        '<textarea class="form-control mono" id="f-proc-code" rows="8" style="font-size:12px;" ' +
+        'placeholder="# message, value variables available&#10;value = message[\'value\'] * 2&#10;message[\'value\'] = value">' +
+        escHtml(c.code || '') + '</textarea>' +
+        '<div class="form-hint">' + __t('page.builder.proc_script_hint') + '</div></div>' +
+        _num(__t('page.builder.proc_timeout'), 'timeout', c.timeout || 5, '1');
+
+    default: return null;
+  }
+}
+
+// ── Config value collector ──
+function _collectProcConfig(moduleType) {
+  var g = function(id) { return $('#f-proc-' + id).val(); };
+  var gn = function(id) { var v = g(id); return v !== '' && v != null ? parseFloat(v) : null; };
+  var gc = function(id) { return $('#f-proc-' + id).is(':checked'); };
+
+  switch (moduleType) {
+    case 'normalize':
+      return { targetField: g('targetField'), targetType: g('targetType'), nullStrategy: g('nullStrategy'),
+        defaultValue: gn('defaultValue') || 0, trimWhitespace: gc('trimWhitespace') };
+    case 'unit_convert':
+      return { targetField: g('targetField'), sourceUnit: g('sourceUnit'), targetUnit: g('targetUnit'),
+        factor: gn('factor') != null ? gn('factor') : 1.0,
+        offset: gn('offset') != null ? gn('offset') : 0.0 };
+    case 'filter':
+      var ft = g('filterType'), r = { targetField: g('targetField'), filterType: ft, action: g('action') };
+      if (ft === 'range') { r.minValue = gn('minValue'); r.maxValue = gn('maxValue'); }
+      else if (ft === 'deadband') { r.deadband = gn('deadband') || 0.5; }
+      else if (ft === 'condition') { r.condition = g('condition') || ''; }
+      return r;
+    case 'anomaly':
+      var r = { targetField: g('targetField'), method: g('method'), threshold: gn('threshold') || 3.0,
+        windowSize: parseInt(g('windowSize')) || 60, action: g('action') };
+      if (r.action === 'replace') r.replaceStrategy = g('replaceStrategy');
+      return r;
+    case 'aggregate':
+      var fns = []; $('.f-proc-agg-fn:checked').each(function() { fns.push($(this).val()); });
+      return { targetField: g('targetField'), windowSeconds: parseInt(g('windowSeconds')) || 60, functions: fns.length ? fns : ['avg'] };
+    case 'enrich':
+      return { fields: _textToFields($('#f-proc-fields').val()),
+        lookupTable: g('lookupTable'), addTimestamp: gc('addTimestamp') };
+    case 'script':
+      return { language: g('language'), code: $('#f-proc-code').val() || '',
+        timeout: parseInt(g('timeout')) || 5 };
+    default: return {};
+  }
+}
+
+// ── Config summary for step list display ──
+function _procConfigSummary(moduleType, cfg) {
+  if (!cfg || !Object.keys(cfg).length) return '';
+  var p = [];
+  if (cfg.targetField) p.push('.' + cfg.targetField);
+  switch (moduleType) {
+    case 'normalize':
+      p.push(cfg.targetType || 'float');
+      if (cfg.nullStrategy && cfg.nullStrategy !== 'skip') p.push('null\u2192' + cfg.nullStrategy);
+      break;
+    case 'unit_convert':
+      if (cfg.sourceUnit && cfg.targetUnit) p.push(cfg.sourceUnit + '\u2192' + cfg.targetUnit);
+      else if (cfg.factor && cfg.factor !== 1) p.push('\u00d7' + cfg.factor);
+      break;
+    case 'filter':
+      p.push(cfg.filterType || 'range');
+      if (cfg.filterType === 'range') {
+        if (cfg.minValue != null) p.push('\u2265' + cfg.minValue);
+        if (cfg.maxValue != null) p.push('\u2264' + cfg.maxValue);
+      } else if (cfg.filterType === 'deadband') { p.push('\u0394' + (cfg.deadband || 0.5)); }
+      p.push(cfg.action || 'drop');
+      break;
+    case 'anomaly':
+      p.push(cfg.method || 'zscore');
+      p.push('\u03c3=' + (cfg.threshold || 3));
+      p.push('w=' + (cfg.windowSize || 60));
+      break;
+    case 'aggregate':
+      p.push((cfg.windowSeconds || 60) + '\ucd08');
+      p.push((cfg.functions || ['avg']).join(','));
+      break;
+    case 'enrich':
+      var fc = cfg.fields ? Object.keys(cfg.fields).length : 0;
+      if (fc) p.push(fc + '\uac1c \ud544\ub4dc');
+      if (cfg.lookupTable) p.push(cfg.lookupTable);
+      break;
+    case 'script':
+      if (cfg.code) { var cl = cfg.code.replace(/\n/g, ' '); p.push(cl.length > 30 ? cl.substring(0, 30) + '\u2026' : cl); }
+      break;
+    case 'internal_tsdb_sink':
+      if (cfg.tsdbName) p.push(cfg.tsdbName);
+      if (cfg.measurement) p.push(cfg.measurement);
+      p.push(cfg.writeMode === 'batch' ? '\ubc30\uce58(' + (cfg.batchSize || 100) + ')' : '\ub2e8\uac74');
+      break;
+    case 'internal_rdbms_sink':
+      if (cfg.rdbmsName) p.push(cfg.rdbmsName);
+      if (cfg.tableName) p.push(cfg.tableName);
+      p.push(cfg.columnMapping === 'flatten' ? '\ud3bc\uce68' : '\uc790\ub3d9');
+      p.push(cfg.writeMode === 'batch' ? '\ubc30\uce58(' + (cfg.batchSize || 100) + ')' : '\ub2e8\uac74');
+      break;
+    case 'internal_file_sink':
+      if (cfg.bucket) p.push(cfg.bucket);
+      if (cfg.pathPrefix) p.push(cfg.pathPrefix);
+      p.push((cfg.fileFormat || 'jsonl').toUpperCase());
+      p.push('\ubc30\uce58(' + (cfg.batchSize || 50) + ')');
+      break;
+    case 'external_tsdb_sink':
+    case 'external_rdbms_sink':
+    case 'external_kafka_sink':
+    case 'external_file_sink':
+      if (cfg.connection_name) p.push(cfg.connection_name);
+      else if (cfg.connection_id) p.push('ID:' + cfg.connection_id);
+      break;
+  }
+  if (!p.length) return '';
+  return ' <span class="fs-11 text-muted">\u2014 ' + escHtml(p.join(' | ')) + '</span>';
+}
+
+// ══════════════════════════════════════════════
+// Sink Node Configuration Modals
+// ══════════════════════════════════════════════
+
+function openSinkConfigModal(moduleType, editIdx) {
+  var isEdit = typeof editIdx === 'number' && editIdx >= 0;
+  var cfg = isEdit ? (currentSteps[editIdx].config || {}) : {};
+  var label = moduleLabels[moduleType] || moduleType;
+  var formHtml = _sinkFormHtml(moduleType, cfg);
+  if (!formHtml) {
+    if (!isEdit) {
+      currentSteps.push({ moduleType: moduleType, enabled: true, config: {} });
+      $('#canvasHint').hide(); $('#stepList').show(); renderSteps();
+    }
+    return;
+  }
+
+  var body =
+    '<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg-secondary);border-radius:6px;font-size:12px;">' +
+    '<i class="fas ' + (moduleIcons[moduleType] || 'fa-cube') + ' text-success"></i> ' +
+    escHtml(label) + ' ' + __t('page.builder.sink_config_label') + '</div>' + formHtml;
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="confirmSinkStep(\'' + moduleType + '\',' +
+    (isEdit ? editIdx : -1) + ')">' +
+    '<i class="fas fa-' + (isEdit ? 'save' : 'plus') + '"></i> ' +
+    (isEdit ? __t('common.save') : __t('common.add')) + '</button>';
+
+  openModal((isEdit ? __t('page.builder.modal_config_edit') : __t('page.builder.modal_sink_add')) + ' \u2014 ' + label, body, footer);
+
+  // Load instances for selected sink type
+  if (moduleType === 'internal_tsdb_sink') {
+    _loadTsdbInstances(cfg.tsdbId);
+  } else if (moduleType === 'internal_rdbms_sink') {
+    _loadRdbmsInstances(cfg.rdbmsId);
+  } else if (moduleType === 'internal_file_sink') {
+    _initFileSinkForm();
+  } else if (moduleType === 'external_tsdb_sink') {
+    _loadExtConnections('tsdb', cfg.connection_id);
+  } else if (moduleType === 'external_rdbms_sink') {
+    _loadExtConnections('rdbms', cfg.connection_id);
+  } else if (moduleType === 'external_kafka_sink') {
+    _loadExtConnections('kafka', cfg.connection_id);
+  } else if (moduleType === 'external_file_sink') {
+    _loadExtConnections('file_storage', cfg.connection_id);
+  }
+}
+
+function _sinkFormHtml(moduleType, cfg) {
+  var c = cfg || {};
+  switch (moduleType) {
+    case 'internal_tsdb_sink':
+      return '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_tsdb_instance') + ' <span class="text-danger">*</span></label>' +
+        '<select class="form-select" id="f-sink-tsdbId">' +
+        '<option value="">' + __t('page.builder.connector_loading') + '</option>' +
+        '</select>' +
+        '<div class="form-hint">' + __t('page.builder.sink_tsdb_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_measurement') + ' <span class="text-danger">*</span></label>' +
+        '<input type="text" class="form-control" id="f-sink-measurement" value="' + escAttr(c.measurement || '') + '" placeholder="e.g. sensor_data, temperature_log">' +
+        '<div class="form-hint">' + __t('page.builder.sink_measurement_hint') + '</div>' +
+        '</div>' +
+        _sel(__t('page.builder.sink_write_mode'), 'writeMode', [
+          ['single', __t('page.builder.sink_write_single')], ['batch', __t('page.builder.sink_write_batch')]
+        ], c.writeMode || 'single').replace(/f-proc-/g, 'f-sink-') +
+        '<div id="f-sink-batch-grp"' + (c.writeMode !== 'batch' ? ' style="display:none"' : '') + '>' +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.sink_batch_size') + '</label>' +
+        '<input type="number" class="form-control" id="f-sink-batchSize" value="' + (c.batchSize || 100) + '" min="10" max="10000" step="10">' +
+        '<div class="form-hint">' + __t('page.builder.sink_batch_hint') + '</div>' +
+        '</div></div>';
+
+    case 'internal_rdbms_sink':
+      return '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_rdbms_instance') + ' <span class="text-danger">*</span></label>' +
+        '<select class="form-select" id="f-sink-rdbmsId">' +
+        '<option value="">' + __t('page.builder.connector_loading') + '</option>' +
+        '</select>' +
+        '<div class="form-hint">' + __t('page.builder.sink_rdbms_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_table_name') + '</label>' +
+        '<input type="text" class="form-control" id="f-sink-tableName" value="' + escAttr(c.tableName || '') + '" placeholder="pipeline_data">' +
+        '<div class="form-hint">' + __t('page.builder.sink_table_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_column_mapping') + '</label>' +
+        '<select class="form-select" id="f-sink-columnMapping">' +
+        '<option value="auto"' + (c.columnMapping !== 'flatten' ? ' selected' : '') + '>' + __t('page.builder.sink_column_auto') + '</option>' +
+        '<option value="flatten"' + (c.columnMapping === 'flatten' ? ' selected' : '') + '>' + __t('page.builder.sink_column_flatten') + '</option>' +
+        '</select>' +
+        '<div class="form-hint">' + __t('page.builder.sink_column_hint') + '</div>' +
+        '</div>' +
+        _sel(__t('page.builder.sink_write_mode'), 'writeMode', [
+          ['single', __t('page.builder.sink_write_single')], ['batch', __t('page.builder.sink_write_batch')]
+        ], c.writeMode || 'single').replace(/f-proc-/g, 'f-sink-') +
+        '<div id="f-sink-batch-grp"' + (c.writeMode !== 'batch' ? ' style="display:none"' : '') + '>' +
+        '<div class="form-group"><label class="form-label">' + __t('page.builder.sink_batch_size') + '</label>' +
+        '<input type="number" class="form-control" id="f-sink-batchSize" value="' + (c.batchSize || 100) + '" min="10" max="10000" step="10">' +
+        '<div class="form-hint">' + __t('page.builder.sink_batch_hint') + '</div>' +
+        '</div></div>';
+
+    case 'internal_file_sink':
+      return '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_bucket') + ' <span class="text-danger">*</span></label>' +
+        '<select class="form-select" id="f-sink-bucket">' +
+        '<option value="sdl-files"' + ((c.bucket || 'sdl-files') === 'sdl-files' ? ' selected' : '') + '>sdl-files</option>' +
+        '<option value="sdl-archive"' + (c.bucket === 'sdl-archive' ? ' selected' : '') + '>sdl-archive</option>' +
+        '<option value="sdl-backup"' + (c.bucket === 'sdl-backup' ? ' selected' : '') + '>sdl-backup</option>' +
+        '</select>' +
+        '<div class="form-hint">' + __t('page.builder.sink_bucket_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_path_prefix') + '</label>' +
+        '<input type="text" class="form-control" id="f-sink-pathPrefix" value="' + escAttr(c.pathPrefix || 'pipeline/') + '" placeholder="pipeline/">' +
+        '<div class="form-hint">' + __t('page.builder.sink_path_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_file_format') + '</label>' +
+        '<select class="form-select" id="f-sink-fileFormat">' +
+        '<option value="jsonl"' + ((c.fileFormat || 'jsonl') === 'jsonl' ? ' selected' : '') + '>' + __t('page.builder.sink_file_jsonl') + '</option>' +
+        '<option value="csv"' + (c.fileFormat === 'csv' ? ' selected' : '') + '>' + __t('page.builder.sink_file_csv') + '</option>' +
+        '<option value="json"' + (c.fileFormat === 'json' ? ' selected' : '') + '>' + __t('page.builder.sink_file_json') + '</option>' +
+        '</select>' +
+        '<div class="form-hint">' + __t('page.builder.sink_file_format_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_filename_pattern') + '</label>' +
+        '<input type="text" class="form-control mono" id="f-sink-fileNamePattern" value="' + escAttr(c.fileNamePattern || 'pipeline_{pipeline_id}_{date}') + '" placeholder="pipeline_{pipeline_id}_{date}">' +
+        '<div class="form-hint">' + __t('page.builder.sink_filename_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_batch_size_file') + '</label>' +
+        '<input type="number" class="form-control" id="f-sink-batchSize" value="' + (c.batchSize || 50) + '" min="1" max="10000">' +
+        '<div class="form-hint">' + __t('page.builder.sink_batch_file_hint') + '</div>' +
+        '</div>';
+
+    case 'external_tsdb_sink':
+    case 'external_rdbms_sink':
+    case 'external_kafka_sink':
+    case 'external_file_sink':
+      var extLabel = moduleLabels[moduleType] || moduleType;
+      var extTypeMap = {
+        'external_tsdb_sink': __t('page.builder.sink_ext_tsdb'), 'external_rdbms_sink': __t('page.builder.sink_ext_rdbms'),
+        'external_kafka_sink': 'Kafka', 'external_file_sink': __t('page.builder.sink_ext_file_storage')
+      };
+      var extManageUrl = {
+        'external_tsdb_sink': '/integration/tsdb', 'external_rdbms_sink': '/integration/rdbms',
+        'external_kafka_sink': '/integration/kafka', 'external_file_sink': '/integration/file'
+      };
+      return '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_external_connection') + ' ' + extTypeMap[moduleType] + ' <span class="text-danger">*</span></label>' +
+        '<select class="form-select" id="f-sink-extConnId">' +
+        '<option value="">' + __t('page.builder.connector_loading') + '</option>' +
+        '</select>' +
+        '<div class="form-hint">' + __t('page.builder.sink_ext_hint') + ' ' +
+        '<a href="' + extManageUrl[moduleType] + '" target="_blank">' + __t('page.builder.sink_ext_manage_link') + '</a></div>' +
+        '</div>';
+
+    default: return null;
+  }
+}
+
+function _loadExtConnections(connType, selectedId) {
+  $.getJSON('/api/integration', { type: connType, size: 100 }, function(r) {
+    var $sel = $('#f-sink-extConnId');
+    $sel.empty();
+    var items = (r.success && r.data) ? (r.data.items || r.data) : [];
+    if (!Array.isArray(items)) items = [];
+    if (items.length) {
+      $sel.append('<option value="">' + __t('page.builder.sink_ext_select_prompt') + '</option>');
+      items.forEach(function(c) {
+        var sel = (selectedId && c.id == selectedId) ? ' selected' : '';
+        var statusBadge = c.status === 'connected' ? ' [' + __t('page.builder.sink_ext_status_connected') + ']' : c.status === 'error' ? ' [' + __t('common.error') + ']' : '';
+        var desc = c.host ? c.host + (c.port ? ':' + c.port : '') : '';
+        $sel.append('<option value="' + c.id + '" data-name="' + escAttr(c.name) + '"' + sel + '>' +
+          escHtml(c.name) + (desc ? ' (' + escHtml(desc) + ')' : '') + statusBadge + '</option>');
+      });
+    } else {
+      $sel.html('<option value="">' + __t('page.builder.sink_ext_no_connections') + '</option>');
+    }
+  }).fail(function() {
+    $('#f-sink-extConnId').html('<option value="">' + __t('page.builder.connector_load_fail') + '</option>');
+  });
+}
+
+function _loadTsdbInstances(selectedId) {
+  $.getJSON('/api/storage/tsdb', function(r) {
+    var $sel = $('#f-sink-tsdbId');
+    $sel.empty();
+    if (r.success && r.data && r.data.length) {
+      $sel.append('<option value="">' + __t('page.builder.sink_tsdb_select_prompt') + '</option>');
+      r.data.forEach(function(t) {
+        var sel = (selectedId && t.id == selectedId) ? ' selected' : '';
+        $sel.append('<option value="' + t.id + '" data-name="' + escAttr(t.name) + '"' + sel + '>' +
+          escHtml(t.name) + ' (' + escHtml(t.dbType || 'internal') + ')</option>');
+      });
+    } else {
+      $sel.html('<option value="">' + __t('page.builder.sink_no_tsdb') + '</option>');
+    }
+  }).fail(function() {
+    $('#f-sink-tsdbId').html('<option value="">' + __t('page.builder.connector_load_fail') + '</option>');
+  });
+
+  // Toggle batch size field
+  setTimeout(function() {
+    $('#f-sink-writeMode').off('change').on('change', function() {
+      $('#f-sink-batch-grp').toggle($(this).val() === 'batch');
+    });
+  }, 50);
+}
+
+function _loadRdbmsInstances(selectedId) {
+  $.getJSON('/api/storage/rdbms', function(r) {
+    var $sel = $('#f-sink-rdbmsId');
+    $sel.empty();
+    if (r.success && r.data && r.data.length) {
+      $sel.append('<option value="">' + __t('page.builder.sink_rdbms_select_prompt') + '</option>');
+      r.data.forEach(function(t) {
+        var sel = (selectedId && t.id == selectedId) ? ' selected' : '';
+        $sel.append('<option value="' + t.id + '" data-name="' + escAttr(t.name) + '"' + sel + '>' +
+          escHtml(t.name) + ' (' + escHtml(t.dbType || 'postgresql') + ')</option>');
+      });
+    } else {
+      $sel.html('<option value="">' + __t('page.builder.sink_no_rdbms') + '</option>');
+    }
+  }).fail(function() {
+    $('#f-sink-rdbmsId').html('<option value="">' + __t('page.builder.connector_load_fail') + '</option>');
+  });
+
+  // Toggle batch size field
+  setTimeout(function() {
+    $('#f-sink-writeMode').off('change').on('change', function() {
+      $('#f-sink-batch-grp').toggle($(this).val() === 'batch');
+    });
+  }, 50);
+}
+
+function _initFileSinkForm() {
+  // 파일 싱크는 정적 폼이므로 추가 로딩 없음 — 기본값 확인만
+  setTimeout(function() {
+    if (!$('#f-sink-pathPrefix').val()) {
+      $('#f-sink-pathPrefix').val('pipeline/');
+    }
+  }, 50);
+}
+
+function _collectSinkConfig(moduleType) {
+  switch (moduleType) {
+    case 'internal_tsdb_sink':
+      var $sel = $('#f-sink-tsdbId');
+      return {
+        tsdbId: parseInt($sel.val()) || 0,
+        tsdbName: $sel.find('option:selected').data('name') || '',
+        measurement: $('#f-sink-measurement').val().trim(),
+        writeMode: $('#f-sink-writeMode').val() || 'single',
+        batchSize: parseInt($('#f-sink-batchSize').val()) || 100
+      };
+    case 'internal_rdbms_sink':
+      var $rsel = $('#f-sink-rdbmsId');
+      return {
+        rdbmsId: parseInt($rsel.val()) || 0,
+        rdbmsName: $rsel.find('option:selected').data('name') || '',
+        tableName: $('#f-sink-tableName').val().trim(),
+        columnMapping: $('#f-sink-columnMapping').val() || 'auto',
+        writeMode: $('#f-sink-writeMode').val() || 'single',
+        batchSize: parseInt($('#f-sink-batchSize').val()) || 100
+      };
+    case 'internal_file_sink':
+      return {
+        bucket: $('#f-sink-bucket').val() || 'sdl-files',
+        pathPrefix: $('#f-sink-pathPrefix').val().trim() || 'pipeline/',
+        fileFormat: $('#f-sink-fileFormat').val() || 'jsonl',
+        fileNamePattern: $('#f-sink-fileNamePattern').val().trim() || 'pipeline_{pipeline_id}_{date}',
+        batchSize: parseInt($('#f-sink-batchSize').val()) || 50
+      };
+    case 'external_tsdb_sink':
+    case 'external_rdbms_sink':
+    case 'external_kafka_sink':
+    case 'external_file_sink':
+      var $extSel = $('#f-sink-extConnId');
+      return {
+        connection_id: parseInt($extSel.val()) || 0,
+        connection_name: $extSel.find('option:selected').data('name') || ''
+      };
+    default: return {};
+  }
+}
+
+function confirmSinkStep(moduleType, editIdx) {
+  var config = _collectSinkConfig(moduleType);
+  // Validate required fields
+  if (moduleType === 'internal_tsdb_sink') {
+    if (!config.tsdbId) { showToast(__t('page.builder.sink_tsdb_required'), 'error'); return; }
+    if (!config.measurement) { showToast(__t('page.builder.sink_measurement_required'), 'error'); return; }
+  }
+  if (moduleType === 'internal_rdbms_sink') {
+    if (!config.rdbmsId) { showToast(__t('page.builder.sink_rdbms_required'), 'error'); return; }
+  }
+  if (moduleType === 'internal_file_sink') {
+    if (!config.bucket) { showToast(__t('page.builder.sink_bucket_required'), 'error'); return; }
+  }
+  if (moduleType.indexOf('external_') === 0 && moduleType.indexOf('_sink') !== -1) {
+    if (!config.connection_id) { showToast(__t('page.builder.sink_ext_required'), 'error'); return; }
+  }
+  if (editIdx >= 0) {
+    currentSteps[editIdx].config = config;
+  } else {
+    currentSteps.push({ moduleType: moduleType, enabled: true, config: config });
+  }
+  closeModal();
+  $('#canvasHint').hide();
+  $('#stepList').show();
+  renderSteps();
+  showToast(moduleLabels[moduleType] + ' ' + (editIdx >= 0 ? __t('page.builder.step_config_saved') : __t('page.builder.sink_added')), 'success');
+}
+
+// ── Normalize Preset Loader ──
+function _loadNormPresets() {
+  $.getJSON('/api/pipeline/modules/normalize-rules', function(r) {
+    if (!r.success) return;
+    var $sel = $('#f-proc-preset');
+    var cur = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (r.data || []).forEach(function(p) {
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) +
+        ' (' + (p.targetType || 'float') + ' / ' + (p.nullStrategy || 'skip') + ')</option>');
+    });
+    if (cur) $sel.val(cur);
+  });
+}
+
+// ── Unit Conversion Preset Loader ──
+function _loadUnitPresets() {
+  $.getJSON('/api/pipeline/modules/unit-conversions', function(r) {
+    if (!r.success) return;
+    var $sel = $('#f-proc-preset'), cur = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (r.data || []).forEach(function(p) {
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) +
+        ' (' + (p.sourceUnit || '?') + ' → ' + (p.targetUnit || '?') + ')</option>');
+    });
+    if (cur) $sel.val(cur);
+  });
+}
+
+// ── Filter Rule Preset Loader ──
+function _loadFilterPresets() {
+  $.getJSON('/api/pipeline/modules/filter-rules', function(r) {
+    if (!r.success) return;
+    var $sel = $('#f-proc-preset'), cur = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (r.data || []).forEach(function(p) {
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) +
+        ' (' + (p.filterType || 'range') + ' / ' + (p.action || 'drop') + ')</option>');
+    });
+    if (cur) $sel.val(cur);
+  });
+}
+
+// ── Anomaly Config Preset Loader ──
+function _loadAnomalyPresets() {
+  $.getJSON('/api/pipeline/modules/anomaly-configs', function(r) {
+    if (!r.success) return;
+    var $sel = $('#f-proc-preset'), cur = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (r.data || []).forEach(function(p) {
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) +
+        ' (' + (p.method || 'zscore') + ' / σ=' + (p.threshold || 3) + ')</option>');
+    });
+    if (cur) $sel.val(cur);
+  });
+}
+
+// ── Aggregate Config Preset Loader ──
+function _loadAggPresets() {
+  $.getJSON('/api/pipeline/modules/aggregate-configs', function(r) {
+    if (!r.success) return;
+    var $sel = $('#f-proc-preset'), cur = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (r.data || []).forEach(function(p) {
+      var fns = (p.functions || ['avg']).join(',');
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) +
+        ' (' + (p.windowSeconds || 60) + __t('page.builder.sec_unit') + ' / ' + fns + ')</option>');
+    });
+    if (cur) $sel.val(cur);
+  });
+}
+
+// ── Enrich Config Preset Loader ──
+function _loadEnrichPresets() {
+  $.getJSON('/api/pipeline/modules/enrich-configs', function(r) {
+    if (!r.success) return;
+    var $sel = $('#f-proc-preset'), cur = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (r.data || []).forEach(function(p) {
+      var fc = p.fields ? Object.keys(p.fields).length : 0;
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) +
+        ' (' + fc + __t('page.builder.fields_count') + (p.lookupTable ? ' + ' + p.lookupTable : '') + ')</option>');
+    });
+    if (cur) $sel.val(cur);
+  });
+}
+
+// ── Script Config Preset Loader ──
+function _loadScriptPresets() {
+  $.getJSON('/api/pipeline/modules/script-configs', function(r) {
+    if (!r.success) return;
+    var $sel = $('#f-proc-preset'), cur = $sel.val();
+    $sel.find('option:not(:first)').remove();
+    (r.data || []).forEach(function(p) {
+      var desc = p.description || (p.code ? p.code.substring(0, 30) + '…' : 'empty');
+      $sel.append('<option value="' + p.id + '">' + escHtml(p.name) +
+        ' (' + escHtml(desc) + ')</option>');
+    });
+    if (cur) $sel.val(cur);
+  });
+}
+
+// ── Add Binding Manually ──
+function openAddBindingModal() {
+  if (!selectedPipelineId) {
+    showToast(__t('page.builder.select_pipeline_first'), 'warning');
+    return;
+  }
+  var typeOpts = '';
+  for (var ct in connectorTypeLabels) {
+    typeOpts += '<option value="' + ct + '">' + escHtml(connectorTypeLabels[ct]) + '</option>';
+  }
+  var body =
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.builder.binding_type_label') + ' <span class="text-danger">*</span></label>' +
+    '  <select class="form-select" id="f-bind-type" onchange="onBindTypeChange()">' +
+    '    <option value="">' + __t('page.builder.binding_select_prompt') + '</option>' + typeOpts +
+    '  </select>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.builder.binding_select_label') + ' <span class="text-danger">*</span></label>' +
+    '  <select class="form-select" id="f-bind-connector" disabled>' +
+    '    <option value="">' + __t('page.builder.binding_type_prompt') + '</option>' +
+    '  </select>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.builder.tag_filter_label') + '</label>' +
+    '  <input type="text" class="form-control" id="f-bind-tagfilter" value="*" placeholder="' + __t('page.builder.tag_filter_placeholder') + '">' +
+    '</div>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" id="btn-bind-confirm" onclick="confirmAddBinding()" disabled>' +
+    '<i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+
+  openModal(__t('page.builder.btn_add_binding'), body, footer);
+}
+
+function onBindTypeChange() {
+  var connType = $('#f-bind-type').val();
+  var $sel = $('#f-bind-connector');
+  if (!connType) {
+    $sel.html('<option value="">' + __t('page.builder.binding_type_prompt') + '</option>').prop('disabled', true);
+    $('#btn-bind-confirm').prop('disabled', true);
+    return;
+  }
+  $sel.html('<option value="">' + __t('page.builder.connector_loading') + '</option>').prop('disabled', true);
+  $.getJSON(API + '/connectors/' + connType, function(res) {
+    $sel.empty().prop('disabled', false);
+    if (res.success && res.data && res.data.length) {
+      $sel.append('<option value="">' + __t('page.builder.binding_select_prompt') + '</option>');
+      res.data.forEach(function(c) {
+        $sel.append('<option value="' + c.id + '" data-name="' + escAttr(c.name) + '">' + escHtml(c.name) + '</option>');
+      });
+      $sel.on('change', function() { $('#btn-bind-confirm').prop('disabled', !$(this).val()); });
+    } else {
+      $sel.html('<option value="">' + __t('page.builder.no_connectors_option') + '</option>');
+    }
+  }).fail(function() { $sel.html('<option value="">' + __t('page.builder.connector_load_fail') + '</option>'); });
+}
+
+function confirmAddBinding() {
+  var connType = $('#f-bind-type').val();
+  var $sel = $('#f-bind-connector');
+  var connId = parseInt($sel.val());
+  if (!connType || !connId) { showToast(__t('page.builder.connector_select_warning'), 'warning'); return; }
+  var connName = $sel.find('option:selected').data('name') || $sel.find('option:selected').text();
+  var tagFilter = ($('#f-bind-tagfilter').val() || '*').trim() || '*';
+
+  var dup = currentBindings.some(function(b) {
+    return b.connectorType === connType && b.connectorId === connId;
+  });
+  if (dup) { showToast(__t('page.builder.duplicate_binding'), 'warning'); return; }
+
+  currentBindings.push({
+    connectorType: connType, connectorId: connId, connectorName: connName,
+    tagFilter: tagFilter, enabled: true
+  });
+  closeModal();
+  renderBindings();
+  showToast(connName + ' ' + __t('page.builder.binding_added'), 'success');
+}
+
+// ── Remove Binding ──
+function removeBinding(idx) {
+  var binding = currentBindings[idx];
+  currentBindings.splice(idx, 1);
+  // Remove corresponding source step only if no more bindings for this connector
+  if (binding && binding.connectorType && binding.connectorId) {
+    var hasRemaining = currentBindings.some(function(b) {
+      return b.connectorType === binding.connectorType && b.connectorId === binding.connectorId;
+    });
+    if (!hasRemaining) {
+      for (var i = currentSteps.length - 1; i >= 0; i--) {
+        var s = currentSteps[i];
+        if (s.config && s.config.connectorType === binding.connectorType &&
+            s.config.connectorId === binding.connectorId) {
+          currentSteps.splice(i, 1);
+          break;
+        }
+      }
+    }
+    renderSteps();
+  }
+  renderBindings();
+}
+
+// ── Pipeline Selector Change ──
+function onPipelineSelect() {
+  var id = $('#pipelineSelect').val();
+  if (id) {
+    loadPipelineDetail(id);
+  } else {
+    clearCanvas();
+  }
+}
+
+// ── Clear Canvas ──
+function clearCanvas() {
+  selectedPipelineId = null;
+  selectedPipelineData = null;
+  currentSteps = [];
+  currentBindings = [];
+  $('#canvasHint').show();
+  $('#stepList').hide();
+  $('#bindingsCard').hide();
+  $('#selectedPipelineStatus').hide();
+  $('#btnStart').hide();
+  $('#btnStop').hide();
+  $('#btnSave').prop('disabled', true);
+  $('#btnTagSearch').hide();
+  $('#tagSearchCard').hide();
+}
+
+// ── Edit Pipeline (from table) ──
+function editPipeline(id) {
+  $('#pipelineSelect').val(id);
+  loadPipelineDetail(id);
+  $('html, body').animate({ scrollTop: 0 }, 300);
+}
+
+// ── Save Pipeline ──
+function savePipeline() {
+  if (!selectedPipelineId) { showToast(__t('page.builder.save_pipeline_warning'), 'warning'); return; }
+
+  var data = {
+    name: selectedPipelineData.name,
+    description: selectedPipelineData.description,
+    steps: currentSteps.map(function(s) {
+      return {
+        moduleType: s.moduleType || s.module_type,
+        enabled: s.enabled !== false,
+        config: s.config || {}
+      };
+    }),
+    bindings: currentBindings.map(function(b) {
+      return {
+        connectorType: b.connectorType,
+        connectorId: b.connectorId,
+        tagFilter: b.tagFilter || '*',
+        enabled: b.enabled !== false
+      };
+    })
+  };
+
+  $.ajax({
+    url: API + '/' + selectedPipelineId,
+    type: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify(data),
+    success: function(res) {
+      if (res.success) {
+        showToast(__t('page.builder.pipeline_saved'), 'success');
+        refreshAll();
+      } else {
+        showToast(res.error ? res.error.message : __t('common.save_failed'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var msg = __t('common.save_failed');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    }
+  });
+}
+
+// ── Create Pipeline ──
+function createPipeline() {
+  var name = $('#f-pip-name').val().trim();
+  var desc = $('#f-pip-desc').val().trim();
+
+  if (!name) { showToast(__t('page.builder.pipeline_name_required'), 'warning'); return; }
+
+  var data = {
+    name: name,
+    description: desc,
+    steps: [],
+    bindings: []
+  };
+
+  $.ajax({
+    url: API,
+    type: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(data),
+    success: function(res) {
+      if (res.success) {
+        closeModal();
+        showToast(__t('page.builder.pipeline_created'), 'success');
+        refreshAll();
+        if (res.data && res.data.id) {
+          setTimeout(function() {
+            $('#pipelineSelect').val(res.data.id);
+            loadPipelineDetail(res.data.id);
+          }, 500);
+        }
+      } else {
+        showToast(res.error ? res.error.message : __t('common.save_failed'), 'error');
+      }
+    },
+    error: function(xhr) {
+      var msg = __t('common.save_failed');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    }
+  });
+}
+
+// ── Delete Pipeline ──
+function deletePipeline(id, name) {
+  confirmAction(escHtml(name) + ' ' + __t('page.builder.confirm_delete_pipeline'), function() {
+    $.ajax({
+      url: API + '/' + id,
+      type: 'DELETE',
+      success: function(res) {
+        if (res.success) {
+          showToast(__t('page.builder.pipeline_deleted'), 'success');
+          if (selectedPipelineId == id) clearCanvas();
+          refreshAll();
+        } else {
+          showToast(res.error ? res.error.message : __t('common.delete_failed'), 'error');
+        }
+      },
+      error: function(xhr) {
+        var msg = __t('common.delete_failed');
+        try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+        showToast(msg, 'error');
+      }
+    });
+  });
+}
+
+// ── Start Pipeline ──
+function startPipeline(id) {
+  confirmAction(__t('page.builder.confirm_start_pipeline'), function() {
+    $.post(API + '/' + id + '/start', function(res) {
+      if (res.success) {
+        showToast(__t('page.builder.pipeline_started'), 'success');
+        refreshAll();
+        if (selectedPipelineId == id) loadPipelineDetail(id);
+      } else {
+        showToast(res.error ? res.error.message : __t('common.save_failed'), 'error');
+      }
+    }).fail(function(xhr) {
+      var msg = __t('common.save_failed');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    });
+  });
+}
+
+// ── Stop Pipeline ──
+function stopPipeline(id) {
+  confirmAction(__t('page.builder.confirm_stop_pipeline'), function() {
+    $.post(API + '/' + id + '/stop', function(res) {
+      if (res.success) {
+        showToast(__t('page.builder.pipeline_stopped'), 'success');
+        refreshAll();
+        if (selectedPipelineId == id) loadPipelineDetail(id);
+      } else {
+        showToast(res.error ? res.error.message : __t('common.save_failed'), 'error');
+      }
+    }).fail(function(xhr) {
+      var msg = __t('common.save_failed');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    });
+  });
+}
+
+// ── Start/Stop from toolbar ──
+function startSelectedPipeline() {
+  if (selectedPipelineId) startPipeline(selectedPipelineId);
+}
+function stopSelectedPipeline() {
+  if (selectedPipelineId) stopPipeline(selectedPipelineId);
+}
+
+// ── New Pipeline Modal ──
+function openNewPipelineModal() {
+  var body =
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.builder.form_pipeline_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-pip-name" placeholder="' + __t('page.builder.form_pipeline_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('common.description') + '</label>' +
+    '  <textarea class="form-control" id="f-pip-desc" rows="3" placeholder="' + __t('page.builder.form_pipeline_desc_placeholder') + '"></textarea>' +
+    '</div>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="createPipeline()"><i class="fas fa-plus"></i> ' + __t('page.builder.btn_create') + '</button>';
+
+  openModal(__t('page.builder.modal_new_pipeline'), body, footer);
+}
+
+// ── Edit Pipeline Modal ──
+function openEditPipelineModal(id) {
+  $.getJSON(API + '/' + id, function(res) {
+    if (!res.success) { showToast(__t('page.builder.pipeline_load_fail'), 'error'); return; }
+    var p = res.data;
+
+    var stepsHtml = '';
+    if (p.steps && p.steps.length) {
+      stepsHtml = '<div class="form-group"><label class="form-label">' + __t('page.builder.steps_list_label') + '</label>';
+      p.steps.forEach(function(s, idx) {
+        var mt = s.moduleType || s.module_type || '';
+        var label = moduleLabels[mt] || mt;
+        var enabledText = s.enabled !== false ? __t('page.builder.badge_enabled') : __t('page.builder.badge_disabled');
+        stepsHtml += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">' +
+          '<span class="fs-12 text-muted">' + (idx + 1) + '.</span>' +
+          '<span class="fw-600" style="flex:1;">' + escHtml(label) + '</span>' +
+          '<span class="fs-11 text-muted">' + enabledText + '</span>' +
+          '</div>';
+      });
+      stepsHtml += '</div>';
+    } else {
+      stepsHtml = '<div class="form-group"><label class="form-label">' + __t('page.builder.steps_list_label') + '</label>' +
+        '<p class="text-muted fs-12">' + __t('page.builder.no_steps') + '</p></div>';
+    }
+
+    var bindingsHtml = '';
+    if (p.bindings && p.bindings.length) {
+      bindingsHtml = '<div class="form-group"><label class="form-label">' + __t('page.builder.bindings_list_label') + '</label>';
+      p.bindings.forEach(function(b) {
+        var tl = connectorTypeLabels[b.connectorType] || b.connectorType || '-';
+        bindingsHtml += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">' +
+          '<span class="fw-600">' + escHtml(tl) + '</span>' +
+          '<span class="mono text-muted">' + escHtml(b.connectorName || 'ID ' + (b.connectorId || '-')) + '</span>' +
+          '<span class="fs-11 text-muted">' + __t('page.builder.filter_label') + ': ' + escHtml(b.tagFilter || b.tag_filter || '*') + '</span>' +
+          '</div>';
+      });
+      bindingsHtml += '</div>';
+    }
+
+    var body =
+      '<div class="form-group">' +
+      '  <label class="form-label">' + __t('page.builder.form_pipeline_name') + '</label>' +
+      '  <input type="text" class="form-control" value="' + escAttr(p.name) + '" readonly style="background:#f1f5f9">' +
+      '</div>' +
+      '<div class="form-group">' +
+      '  <label class="form-label">' + __t('common.description') + '</label>' +
+      '  <input type="text" class="form-control" id="e-pip-desc" value="' + escAttr(p.description || '') + '">' +
+      '</div>' +
+      stepsHtml +
+      bindingsHtml;
+
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>' +
+      '<button class="btn btn-primary" onclick="editPipeline(' + p.id + '); closeModal();">' +
+        '<i class="fas fa-edit"></i> ' + __t('page.builder.btn_edit_in_builder') + '</button>';
+
+    openModal(__t('page.builder.modal_pipeline_detail') + ' - ' + escHtml(p.name), body, footer, 'modal-lg');
+  });
+}
+
+// ── Drag & Drop ──
+function initDragDrop() {
+  // Palette items drag start
+  $(document).on('dragstart', '.palette-item', function(e) {
+    var moduleType = $(this).data('module');
+    e.originalEvent.dataTransfer.setData('text/plain', moduleType);
+    $(this).css('opacity', '0.5');
+  });
+  $(document).on('dragend', '.palette-item', function() {
+    $(this).css('opacity', '1');
+  });
+
+  // Canvas drop zone
+  var $canvas = $('#pipelineCanvas');
+  $canvas.on('dragover', function(e) {
+    e.preventDefault();
+    e.originalEvent.dataTransfer.dropEffect = 'copy';
+    $(this).css('border-color', 'var(--color-primary)');
+  });
+  $canvas.on('dragleave', function() {
+    $(this).css('border-color', '');
+  });
+  $canvas.on('drop', function(e) {
+    e.preventDefault();
+    $(this).css('border-color', '');
+    var moduleType = e.originalEvent.dataTransfer.getData('text/plain');
+    if (moduleType && moduleLabels[moduleType]) {
+      addStep(moduleType);
+    }
+  });
+
+  // Also allow clicking palette items to add
+  $(document).on('dblclick', '.palette-item', function() {
+    var moduleType = $(this).data('module');
+    if (moduleType && moduleLabels[moduleType]) {
+      addStep(moduleType);
+      showToast(moduleLabels[moduleType] + ' ' + __t('page.builder.step_added'), 'info');
+    }
+  });
+}
+
+// ── Tag Search Panel (UC-3, UC-4, UC-6) ──
+function toggleTagSearch() {
+  var $card = $('#tagSearchCard');
+  if ($card.is(':visible')) {
+    $card.hide();
+  } else {
+    $card.show();
+    loadTagSearch();
+  }
+}
+
+function loadTagSearch() {
+  var params = {};
+  var q = ($('#tag-search-q').val() || '').trim();
+  var ct = $('#tag-search-type').val();
+  if (q) params.q = q;
+  if (ct) params.connector_type = ct;
+  params.active = 'true';
+  params.size = 100;
+
+  var $tbody = $('#tagSearchTbody');
+  $tbody.html('<tr><td colspan="8" class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.builder.tag_searching') + '</td></tr>');
+
+  $.getJSON('/api/metadata/search/unified', params, function(r) {
+    if (!r.success || !r.data) return;
+    var items = r.data.items || [];
+    $tbody.empty();
+    if (!items.length) {
+      $tbody.html('<tr><td colspan="8" class="text-center text-muted" style="padding:30px">' + __t('page.builder.tag_no_results') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(t) {
+      var pipeStatus = t.pipelineLinked
+        ? '<span class="badge-status badge-running" style="font-size:11px">' + __t('page.builder.tag_connected_count').replace('{n}', t.pipelines.length) + '</span>'
+        : '<span class="badge-status badge-stopped" style="font-size:11px">' + __t('page.builder.tag_not_connected') + '</span>';
+      var catalogStatus = t.catalog
+        ? '<span class="badge-status badge-info" style="font-size:11px">' + escHtml(t.catalog.category || '-') + '</span>'
+        : '<span class="text-muted fs-11">-</span>';
+      var range = (t.minObserved != null && t.maxObserved != null)
+        ? t.minObserved + ' ~ ' + t.maxObserved
+        : '-';
+      $tbody.append(
+        '<tr>' +
+        '<td class="fw-600">' + escHtml(t.tagName) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(t.connectorLabel || t.connectorType) + '</span></td>' +
+        '<td class="fs-12">' + escHtml(t.connectorName || '#' + t.connectorId) + '</td>' +
+        '<td class="mono fs-12">' + range + '</td>' +
+        '<td>' + (t.qualityScore != null ? '<span class="badge-sm ' + (t.qualityScore >= 80 ? 'badge-success' : t.qualityScore >= 50 ? 'badge-warning' : 'badge-danger') + '">' + t.qualityScore + '</span>' : '-') + '</td>' +
+        '<td>' + pipeStatus + '</td>' +
+        '<td>' + catalogStatus + '</td>' +
+        '<td><button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.builder.tag_add_binding_title') + '" onclick="selectTagForBinding(\'' + escAttr(t.connectorType) + '\',' + t.connectorId + ',\'' + escAttr(t.connectorName || '') + '\',\'' + escAttr(t.tagName) + '\')">' +
+          '<i class="fas fa-plus"></i></button></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function selectTagForBinding(connType, connId, connName, tagName) {
+  if (!selectedPipelineId) {
+    showToast(__t('page.builder.select_pipeline_first_tag'), 'warning');
+    return;
+  }
+  var dup = currentBindings.some(function(b) {
+    return b.connectorType === connType && b.connectorId === connId;
+  });
+  if (dup) {
+    showToast(__t('page.builder.duplicate_binding'), 'warning');
+    return;
+  }
+  currentBindings.push({
+    connectorType: connType, connectorId: connId,
+    connectorName: connName || '#' + connId,
+    tagFilter: tagName, enabled: true
+  });
+  renderBindings();
+  showToast(tagName + ' ' + __t('page.builder.tag_binding_added'), 'success');
+}
+
+// ── Refresh All ──
+function refreshAll() {
+  loadStats();
+  loadPipelineSelector();
+  loadPipelines();
+  if (selectedPipelineId) {
+    loadPipelineDetail(selectedPipelineId);
+  }
+}
+
+// ── Init ──
+$(function() {
+  initDragDrop();
+  refreshAll();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.ext_kafka.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.ext_kafka.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('page.ext_kafka.breadcrumb_integration') }}</a></li>
+<li>{{ t('page.ext_kafka.breadcrumb_current') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.ext_kafka.btn_add_connection') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_kafka.stat_total_connections') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-stream"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_kafka.stat_active') }}</h4>
+      <div class="stat-value" id="stat-active">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_kafka.stat_connected') }}</h4>
+      <div class="stat-value" id="stat-connected">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-plug-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_kafka.stat_error') }}</h4>
+      <div class="stat-value" id="stat-error">-</div>
+    </div>
+    <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
+  </div>
+</div>
+
+<!-- Connection List Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.ext_kafka.table_title') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <input type="text" class="form-control" id="filter-search" placeholder="{{ t('page.ext_kafka.placeholder_search') }}" style="width:180px;padding:4px 10px;" oninput="loadList(1)">
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.ext_kafka.th_name') }}</th>
+            <th>Bootstrap Servers</th>
+            <th>Security Protocol</th>
+            <th>Group ID</th>
+            <th>{{ t('page.ext_kafka.th_status') }}</th>
+            <th>{{ t('page.ext_kafka.th_enabled') }}</th>
+            <th>{{ t('page.ext_kafka.th_last_tested') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('page.ext_kafka.td_loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div id="pagination" style="padding:12px 16px;display:flex;justify-content:center;gap:4px;"></div>
+</div>
+
+<!-- Detail Panel -->
+<div class="card" id="detailPanel" style="display:none;margin-top:16px;">
+  <div class="card-header">
+    <h3 id="detailTitle">{{ t('page.ext_kafka.detail_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#detailPanel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body" id="detailBody"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/integration';
+var CONN_TYPE = 'kafka';
+var _currentPage = 1;
+var _pageSize = 20;
+
+/* ── Helpers ── */
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+function statusBadge(s) {
+  var map = {connected:'badge-running', error:'badge-error', unknown:'badge-stopped'};
+  var label = {connected:__t('page.ext_kafka.badge_connected'), error:__t('page.ext_kafka.badge_error'), unknown:__t('page.ext_kafka.badge_unknown')};
+  return '<span class="badge-status '+(map[s]||'badge-stopped')+'">'+(label[s]||s)+'</span>';
+}
+
+/* ── Stats ── */
+function loadStats() {
+  $.getJSON(API, {type: CONN_TYPE, page: 1, size: 1}, function(r) {
+    if (!r.success) return;
+    var d = r.data;
+    $('#stat-total').text(fmt(d.total));
+    $('#stat-active').text(fmt(d.activeCount));
+    $('#stat-connected').text(fmt(d.connectedCount));
+    $('#stat-error').text(fmt(d.errorCount));
+  });
+}
+
+/* ── List ── */
+function loadList(page) {
+  page = page || _currentPage;
+  _currentPage = page;
+  var params = {type: CONN_TYPE, page: page, size: _pageSize};
+  var search = ($('#filter-search').val() || '').trim();
+  if (search) params.search = search;
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var items = r.data.items || [];
+    var total = r.data.total || 0;
+    var $tb = $('#connTbody').empty();
+
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' + __t('page.ext_kafka.td_no_data') + '</td></tr>');
+      renderPagination(0, page);
+      return;
+    }
+
+    items.forEach(function(item) {
+      var cfg = item.config || {};
+      var bootstrapServers = cfg.bootstrap_servers || (item.host + ':' + (item.port || 9092));
+      var securityProtocol = cfg.security_protocol || 'PLAINTEXT';
+      var groupId = cfg.group_id || '-';
+      var enabledHtml = item.enabled
+        ? '<span class="badge-sm badge-success">' + __t('page.ext_kafka.badge_active') + '</span>'
+        : '<span class="badge-sm badge-secondary">' + __t('page.ext_kafka.badge_inactive') + '</span>';
+      var lastTested = item.lastTestedAt
+        ? '<span class="mono fs-12">' + item.lastTestedAt.replace('T',' ').slice(0,19) + '</span>'
+        : '<span class="text-muted">-</span>';
+
+      var actions =
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.detail') + '" onclick="showDetail('+item.id+')"><i class="fas fa-eye"></i></button>' +
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.test') + '" onclick="testConn('+item.id+')"><i class="fas fa-plug"></i></button>' +
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal('+item.id+')"><i class="fas fa-pen"></i></button>' +
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteConn('+item.id+')"><i class="fas fa-trash text-danger"></i></button>';
+
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(item.name) + '</div>' +
+          (item.description ? '<div class="fs-11 text-muted">' + escHtml(item.description) + '</div>' : '') + '</td>' +
+        '<td class="mono fs-12">' + escHtml(bootstrapServers) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(securityProtocol) + '</span></td>' +
+        '<td class="mono fs-12">' + escHtml(groupId) + '</td>' +
+        '<td>' + statusBadge(item.status) + '</td>' +
+        '<td>' + enabledHtml + '</td>' +
+        '<td>' + lastTested + '</td>' +
+        '<td><div class="d-flex gap-8">' + actions + '</div></td>' +
+        '</tr>'
+      );
+    });
+
+    renderPagination(total, page);
+  });
+}
+
+function renderPagination(total, current) {
+  var pages = Math.ceil(total / _pageSize);
+  var $pg = $('#pagination').empty();
+  if (pages <= 1) return;
+  for (var i = 1; i <= pages; i++) {
+    $pg.append('<button class="btn btn-sm ' + (i === current ? 'btn-primary' : 'btn-outline') + '" onclick="loadList(' + i + ')">' + i + '</button>');
+  }
+}
+
+/* ── Detail ── */
+function showDetail(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.ext_kafka.toast_detail_failed'), 'error'); return; }
+    var item = r.data;
+    var cfg = item.config || {};
+
+    var html =
+      '<div class="kv-list">' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_kafka.label_name') + '</span><span class="kv-value fw-600">' + escHtml(item.name) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Bootstrap Servers</span><span class="kv-value mono">' + escHtml(cfg.bootstrap_servers || (item.host + ':' + (item.port || 9092))) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Security Protocol</span><span class="kv-value">' + escHtml(cfg.security_protocol || 'PLAINTEXT') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Consumer Group ID</span><span class="kv-value mono">' + escHtml(cfg.group_id || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Schema Registry URL</span><span class="kv-value mono">' + escHtml(cfg.schema_registry_url || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">SASL Username</span><span class="kv-value">' + escHtml(item.username || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_kafka.label_status') + '</span><span class="kv-value">' + statusBadge(item.status) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_kafka.label_enabled') + '</span><span class="kv-value">' + (item.enabled ? __t('common.yes') : __t('common.no')) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_kafka.label_description') + '</span><span class="kv-value">' + escHtml(item.description || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_kafka.label_last_tested') + '</span><span class="kv-value mono">' + (item.lastTestedAt ? item.lastTestedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_kafka.label_created_at') + '</span><span class="kv-value mono">' + (item.createdAt ? item.createdAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_kafka.label_updated_at') + '</span><span class="kv-value mono">' + (item.updatedAt ? item.updatedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '</div>';
+
+    $('#detailTitle').text(__t('page.ext_kafka.detail_title') + ' - ' + item.name);
+    $('#detailBody').html(html);
+    $('#detailPanel').show();
+    $('html, body').animate({scrollTop: $('#detailPanel').offset().top - 80}, 300);
+  });
+}
+
+/* ── Add Modal ── */
+function openAddModal() {
+  var body =
+    '<form id="kafka-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.ext_kafka.th_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="EXT-KAFKA-MES-01">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Bootstrap Servers <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-host" placeholder="broker1:9092,broker2:9092">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.ext_kafka.form_label_default_port') + '</label>' +
+    '    <input type="number" class="form-control" id="f-port" value="9092">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">Bootstrap Servers</label>' +
+    '  <input type="text" class="form-control" id="f-bootstrap-servers" placeholder="broker1:9092,broker2:9092">' +
+    '  <div class="form-hint">' + __t('page.ext_kafka.form_hint_bootstrap_servers') + '</div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Security Protocol</label>' +
+    '    <select class="form-select" id="f-security-protocol">' +
+    '      <option value="PLAINTEXT" selected>PLAINTEXT</option>' +
+    '      <option value="SSL">SSL</option>' +
+    '      <option value="SASL_PLAINTEXT">SASL_PLAINTEXT</option>' +
+    '      <option value="SASL_SSL">SASL_SSL</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Consumer Group ID</label>' +
+    '    <input type="text" class="form-control" id="f-group-id" placeholder="sdl-consumer-group-01">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">Schema Registry URL</label>' +
+    '  <input type="text" class="form-control" id="f-schema-registry" placeholder="http://schema-registry:8081">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">SASL Username</label>' +
+    '    <input type="text" class="form-control" id="f-username" placeholder="SASL Username">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">SASL Password</label>' +
+    '    <input type="password" class="form-control" id="f-password" placeholder="SASL Password">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.ext_kafka.form_label_description') + '</label>' +
+    '  <textarea class="form-control" id="f-description" rows="2" placeholder="' + __t('page.ext_kafka.form_placeholder_description') + '"></textarea>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <div class="form-check">' +
+    '    <input type="checkbox" id="f-enabled" checked>' +
+    '    <label for="f-enabled">' + __t('page.ext_kafka.form_label_enabled') + '</label>' +
+    '  </div>' +
+    '</div>' +
+    '</form>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnection()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+
+  openModal(__t('page.ext_kafka.modal_add_title'), body, footer, 'modal-lg');
+  window._editId = null;
+}
+
+/* ── Edit Modal ── */
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.ext_kafka.toast_connection_info_failed'), 'error'); return; }
+    var item = r.data;
+    var cfg = item.config || {};
+
+    openAddModal();
+    setTimeout(function() {
+      $('#f-name').val(item.name).prop('readonly', true).css('background', '#f1f5f9');
+      $('#f-host').val(item.host || '');
+      $('#f-port').val(item.port || 9092);
+      $('#f-bootstrap-servers').val(cfg.bootstrap_servers || '');
+      $('#f-security-protocol').val(cfg.security_protocol || 'PLAINTEXT');
+      $('#f-group-id').val(cfg.group_id || '');
+      $('#f-schema-registry').val(cfg.schema_registry_url || '');
+      $('#f-username').val(item.username || '');
+      $('#f-password').val('').attr('placeholder', __t('page.ext_kafka.form_placeholder_password_edit'));
+      $('#f-description').val(item.description || '');
+      $('#f-enabled').prop('checked', item.enabled !== false);
+
+      $('.modal-title').text(__t('page.ext_kafka.modal_edit_title_prefix') + ' - ' + item.name);
+      window._editId = id;
+      $('.modal-footer .btn-primary').off('click').on('click', function() { saveConnection(); });
+    }, 100);
+  });
+}
+
+/* ── Save / Update ── */
+function saveConnection() {
+  var name = $('#f-name').val().trim();
+  if (!name) { showToast(__t('page.ext_kafka.toast_name_required'), 'error'); return; }
+
+  var host = $('#f-host').val().trim();
+  if (!host) { showToast(__t('page.ext_kafka.toast_bootstrap_servers_required'), 'error'); return; }
+
+  var data = {
+    name: name,
+    connection_type: CONN_TYPE,
+    host: host,
+    port: parseInt($('#f-port').val()) || 9092,
+    username: $('#f-username').val().trim(),
+    password: $('#f-password').val(),
+    description: $('#f-description').val().trim(),
+    enabled: $('#f-enabled').is(':checked'),
+    config: {
+      bootstrap_servers: $('#f-bootstrap-servers').val().trim() || host,
+      security_protocol: $('#f-security-protocol').val(),
+      group_id: $('#f-group-id').val().trim(),
+      schema_registry_url: $('#f-schema-registry').val().trim()
+    }
+  };
+
+  if (window._editId) {
+    // 빈 패스워드는 전송하지 않음 (기존 값 유지)
+    if (!data.password) delete data.password;
+    $.ajax({
+      url: API + '/' + window._editId, type: 'PUT',
+      contentType: 'application/json', data: JSON.stringify(data),
+      success: function(r) {
+        if (r.success) { closeModal(); showToast(__t('page.ext_kafka.toast_connection_updated'), 'success'); refreshAll(); }
+        else { showToast((r.error && r.error.message) || __t('page.ext_kafka.toast_update_failed'), 'error'); }
+      },
+      error: function(xhr) {
+        var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_kafka.toast_update_failed'), 'error');
+      }
+    });
+  } else {
+    $.ajax({
+      url: API, type: 'POST',
+      contentType: 'application/json', data: JSON.stringify(data),
+      success: function(r) {
+        if (r.success) { closeModal(); showToast(__t('page.ext_kafka.toast_connection_registered'), 'success'); refreshAll(); }
+        else { showToast((r.error && r.error.message) || __t('page.ext_kafka.toast_registration_failed'), 'error'); }
+      },
+      error: function(xhr) {
+        var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_kafka.toast_registration_failed'), 'error');
+      }
+    });
+  }
+}
+
+/* ── Delete ── */
+function deleteConn(id) {
+  confirmAction(__t('page.ext_kafka.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.ext_kafka.toast_connection_deleted') : __t('page.ext_kafka.toast_delete_failed'), r.success ? 'success' : 'error');
+        refreshAll();
+      },
+      error: function(xhr) {
+        var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_kafka.toast_delete_failed'), 'error');
+      }
+    });
+  });
+}
+
+/* ── Test ── */
+function testConn(id) {
+  showToast(__t('page.ext_kafka.toast_testing_connection'), 'info');
+  $.post(API + '/' + id + '/test', function(r) {
+    if (r.success && r.data) {
+      var d = r.data;
+      var msg = d.message || (d.connected ? __t('page.ext_kafka.toast_connection_success') : __t('page.ext_kafka.toast_connection_failed'));
+      if (d.latency_ms) msg += ' (' + d.latency_ms + 'ms)';
+      showToast(msg, d.connected ? 'success' : 'error');
+      refreshAll();
+    } else {
+      showToast((r.error && r.error.message) || __t('page.ext_kafka.toast_test_failed'), 'error');
+    }
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_kafka.toast_connection_test_failed'), 'error');
+  });
+}
+
+/* ── Refresh ── */
+function refreshAll() {
+  loadStats();
+  loadList(_currentPage);
+}
+
+$(document).ready(function() {
+  refreshAll();
+});
+</script>
+{% endblock %}

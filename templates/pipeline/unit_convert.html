@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.unit_convert.title') }}{% endblock %}
+{% block page_title %}{{ t('page.unit_convert.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.normalize.breadcrumb_module') }}</li>
+<li>{{ t('page.unit_convert.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadRules()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.unit_convert.btn_add_rule') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="grid-4 mb-24">
+  <div class="stat-card">
+    <div class="stat-value" id="stat-total">0</div>
+    <div class="stat-label">{{ t('page.unit_convert.stat_total_rules') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-primary" id="stat-temp">0</div>
+    <div class="stat-label">{{ t('page.unit_convert.stat_temperature') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-success" id="stat-pressure">0</div>
+    <div class="stat-label">{{ t('page.unit_convert.stat_pressure') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-warning" id="stat-other">0</div>
+    <div class="stat-label">{{ t('page.unit_convert.stat_other') }}</div>
+  </div>
+</div>
+
+<!-- Rules Table -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-ruler-combined"></i> {{ t('page.unit_convert.table_title') }}</h3>
+    <div class="d-flex gap-8">
+      <select class="form-select" style="width:auto;min-width:140px;padding:5px 10px;" id="filterCategory" onchange="loadRules()">
+        <option value="">{{ t('page.unit_convert.filter_all_categories') }}</option>
+        <option value="temperature">{{ t('page.unit_convert.filter_temperature') }}</option>
+        <option value="pressure">{{ t('page.unit_convert.filter_pressure') }}</option>
+        <option value="length">{{ t('page.unit_convert.filter_length') }}</option>
+        <option value="weight">{{ t('page.unit_convert.filter_weight') }}</option>
+        <option value="flow">{{ t('page.unit_convert.filter_flow') }}</option>
+        <option value="custom">{{ t('page.unit_convert.filter_custom') }}</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.unit_convert.th_rule_name') }}</th>
+            <th>{{ t('page.unit_convert.th_category') }}</th>
+            <th>{{ t('page.unit_convert.th_source_unit') }}</th>
+            <th></th>
+            <th>{{ t('page.unit_convert.th_target_unit') }}</th>
+            <th>Factor / Offset</th>
+            <th>{{ t('page.unit_convert.th_created_at') }}</th>
+            <th style="width:120px">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="rules-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pipeline Linkage -->
+<div class="card mt-24">
+  <div class="card-header">
+    <h3><i class="fas fa-link"></i> {{ t('page.unit_convert.linkage_title') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-hint" style="font-size:13px;line-height:1.8;">
+      {{ t('page.unit_convert.linkage_desc') }}<br>
+      <span class="mono" style="font-size:12px;">{{ t('page.unit_convert.linkage_path') }}</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+var API = '/api/pipeline/modules/unit-conversions';
+
+var _catLabels = {
+  temperature: __t('page.unit_convert.cat_temperature'), pressure: __t('page.unit_convert.cat_pressure'), length: __t('page.unit_convert.cat_length'),
+  weight: __t('page.unit_convert.cat_weight'), flow: __t('page.unit_convert.cat_flow'), custom: __t('page.unit_convert.cat_custom')
+};
+var _catColors = { temperature: 'tag-red', pressure: 'tag-blue', length: 'tag-green', weight: 'tag-orange', flow: 'tag-cyan', custom: '' };
+
+/* ── Load Rules ── */
+function loadRules() {
+  $.getJSON(API, function(r) {
+    if (!r.success) return;
+    var rules = r.data || [];
+    var filter = $('#filterCategory').val();
+    if (filter) rules = rules.filter(function(x) { return x.category === filter; });
+
+    var all = r.data || [];
+    $('#stat-total').text(all.length);
+    $('#stat-temp').text(all.filter(function(x){ return x.category === 'temperature'; }).length);
+    $('#stat-pressure').text(all.filter(function(x){ return x.category === 'pressure'; }).length);
+    $('#stat-other').text(all.filter(function(x){ return x.category !== 'temperature' && x.category !== 'pressure'; }).length);
+
+    var $tb = $('#rules-tbody').empty();
+    if (!rules.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' +
+        '<i class="fas fa-inbox" style="font-size:24px;display:block;margin-bottom:8px;"></i>' +
+        __t('page.unit_convert.empty_message') + '</td></tr>');
+      return;
+    }
+    rules.forEach(function(rule) {
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(rule.name) + '</div></td>' +
+        '<td><span class="tag ' + (_catColors[rule.category] || '') + '">' + escHtml(_catLabels[rule.category] || rule.category || '-') + '</span></td>' +
+        '<td class="mono">' + escHtml(rule.sourceUnit || '-') + '</td>' +
+        '<td><i class="fas fa-arrow-right text-primary"></i></td>' +
+        '<td class="mono">' + escHtml(rule.targetUnit || '-') + '</td>' +
+        '<td class="mono fs-12">' + (rule.factor != 1 || rule.offset != 0 ? '×' + rule.factor + ' +' + rule.offset : __t('page.unit_convert.builtin_conversion')) + '</td>' +
+        '<td class="fs-12 mono">' + (rule.createdAt ? rule.createdAt.replace('T',' ').slice(0,16) : '-') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + rule.id + ')"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteRule(' + rule.id + ',\'' + escAttr(rule.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+/* ── Form HTML ── */
+function _formHtml(c) {
+  c = c || {};
+  return '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.unit_convert.form_rule_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" value="' + escAttr(c.name || '') + '" placeholder="' + __t('page.unit_convert.form_rule_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.unit_convert.form_category') + '</label>' +
+    '  <select class="form-select" id="f-category">' +
+    '    <option value="temperature"' + ((c.category || 'temperature') === 'temperature' ? ' selected' : '') + '>' + __t('page.unit_convert.cat_temperature') + '</option>' +
+    '    <option value="pressure"' + (c.category === 'pressure' ? ' selected' : '') + '>' + __t('page.unit_convert.cat_pressure') + '</option>' +
+    '    <option value="length"' + (c.category === 'length' ? ' selected' : '') + '>' + __t('page.unit_convert.cat_length') + '</option>' +
+    '    <option value="weight"' + (c.category === 'weight' ? ' selected' : '') + '>' + __t('page.unit_convert.cat_weight') + '</option>' +
+    '    <option value="flow"' + (c.category === 'flow' ? ' selected' : '') + '>' + __t('page.unit_convert.cat_flow') + '</option>' +
+    '    <option value="custom"' + (c.category === 'custom' ? ' selected' : '') + '>' + __t('page.unit_convert.cat_custom') + '</option>' +
+    '  </select>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.unit_convert.form_source_unit') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-sourceUnit" value="' + escAttr(c.sourceUnit || '') + '" placeholder="e.g. fahrenheit">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.unit_convert.form_target_unit') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-targetUnit" value="' + escAttr(c.targetUnit || '') + '" placeholder="e.g. celsius">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.unit_convert.form_formula') + '</label>' +
+    '  <input type="text" class="form-control" id="f-formula" value="' + escAttr(c.formula || '') + '" placeholder="e.g. (x - 32) * 5/9">' +
+    '  <span class="form-hint">' + __t('page.unit_convert.form_formula_hint') + '</span>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.unit_convert.form_factor') + '</label>' +
+    '    <input type="number" class="form-control" id="f-factor" value="' + (c.factor != null ? c.factor : 1.0) + '" step="0.000001">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.unit_convert.form_offset') + '</label>' +
+    '    <input type="number" class="form-control" id="f-offset" value="' + (c.offset != null ? c.offset : 0.0) + '" step="0.000001">' +
+    '  </div>' +
+    '</div>';
+}
+
+/* ── Collect Form ── */
+function _collectForm() {
+  return {
+    name: $('#f-name').val().trim(),
+    category: $('#f-category').val(),
+    sourceUnit: $('#f-sourceUnit').val().trim(),
+    targetUnit: $('#f-targetUnit').val().trim(),
+    formula: $('#f-formula').val().trim(),
+    factor: parseFloat($('#f-factor').val()) || 1.0,
+    offset: parseFloat($('#f-offset').val()) || 0.0
+  };
+}
+
+/* ── Add ── */
+function openAddModal() {
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveRule()"><i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.unit_convert.modal_add_title'), _formHtml({}), footer);
+}
+
+function saveRule() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.unit_convert.toast_name_required'), 'error'); return; }
+  if (!d.sourceUnit || !d.targetUnit) { showToast(__t('page.unit_convert.toast_unit_required'), 'error'); return; }
+  $.ajax({
+    url: API, type: 'POST', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.unit_convert.toast_added'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+/* ── Edit ── */
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.unit_convert.toast_load_fail'), 'error'); return; }
+    var rule = r.data;
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="updateRule(' + id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+    openModal(__t('page.unit_convert.modal_edit_title') + ' — ' + escHtml(rule.name), _formHtml(rule), footer);
+  });
+}
+
+function updateRule(id) {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.unit_convert.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API + '/' + id, type: 'PUT', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.unit_convert.toast_updated'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+/* ── Delete ── */
+function deleteRule(id, name) {
+  confirmAction('"' + name + '" ' + __t('page.unit_convert.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.unit_convert.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        loadRules();
+      }
+    });
+  });
+}
+
+/* ── Init ── */
+$(document).ready(function() { loadRules(); });
+</script>
+{% endblock %}

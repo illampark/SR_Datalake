@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.auth.title') }}{% endblock %}
+{% block page_title %}{{ t('page.auth.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.admin') }}</li>
+<li>{{ t('page.auth.breadcrumb_security') }}</li>
+<li>{{ t('page.auth.breadcrumb_current') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-primary btn-sm" onclick="showToast(__t('page.auth.toast_settings_saved'),'success')"><i class="fas fa-save"></i> {{ t('page.auth.btn_save_settings') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- OAuth 2.0 Settings -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-shield-halved"></i> {{ t('page.auth.section_oauth2') }}</h3>
+    <span class="badge-status badge-running">{{ t('page.auth.badge_active') }}</span>
+  </div>
+  <div class="card-body">
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Authorization Endpoint</label>
+        <input type="text" class="form-control mono" value="https://auth.sdm-factory.co.kr/oauth2/authorize">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Token Endpoint</label>
+        <input type="text" class="form-control mono" value="https://auth.sdm-factory.co.kr/oauth2/token">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Client ID</label>
+        <input type="text" class="form-control mono" value="sdl-client">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Client Secret</label>
+        <div class="input-group">
+          <input type="password" class="form-control" value="**************************" id="client-secret">
+          <button class="btn btn-outline" onclick="toggleSecret('client-secret')"><i class="fas fa-eye"></i></button>
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Scope</label>
+        <input type="text" class="form-control mono" value="openid profile email roles">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Redirect URI</label>
+        <input type="text" class="form-control mono" value="https://sdl.sdm-factory.co.kr/callback">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- JWT Settings -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-key"></i> {{ t('page.auth.section_jwt') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.auth.label_access_token_expiry') }}</label>
+        <div class="d-flex align-center gap-8">
+          <input type="number" class="form-control" value="30" min="5" max="1440" style="max-width:120px;">
+          <span class="text-muted">{{ t('page.auth.unit_minutes') }}</span>
+        </div>
+        <span class="form-hint">{{ t('page.auth.hint_access_token') }}</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.auth.label_refresh_token_expiry') }}</label>
+        <div class="d-flex align-center gap-8">
+          <input type="number" class="form-control" value="7" min="1" max="90" style="max-width:120px;">
+          <span class="text-muted">{{ t('page.auth.unit_days') }}</span>
+        </div>
+        <span class="form-hint">{{ t('page.auth.hint_refresh_token') }}</span>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.auth.label_signing_algorithm') }}</label>
+        <select class="form-select">
+          <option>HS256</option>
+          <option selected>RS256</option>
+          <option>RS384</option>
+          <option>RS512</option>
+          <option>ES256</option>
+          <option>ES384</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.auth.label_signing_key') }}</label>
+        <div class="input-group">
+          <input type="password" class="form-control" value="**************************" id="signing-key">
+          <button class="btn btn-outline" onclick="toggleSecret('signing-key')"><i class="fas fa-eye"></i></button>
+        </div>
+        <span class="form-hint">{{ t('page.auth.hint_signing_key') }}</span>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Issuer</label>
+      <input type="text" class="form-control mono" value="https://auth.sdm-factory.co.kr">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Audience</label>
+      <input type="text" class="form-control mono" value="sdl-api">
+    </div>
+  </div>
+</div>
+
+<!-- Registered Clients -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-laptop-code"></i> {{ t('page.auth.section_clients') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="openAddClientModal()"><i class="fas fa-plus"></i> {{ t('page.auth.btn_add_client') }}</button>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Client ID</th>
+            <th>{{ t('page.auth.th_name') }}</th>
+            <th>Grant Type</th>
+            <th>Redirect URI</th>
+            <th>{{ t('page.auth.th_status') }}</th>
+            <th>{{ t('page.auth.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">sdl-client</td>
+            <td class="fw-600">{{ t('page.auth.client_web_console') }}</td>
+            <td><span class="badge-sm badge-primary">authorization_code</span></td>
+            <td class="mono fs-12">https://sdl.sdm-factory.co.kr/callback</td>
+            <td><span class="badge-status badge-running">{{ t('page.auth.badge_active') }}</span></td>
+            <td>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></button>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-trash text-danger"></i></button>
+            </td>
+          </tr>
+          <tr>
+            <td class="mono">sdl-edge-engine</td>
+            <td class="fw-600">Edge Engine</td>
+            <td><span class="badge-sm badge-success">client_credentials</span></td>
+            <td class="mono fs-12 text-muted">-</td>
+            <td><span class="badge-status badge-running">{{ t('page.auth.badge_active') }}</span></td>
+            <td>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></button>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-trash text-danger"></i></button>
+            </td>
+          </tr>
+          <tr>
+            <td class="mono">sdl-grafana</td>
+            <td class="fw-600">Grafana Dashboard</td>
+            <td><span class="badge-sm badge-primary">authorization_code</span></td>
+            <td class="mono fs-12">https://grafana.sdm-factory.co.kr/login/oauth</td>
+            <td><span class="badge-status badge-running">{{ t('page.auth.badge_active') }}</span></td>
+            <td>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></button>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-trash text-danger"></i></button>
+            </td>
+          </tr>
+          <tr>
+            <td class="mono">sdl-mobile-app</td>
+            <td class="fw-600">{{ t('page.auth.client_mobile_app') }}</td>
+            <td><span class="badge-sm badge-warning">authorization_code + PKCE</span></td>
+            <td class="mono fs-12">sdl-mobile://callback</td>
+            <td><span class="badge-status badge-stopped">{{ t('page.auth.badge_inactive') }}</span></td>
+            <td>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-pen"></i></button>
+              <button class="btn btn-outline btn-sm"><i class="fas fa-trash text-danger"></i></button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Auth Events -->
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-clock-rotate-left"></i> {{ t('page.auth.section_recent_events') }}</h3>
+    <span class="badge-sm badge-primary">{{ t('page.auth.badge_last_24h') }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.auth.th_time') }}</th>
+            <th>{{ t('page.auth.th_user_client') }}</th>
+            <th>{{ t('page.auth.th_event') }}</th>
+            <th>{{ t('page.auth.th_ip_address') }}</th>
+            <th>{{ t('page.auth.th_result') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">2026-02-10 15:30:12</td>
+            <td class="fw-600">admin</td>
+            <td>{{ t('page.auth.event_login_web') }}</td>
+            <td class="mono">192.168.1.100</td>
+            <td><span class="badge-sm badge-success">{{ t('page.auth.badge_success') }}</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-10 15:28:45</td>
+            <td class="fw-600">sdl-edge-engine</td>
+            <td>{{ t('page.auth.event_token_refresh') }}</td>
+            <td class="mono">10.0.1.10</td>
+            <td><span class="badge-sm badge-success">{{ t('page.auth.badge_success') }}</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-10 15:15:22</td>
+            <td class="fw-600">operator01</td>
+            <td>{{ t('page.auth.event_token_validation_fail') }}</td>
+            <td class="mono">192.168.1.112</td>
+            <td><span class="badge-sm badge-danger">{{ t('page.auth.badge_failure') }}</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-10 14:58:30</td>
+            <td class="fw-600">yhlee</td>
+            <td>{{ t('page.auth.event_login_web') }}</td>
+            <td class="mono">192.168.1.108</td>
+            <td><span class="badge-sm badge-success">{{ t('page.auth.badge_success') }}</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-10 14:30:55</td>
+            <td class="fw-600">mspark</td>
+            <td>{{ t('page.auth.event_login_fail_password') }}</td>
+            <td class="mono">10.10.5.22</td>
+            <td><span class="badge-sm badge-danger">{{ t('page.auth.badge_failure') }}</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-02-10 14:15:20</td>
+            <td class="fw-600">cskim</td>
+            <td>{{ t('page.auth.event_login_web') }}</td>
+            <td class="mono">192.168.1.105</td>
+            <td><span class="badge-sm badge-success">{{ t('page.auth.badge_success') }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleSecret(inputId) {
+  var input = document.getElementById(inputId);
+  if (input.type === 'password') {
+    input.type = 'text';
+    input.value = 'rsa-private-key-example-2048bit-xxxxxxxx';
+  } else {
+    input.type = 'password';
+    input.value = '**************************';
+  }
+}
+
+function openAddClientModal() {
+  var body = '<div class="form-group">' +
+    '<label class="form-label">Client ID <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" placeholder="' + __t('page.auth.form_placeholder_client_id') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.auth.form_client_name') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" placeholder="' + __t('page.auth.form_placeholder_client_name') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">Grant Type</label>' +
+    '<select class="form-select">' +
+    '<option>authorization_code</option>' +
+    '<option>client_credentials</option>' +
+    '<option>authorization_code + PKCE</option>' +
+    '</select>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">Redirect URI</label>' +
+    '<input type="text" class="form-control" placeholder="https://example.com/callback">' +
+    '</div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="closeModal(); showToast(__t(\'page.auth.toast_client_registered\'),\'success\')"><i class="fas fa-save"></i> ' + __t('page.auth.btn_register') + '</button>';
+  openModal(__t('page.auth.modal_add_client'), body, footer);
+}
+</script>
+{% endblock %}

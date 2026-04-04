@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.engine_performance.title') }}{% endblock %}
+{% block page_title %}{{ t('page.engine_performance.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.data_collection') }}</li>
+<li>{{ t('nav.collection_engine') }}</li>
+<li>{{ t('page.engine_performance.breadcrumb_performance') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stat Cards -->
+<div class="stat-grid mb-24">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_performance.stat_total_collected') }}</h4>
+      <div class="stat-value" id="stat-total-collected">-</div>
+      <div class="stat-change" id="stat-total-sub">{{ t('page.engine_performance.stat_total_sub') }}</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-bolt"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_performance.stat_avg_latency') }}</h4>
+      <div class="stat-value" id="stat-latency">-</div>
+      <div class="stat-change" id="stat-latency-sub">{{ t('page.engine_performance.stat_latency_sub') }}</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-gauge-high"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_performance.stat_error_rate') }}</h4>
+      <div class="stat-value" id="stat-error-rate">-</div>
+      <div class="stat-change" id="stat-error-sub">{{ t('page.engine_performance.stat_error_sub') }}</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-exclamation-triangle"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_performance.stat_data_quality') }}</h4>
+      <div class="stat-value" id="stat-quality">-</div>
+      <div class="stat-change" id="stat-quality-sub">{{ t('page.engine_performance.stat_quality_sub') }}</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-star"></i></div>
+  </div>
+</div>
+
+<!-- Connector Performance Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-plug"></i> {{ t('page.engine_performance.connector_perf_title') }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('common.name') }}</th>
+            <th>{{ t('page.engine_status.th_type') }}</th>
+            <th>{{ t('common.status') }}</th>
+            <th>{{ t('page.engine_performance.th_collected_count') }}</th>
+            <th>{{ t('page.engine_performance.th_error_count') }}</th>
+            <th>{{ t('page.engine_performance.th_recent_collection') }}</th>
+            <th>{{ t('page.engine_performance.th_last_error') }}</th>
+          </tr>
+        </thead>
+        <tbody id="conn-tbody">
+          <tr><td colspan="7" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pipeline Performance + MQTT / Latency / Quality (side-by-side) -->
+<div class="grid-2 mb-24">
+  <!-- Pipeline Performance -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-project-diagram"></i> {{ t('page.engine_performance.pipeline_perf_title') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.engine_performance.th_pipeline_name') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.engine_performance.th_processed_count') }}</th>
+              <th>{{ t('common.error') }}</th>
+              <th>{{ t('page.engine_performance.th_drop') }}</th>
+              <th>{{ t('page.engine_performance.th_start_time') }}</th>
+            </tr>
+          </thead>
+          <tbody id="pipe-tbody">
+            <tr><td colspan="6" class="text-center text-muted" style="padding:24px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MQTT & Latency & Quality -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-tachometer-alt"></i> {{ t('page.engine_performance.mqtt_latency_quality_title') }}</h3>
+    </div>
+    <div class="card-body" id="mqtt-latency-body">
+      <div style="padding:24px;text-align:center;" class="text-muted">{{ t('common.loading') }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Errors Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-exclamation-circle"></i> {{ t('page.engine_performance.error_log_title') }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.engine_performance.th_source') }}</th>
+            <th>{{ t('page.engine_status.th_type') }}</th>
+            <th>{{ t('page.engine_performance.th_error_message') }}</th>
+            <th>{{ t('page.engine_performance.th_timestamp') }}</th>
+          </tr>
+        </thead>
+        <tbody id="error-tbody">
+          <tr><td colspan="4" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Last Updated -->
+<div style="text-align:right;font-size:12px;color:var(--text-muted);padding:4px 0;">
+  {{ t('page.engine_status.last_updated') }}<span id="last-updated">-</span>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/engine/performance';
+var _data = null;
+
+/* ── Connector type badge ── */
+var TYPE_MAP = {
+  'opcua':  { label: 'OPC-UA',  cls: 'tag-blue' },
+  'opcda':  { label: 'OPC-DA',  cls: 'tag-cyan' },
+  'modbus': { label: 'Modbus',  cls: 'tag-green' },
+  'mqtt':   { label: 'MQTT',    cls: 'tag-yellow' },
+  'api':    { label: 'API',     cls: 'tag-purple' },
+  'file':   { label: 'File',    cls: '' },
+  'db':     { label: 'DB',      cls: '' },
+  'pipeline': { label: __t('page.engine_performance.type_pipeline'), cls: 'tag-blue' }
+};
+
+/* ── Status badge ── */
+function statusBadge(s) {
+  if (s === 'running') return '<span class="tag tag-green">' + __t('page.engine_performance.status_running') + '</span>';
+  if (s === 'error')   return '<span class="tag tag-red">' + __t('page.engine_performance.status_error') + '</span>';
+  return '<span class="tag">' + __t('page.engine_performance.status_stopped') + '</span>';
+}
+
+/* ── Helpers ── */
+function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function fmtTime(iso) {
+  if (!iso) return '-';
+  try { return new Date(iso).toLocaleString('ko-KR'); } catch(e) { return iso; }
+}
+
+/* ── Load All ── */
+function loadAll() {
+  $.getJSON(API, function(res) {
+    if (!res.success) { showToast(__t('page.engine_performance.toast_load_fail') + (res.error && res.error.message || ''), 'error'); return; }
+    _data = res.data;
+    renderSummary();
+    renderConnectors();
+    renderPipelines();
+    renderMqttLatencyQuality();
+    renderErrors();
+    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+  }).fail(function() {
+    showToast(__t('page.engine_performance.toast_api_fail'), 'error');
+  });
+}
+
+/* ── Summary Cards ── */
+function renderSummary() {
+  var s = _data.summary;
+  $('#stat-total-collected').text(fmtNum(s.totalCollected));
+  $('#stat-total-sub').text(__t('page.engine_status.stat_active_connectors') + ' ' + s.activeConnectors + __t('page.engine_performance.active_connectors_suffix'));
+  $('#stat-latency').html(s.avgProcessingMs > 0 ? s.avgProcessingMs + '<span style="font-size:14px">ms</span>' : '-');
+  $('#stat-latency-sub').text(_data.latency.sampleCount > 0 ? _data.latency.sampleCount + __t('page.engine_performance.sample_count_suffix') : __t('page.engine_performance.no_data'));
+  $('#stat-error-rate').html(s.errorRate + '<span style="font-size:14px">%</span>');
+  $('#stat-error-sub').text(__t('common.error') + ' ' + fmtNum(s.totalErrors) + __t('page.engine_performance.error_count_suffix'));
+  $('#stat-quality').html(s.avgQualityScore > 0 ? s.avgQualityScore + '<span style="font-size:14px">/100</span>' : '-');
+  $('#stat-quality-sub').text(_data.quality.activeTagCount > 0 ? __t('page.engine_performance.active_tag_prefix') + _data.quality.activeTagCount + __t('page.engine_performance.active_connectors_suffix') : __t('page.engine_performance.no_active_tags'));
+}
+
+/* ── Connector Table ── */
+function renderConnectors() {
+  var list = _data.connectors || [];
+  var html = '';
+
+  if (list.length === 0) {
+    html = '<tr><td colspan="7" class="text-center text-muted" style="padding:32px">' + __t('page.engine_performance.no_connectors') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var t = TYPE_MAP[c.connectorType] || { label: c.connectorType, cls: '' };
+      var errCell = c.lastError
+        ? '<span style="font-size:12px;color:var(--red)" title="' + escHtml(c.lastError) + '">' + escHtml(c.lastError.substring(0, 40)) + (c.lastError.length > 40 ? '...' : '') + '</span>'
+        : '<span class="text-muted">-</span>';
+      html += '<tr>' +
+        '<td class="fw-600">' + escHtml(c.name) + '</td>' +
+        '<td><span class="tag ' + t.cls + '">' + t.label + '</span></td>' +
+        '<td>' + statusBadge(c.status) + '</td>' +
+        '<td class="mono">' + fmtNum(c.metricCount) + ' <small class="text-muted">' + escHtml(c.metricLabel) + '</small></td>' +
+        '<td class="mono' + (c.errorCount > 0 ? ' fw-600" style="color:var(--red)"' : '"') + '>' + fmtNum(c.errorCount) + '</td>' +
+        '<td style="font-size:12px">' + fmtTime(c.lastCollectedAt) + '</td>' +
+        '<td>' + errCell + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#conn-tbody').html(html);
+}
+
+/* ── Pipeline Table ── */
+function renderPipelines() {
+  var list = _data.pipelines || [];
+  var html = '';
+
+  if (list.length === 0) {
+    html = '<tr><td colspan="6" class="text-center text-muted" style="padding:24px">' + __t('page.engine_performance.no_pipelines') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      html += '<tr>' +
+        '<td class="fw-600">' + escHtml(p.name) + '</td>' +
+        '<td>' + statusBadge(p.status) + '</td>' +
+        '<td class="mono">' + fmtNum(p.processed) + '</td>' +
+        '<td class="mono' + (p.errors > 0 ? ' fw-600" style="color:var(--red)"' : '"') + '>' + fmtNum(p.errors) + '</td>' +
+        '<td class="mono">' + fmtNum(p.dropped) + '</td>' +
+        '<td style="font-size:12px">' + fmtTime(p.startedAt) + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#pipe-tbody').html(html);
+}
+
+/* ── MQTT / Latency / Quality Info Panel ── */
+function renderMqttLatencyQuality() {
+  var m = _data.mqttStats || {};
+  var l = _data.latency || {};
+  var q = _data.quality || {};
+
+  var html = '<div style="display:flex;flex-direction:column;gap:16px;">';
+
+  // MQTT section
+  html += '<div>' +
+    '<h4 style="margin:0 0 8px;font-size:13px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px"><i class="fas fa-broadcast-tower" style="margin-right:4px"></i> ' + __t('page.engine_performance.mqtt_section_title') + '</h4>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+    _metricBox(__t('page.engine_performance.mqtt_received'), fmtNum(m.received || 0), 'blue') +
+    _metricBox(__t('page.engine_performance.mqtt_published'), fmtNum(m.published || 0), 'green') +
+    _metricBox(__t('common.error'), fmtNum(m.errors || 0), (m.errors || 0) > 0 ? 'red' : 'muted') +
+    '</div></div>';
+
+  // Latency section
+  html += '<div>' +
+    '<h4 style="margin:0 0 8px;font-size:13px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px"><i class="fas fa-stopwatch" style="margin-right:4px"></i> ' + __t('page.engine_performance.latency_section_title') + '</h4>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+    _metricBox(__t('page.engine_performance.latency_avg'), l.sampleCount > 0 ? l.avg + 'ms' : '-', 'blue') +
+    _metricBox(__t('page.engine_performance.latency_min'), l.sampleCount > 0 ? l.min + 'ms' : '-', 'green') +
+    _metricBox(__t('page.engine_performance.latency_max'), l.sampleCount > 0 ? l.max + 'ms' : '-', l.max > 100 ? 'red' : 'yellow') +
+    '</div></div>';
+
+  // Quality section
+  html += '<div>' +
+    '<h4 style="margin:0 0 8px;font-size:13px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px"><i class="fas fa-chart-pie" style="margin-right:4px"></i> ' + __t('page.engine_performance.quality_section_title') + '</h4>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+    _metricBox(__t('page.engine_performance.quality_avg_score'), q.activeTagCount > 0 ? q.avgScore + '/100' : '-', 'blue') +
+    _metricBox(__t('page.engine_performance.quality_null_ratio'), q.activeTagCount > 0 ? (q.avgNullRatio * 100).toFixed(1) + '%' : '-', q.avgNullRatio > 0.05 ? 'red' : 'green') +
+    _metricBox(__t('page.engine_performance.quality_anomaly_ratio'), q.activeTagCount > 0 ? (q.avgAnomalyRatio * 100).toFixed(1) + '%' : '-', q.avgAnomalyRatio > 0.05 ? 'red' : 'green') +
+    '</div></div>';
+
+  html += '</div>';
+  $('#mqtt-latency-body').html(html);
+}
+
+function _metricBox(label, value, color) {
+  var c = color === 'red' ? 'var(--red)' : color === 'green' ? 'var(--green)' : color === 'blue' ? 'var(--primary)' : color === 'yellow' ? 'var(--yellow)' : 'var(--text-muted)';
+  return '<div style="background:var(--bg-secondary);border-radius:8px;padding:10px 12px;text-align:center;">' +
+    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">' + label + '</div>' +
+    '<div style="font-size:16px;font-weight:600;color:' + c + ';font-family:monospace">' + value + '</div>' +
+    '</div>';
+}
+
+/* ── Error Log Table ── */
+function renderErrors() {
+  var list = _data.recentErrors || [];
+  var html = '';
+
+  if (list.length === 0) {
+    html = '<tr><td colspan="4" class="text-center text-muted" style="padding:32px">' + __t('page.engine_performance.no_errors') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      var t = TYPE_MAP[e.connectorType] || { label: e.connectorTypeLabel || e.connectorType, cls: '' };
+      html += '<tr>' +
+        '<td class="fw-600">' + escHtml(e.source) + '</td>' +
+        '<td><span class="tag ' + t.cls + '">' + t.label + '</span></td>' +
+        '<td style="font-size:12px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(e.error) + '">' + escHtml(e.error) + '</td>' +
+        '<td style="font-size:12px">' + fmtTime(e.timestamp) + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#error-tbody').html(html);
+}
+
+/* ── Init ── */
+$(function() { loadAll(); });
+</script>
+{% endblock %}

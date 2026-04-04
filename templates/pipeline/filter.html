@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.filter.title') }}{% endblock %}
+{% block page_title %}{{ t('page.filter.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.normalize.breadcrumb_module') }}</li>
+<li>{{ t('page.filter.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadRules()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.filter.btn_add_rule') }}</button>
+{% endblock %}
+
+{% block content %}
+<div class="grid-4 mb-24">
+  <div class="stat-card">
+    <div class="stat-value" id="stat-total">0</div>
+    <div class="stat-label">{{ t('page.filter.stat_total_rules') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-primary" id="stat-range">0</div>
+    <div class="stat-label">{{ t('page.filter.stat_range') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-success" id="stat-deadband">0</div>
+    <div class="stat-label">{{ t('page.filter.stat_deadband') }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value text-warning" id="stat-condition">0</div>
+    <div class="stat-label">{{ t('page.filter.stat_condition') }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-filter"></i> {{ t('page.filter.table_title') }}</h3>
+    <div class="d-flex gap-8">
+      <select class="form-select" style="width:auto;min-width:140px;padding:5px 10px;" id="filterType" onchange="loadRules()">
+        <option value="">{{ t('page.filter.filter_all_types') }}</option>
+        <option value="range">{{ t('page.filter.filter_range') }}</option>
+        <option value="deadband">{{ t('page.filter.filter_deadband') }}</option>
+        <option value="condition">{{ t('page.filter.filter_condition') }}</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.filter.th_rule_name') }}</th>
+            <th>{{ t('page.filter.th_filter_type') }}</th>
+            <th>{{ t('page.filter.th_range_condition') }}</th>
+            <th>{{ t('page.filter.th_action') }}</th>
+            <th>{{ t('page.filter.th_created_at') }}</th>
+            <th style="width:120px">{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="rules-tbody">
+          <tr><td colspan="6" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-24">
+  <div class="card-header">
+    <h3><i class="fas fa-link"></i> {{ t('page.filter.linkage_title') }}</h3>
+  </div>
+  <div class="card-body">
+    <div class="form-hint" style="font-size:13px;line-height:1.8;">
+      {{ t('page.filter.linkage_desc') }}<br>
+      <span class="mono" style="font-size:12px;">{{ t('page.filter.linkage_path') }}</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+var API = '/api/pipeline/modules/filter-rules';
+
+var _ftLabels = { range: __t('page.filter.filter_range'), deadband: __t('page.filter.filter_deadband'), condition: __t('page.filter.filter_condition') };
+var _ftColors = { range: 'tag-blue', deadband: 'tag-green', condition: 'tag-orange' };
+var _actLabels = { drop: __t('page.filter.action_drop'), flag: __t('page.filter.action_flag'), clamp: __t('page.filter.action_clamp') };
+var _actColors = { drop: 'text-danger', flag: 'text-warning', clamp: 'text-primary' };
+
+function loadRules() {
+  $.getJSON(API, function(r) {
+    if (!r.success) return;
+    var rules = r.data || [];
+    var filter = $('#filterType').val();
+    if (filter) rules = rules.filter(function(x) { return x.filterType === filter; });
+
+    var all = r.data || [];
+    $('#stat-total').text(all.length);
+    $('#stat-range').text(all.filter(function(x){ return x.filterType === 'range'; }).length);
+    $('#stat-deadband').text(all.filter(function(x){ return x.filterType === 'deadband'; }).length);
+    $('#stat-condition').text(all.filter(function(x){ return x.filterType === 'condition'; }).length);
+
+    var $tb = $('#rules-tbody').empty();
+    if (!rules.length) {
+      $tb.html('<tr><td colspan="6" class="text-center text-muted" style="padding:40px">' +
+        '<i class="fas fa-inbox" style="font-size:24px;display:block;margin-bottom:8px;"></i>' +
+        __t('page.filter.empty_message') + '</td></tr>');
+      return;
+    }
+    rules.forEach(function(rule) {
+      var detail = '';
+      if (rule.filterType === 'range') {
+        var parts = [];
+        if (rule.minValue != null) parts.push('≥ ' + rule.minValue);
+        if (rule.maxValue != null) parts.push('≤ ' + rule.maxValue);
+        detail = parts.join(', ') || '-';
+      } else if (rule.filterType === 'deadband') {
+        detail = 'Δ ' + ((rule.config && rule.config.deadband) || 0.5);
+      } else if (rule.filterType === 'condition') {
+        detail = escHtml(rule.condition || '-');
+      }
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(rule.name) + '</div></td>' +
+        '<td><span class="tag ' + (_ftColors[rule.filterType] || '') + '">' + escHtml(_ftLabels[rule.filterType] || rule.filterType) + '</span></td>' +
+        '<td class="mono fs-12">' + detail + '</td>' +
+        '<td><span class="' + (_actColors[rule.action] || '') + '">' + escHtml(_actLabels[rule.action] || rule.action) + '</span></td>' +
+        '<td class="fs-12 mono">' + (rule.createdAt ? rule.createdAt.replace('T',' ').slice(0,16) : '-') + '</td>' +
+        '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + rule.id + ')"><i class="fas fa-pen"></i></button>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteRule(' + rule.id + ',\'' + escAttr(rule.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+        '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function _formHtml(c) {
+  c = c || {};
+  var cfg = c.config || {};
+  var ft = c.filterType || 'range';
+  return '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.filter.form_rule_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" value="' + escAttr(c.name || '') + '" placeholder="' + __t('page.filter.form_rule_name_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.filter.form_filter_type') + '</label>' +
+    '  <select class="form-select" id="f-filterType" onchange="_toggleFilterFields()">' +
+    '    <option value="range"' + (ft === 'range' ? ' selected' : '') + '>' + __t('page.filter.filter_range') + '</option>' +
+    '    <option value="deadband"' + (ft === 'deadband' ? ' selected' : '') + '>' + __t('page.filter.filter_deadband') + '</option>' +
+    '    <option value="condition"' + (ft === 'condition' ? ' selected' : '') + '>' + __t('page.filter.filter_condition') + '</option>' +
+    '  </select>' +
+    '</div>' +
+    '<div id="grp-range"' + (ft !== 'range' ? ' style="display:none"' : '') + '>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.filter.form_min_value') + '</label>' +
+    '    <input type="number" class="form-control" id="f-minValue" value="' + (c.minValue != null ? c.minValue : '') + '" step="any" placeholder="None">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.filter.form_max_value') + '</label>' +
+    '    <input type="number" class="form-control" id="f-maxValue" value="' + (c.maxValue != null ? c.maxValue : '') + '" step="any" placeholder="None">' +
+    '  </div>' +
+    '</div></div>' +
+    '<div id="grp-deadband"' + (ft !== 'deadband' ? ' style="display:none"' : '') + '>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.filter.form_deadband_width') + '</label>' +
+    '  <input type="number" class="form-control" id="f-deadband" value="' + (cfg.deadband || 0.5) + '" step="0.01">' +
+    '  <span class="form-hint">' + __t('page.filter.form_deadband_hint') + '</span>' +
+    '</div></div>' +
+    '<div id="grp-condition"' + (ft !== 'condition' ? ' style="display:none"' : '') + '>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.filter.form_condition') + '</label>' +
+    '  <input type="text" class="form-control" id="f-condition" value="' + escAttr(c.condition || '') + '" placeholder="e.g. value > 0 and value < 100">' +
+    '  <span class="form-hint">' + __t('page.filter.form_condition_hint') + '</span>' +
+    '</div></div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.filter.form_action') + '</label>' +
+    '  <select class="form-select" id="f-action">' +
+    '    <option value="drop"' + ((c.action || 'drop') === 'drop' ? ' selected' : '') + '>' + __t('page.filter.form_action_drop') + '</option>' +
+    '    <option value="flag"' + (c.action === 'flag' ? ' selected' : '') + '>' + __t('page.filter.form_action_flag') + '</option>' +
+    '    <option value="clamp"' + (c.action === 'clamp' ? ' selected' : '') + '>' + __t('page.filter.form_action_clamp') + '</option>' +
+    '  </select>' +
+    '</div>';
+}
+
+function _toggleFilterFields() {
+  var ft = $('#f-filterType').val();
+  $('#grp-range').toggle(ft === 'range');
+  $('#grp-deadband').toggle(ft === 'deadband');
+  $('#grp-condition').toggle(ft === 'condition');
+}
+
+function _collectForm() {
+  var ft = $('#f-filterType').val();
+  var d = {
+    name: $('#f-name').val().trim(),
+    filterType: ft,
+    action: $('#f-action').val(),
+    config: {}
+  };
+  if (ft === 'range') {
+    var min = $('#f-minValue').val(); var max = $('#f-maxValue').val();
+    d.minValue = min !== '' ? parseFloat(min) : null;
+    d.maxValue = max !== '' ? parseFloat(max) : null;
+  } else if (ft === 'deadband') {
+    d.config = { deadband: parseFloat($('#f-deadband').val()) || 0.5 };
+  } else if (ft === 'condition') {
+    d.condition = $('#f-condition').val().trim();
+  }
+  return d;
+}
+
+function openAddModal() {
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveRule()"><i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.filter.modal_add_title'), _formHtml({}), footer);
+}
+
+function saveRule() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.filter.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API, type: 'POST', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.filter.toast_added'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.filter.toast_load_fail'), 'error'); return; }
+    var rule = r.data;
+    var footer =
+      '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="updateRule(' + id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+    openModal(__t('page.filter.modal_edit_title') + ' — ' + escHtml(rule.name), _formHtml(rule), footer);
+  });
+}
+
+function updateRule(id) {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.filter.toast_name_required'), 'error'); return; }
+  $.ajax({
+    url: API + '/' + id, type: 'PUT', contentType: 'application/json',
+    data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { showToast(__t('page.filter.toast_updated'), 'success'); closeModal(); loadRules(); }
+      else { showToast((r.error && r.error.message) || __t('common.save_failed'), 'error'); }
+    },
+    error: function(xhr) { var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.save_failed'), 'error'); }
+  });
+}
+
+function deleteRule(id, name) {
+  confirmAction('"' + name + '" ' + __t('page.filter.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.filter.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
+        loadRules();
+      }
+    });
+  });
+}
+
+$(document).ready(function() { loadRules(); });
+</script>
+{% endblock %}

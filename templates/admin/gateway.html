@@ -1,0 +1,562 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.gateway.title') }}{% endblock %}
+{% block page_title %}{{ t('page.gateway.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.gateway.breadcrumb_system') }}</li>
+<li>{{ t('page.gateway.breadcrumb_gateway') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="location.reload()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stat Cards -->
+<div class="stat-grid" id="stat-cards">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.gateway.stat_total_endpoints') }}</h4>
+      <div class="stat-value" id="st-total-routes">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-route"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.gateway.stat_total_requests_24h') }}</h4>
+      <div class="stat-value" id="st-total-req">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-chart-simple"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.gateway.stat_error_rate_24h') }}</h4>
+      <div class="stat-value" id="st-error-rate">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-chart-pie"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.gateway.stat_avg_response_time') }}</h4>
+      <div class="stat-value" id="st-avg-rt">-</div>
+    </div>
+    <div class="stat-icon purple"><i class="fas fa-gauge-high"></i></div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tab-nav mb-24">
+  <button class="tab-btn active" data-tab="tab-routes">{{ t('page.gateway.tab_api_status') }}</button>
+  <button class="tab-btn" data-tab="tab-log">{{ t('page.gateway.tab_access_log') }}</button>
+  <button class="tab-btn" data-tab="tab-keys">{{ t('page.gateway.tab_api_keys') }}</button>
+</div>
+
+<!-- ════════════════ TAB 1: API 현황 ════════════════ -->
+<div class="tab-pane active" id="tab-routes">
+
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-route"></i> {{ t('page.gateway.section_api_endpoints') }}</h3>
+      <div class="filter-group">
+        <label>Blueprint:</label>
+        <select class="form-select" id="bp-filter" style="width:auto;min-width:140px;padding:4px 8px;" onchange="filterRoutes()">
+          <option value="">{{ t('page.gateway.filter_all') }}</option>
+        </select>
+        <label>{{ t('common.search') }}:</label>
+        <input type="text" class="form-control" id="route-search" placeholder="{{ t('page.gateway.placeholder_search_path') }}" oninput="filterRoutes()" style="max-width:200px;">
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table id="route-table">
+          <thead>
+            <tr>
+              <th>{{ t('page.gateway.th_path') }}</th>
+              <th>{{ t('page.gateway.th_method') }}</th>
+              <th>Blueprint</th>
+              <th>{{ t('page.gateway.th_parameters') }}</th>
+            </tr>
+          </thead>
+          <tbody id="route-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════════ TAB 2: 접근 로그 ════════════════ -->
+<div class="tab-pane" id="tab-log">
+
+  <!-- Traffic Chart -->
+  <div class="card mb-24">
+    <div class="card-header">
+      <h3><i class="fas fa-chart-line"></i> {{ t('page.gateway.section_api_traffic') }}</h3>
+      <div class="filter-group">
+        <select class="form-select" id="traffic-period" style="width:auto;min-width:120px;padding:4px 8px;" onchange="loadStats()">
+          <option value="6h">{{ t('page.gateway.period_6h') }}</option>
+          <option value="12h">{{ t('page.gateway.period_12h') }}</option>
+          <option value="24h" selected>{{ t('page.gateway.period_24h') }}</option>
+        </select>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="chart-container">
+        <canvas id="apiTrafficChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Access Log Table -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-list"></i> {{ t('page.gateway.section_access_log') }}</h3>
+      <div class="filter-group">
+        <select class="form-select" id="log-method" style="width:auto;min-width:100px;padding:4px 8px;" onchange="loadAccessLog(1)">
+          <option value="">{{ t('page.gateway.filter_all_methods') }}</option>
+          <option value="GET">GET</option>
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+          <option value="DELETE">DELETE</option>
+        </select>
+        <select class="form-select" id="log-status" style="width:auto;min-width:100px;padding:4px 8px;" onchange="loadAccessLog(1)">
+          <option value="">{{ t('page.gateway.filter_all_status') }}</option>
+          <option value="success">{{ t('page.gateway.filter_success') }}</option>
+          <option value="error">{{ t('page.gateway.filter_error') }}</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="runLogCleanup()" title="{{ t('page.gateway.btn_cleanup') }}">
+          <i class="fas fa-broom"></i> {{ t('page.gateway.btn_cleanup') }}
+        </button>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('common.time') }}</th>
+              <th>{{ t('page.gateway.th_method') }}</th>
+              <th>{{ t('page.gateway.th_path') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.gateway.th_response_time') }}</th>
+              <th>{{ t('page.gateway.th_ip') }}</th>
+            </tr>
+          </thead>
+          <tbody id="log-tbody"></tbody>
+        </table>
+      </div>
+      <div class="d-flex justify-between align-center p-16" id="log-paging"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════════ TAB 3: API 키 관리 ════════════════ -->
+<div class="tab-pane" id="tab-keys">
+
+  <!-- API Keys -->
+  <div class="card mb-24">
+    <div class="card-header">
+      <h3><i class="fas fa-key"></i> {{ t('page.gateway.section_api_keys') }}</h3>
+      <button class="btn btn-primary btn-sm" onclick="openCreateKeyModal()"><i class="fas fa-plus"></i> {{ t('page.gateway.btn_create_key') }}</button>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('common.name') }}</th>
+              <th>{{ t('page.gateway.th_key') }}</th>
+              <th>{{ t('page.gateway.th_allowed_paths') }}</th>
+              <th>{{ t('page.gateway.th_expires_at') }}</th>
+              <th>{{ t('page.gateway.th_request_count') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('common.actions') }}</th>
+            </tr>
+          </thead>
+          <tbody id="key-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gateway Settings -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-gear"></i> {{ t('page.gateway.section_gateway_settings') }}</h3>
+      <button class="btn btn-primary btn-sm" onclick="saveGwSettings()"><i class="fas fa-save"></i> {{ t('common.save') }}</button>
+    </div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.gateway.label_cors_origins') }}</label>
+          <input type="text" class="form-control" id="gw-cors" placeholder="{{ t('page.gateway.placeholder_cors') }}">
+          <span class="form-hint">{{ t('page.gateway.hint_cors_origins') }}</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.gateway.label_log_retention') }}</label>
+          <select class="form-select" id="gw-retention">
+            <option value="3">{{ t('page.gateway.retention_3d') }}</option>
+            <option value="7" selected>{{ t('page.gateway.retention_7d') }}</option>
+            <option value="14">{{ t('page.gateway.retention_14d') }}</option>
+            <option value="30">{{ t('page.gateway.retention_30d') }}</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var _logPage = 1;
+var _trafficChart = null;
+
+$(function() {
+  // Tab switching
+  $('.tab-btn').on('click', function() {
+    var target = $(this).data('tab');
+    $('.tab-btn').removeClass('active');
+    $(this).addClass('active');
+    $('.tab-pane').removeClass('active');
+    $('#' + target).addClass('active');
+
+    if (target === 'tab-log' && !_trafficChart) loadStats();
+    if (target === 'tab-log') loadAccessLog(1);
+    if (target === 'tab-keys') { loadKeys(); loadGwSettings(); }
+  });
+
+  loadRoutes();
+  loadSummaryStats();
+});
+
+
+/* ═══════════ TAB 1: API 현황 ═══════════ */
+
+function loadRoutes() {
+  $.getJSON('/api/gateway/routes', function(res) {
+    if (!res.success) return;
+    var routes = res.data.routes;
+    $('#st-total-routes').text(fmtNum(res.data.total));
+
+    // Populate blueprint filter
+    var bps = {};
+    routes.forEach(function(r) { if (r.blueprint) bps[r.blueprint] = r.blueprintLabel; });
+    var sel = $('#bp-filter');
+    Object.keys(bps).sort().forEach(function(k) {
+      sel.append('<option value="' + k + '">' + bps[k] + '</option>');
+    });
+
+    renderRoutes(routes);
+  });
+}
+
+function renderRoutes(routes) {
+  var html = '';
+  var methodColors = { GET: 'success', POST: 'primary', PUT: 'warning', DELETE: 'danger', PATCH: 'info' };
+
+  routes.forEach(function(r) {
+    var methods = r.methods.map(function(m) {
+      return '<span class="badge-sm badge-' + (methodColors[m] || 'default') + '">' + m + '</span>';
+    }).join(' ');
+    var params = r.hasParams ? '<i class="fas fa-check text-success"></i>' : '<span class="text-muted">-</span>';
+    html += '<tr data-bp="' + r.blueprint + '">' +
+      '<td class="mono fw-600">' + r.path + '</td>' +
+      '<td>' + methods + '</td>' +
+      '<td><span class="text-muted">' + r.blueprintLabel + '</span></td>' +
+      '<td class="text-center">' + params + '</td>' +
+      '</tr>';
+  });
+  $('#route-tbody').html(html || '<tr><td colspan="4" class="text-center text-muted p-24">' + __t('page.gateway.no_endpoints') + '</td></tr>');
+}
+
+function filterRoutes() {
+  var bp = $('#bp-filter').val();
+  var search = $('#route-search').val().toLowerCase();
+  $('#route-tbody tr').each(function() {
+    var matchBp = !bp || $(this).data('bp') === bp;
+    var matchSearch = !search || $(this).text().toLowerCase().indexOf(search) !== -1;
+    $(this).toggle(matchBp && matchSearch);
+  });
+}
+
+
+/* ═══════════ Summary Stats ═══════════ */
+
+function loadSummaryStats() {
+  $.getJSON('/api/gateway/stats?period=24h', function(res) {
+    if (!res.success) return;
+    var d = res.data;
+    $('#st-total-req').text(fmtNum(d.totalRequests));
+    $('#st-error-rate').text(d.errorRate + '%');
+    $('#st-avg-rt').text(d.avgResponseTime + ' ms');
+  });
+}
+
+
+/* ═══════════ TAB 2: 접근 로그 ═══════════ */
+
+function loadStats() {
+  var period = $('#traffic-period').val();
+  $.getJSON('/api/gateway/stats?period=' + period, function(res) {
+    if (!res.success) return;
+    var d = res.data;
+
+    $('#st-total-req').text(fmtNum(d.totalRequests));
+    $('#st-error-rate').text(d.errorRate + '%');
+    $('#st-avg-rt').text(d.avgResponseTime + ' ms');
+
+    var labels = d.hourly.map(function(h) { return h.hour; });
+    var reqData = d.hourly.map(function(h) { return h.total; });
+    var errData = d.hourly.map(function(h) { return h.errors; });
+
+    if (_trafficChart) { _trafficChart.destroy(); _trafficChart = null; }
+
+    if (labels.length === 0) {
+      labels = ['-'];
+      reqData = [0];
+      errData = [0];
+    }
+
+    _trafficChart = createLineChart('apiTrafficChart', labels,
+      [
+        {
+          label: __t('page.gateway.chart_label_requests'),
+          data: reqData,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,0.08)',
+          fill: true
+        },
+        {
+          label: __t('page.gateway.chart_label_errors'),
+          data: errData,
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.08)',
+          fill: true,
+          yAxisID: 'y1'
+        }
+      ],
+      {
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: function(v) { return fmtNum(v); } } },
+          y1: { position: 'right', beginAtZero: true, grid: { display: false } }
+        }
+      }
+    );
+  });
+}
+
+function loadAccessLog(page) {
+  _logPage = page || 1;
+  var method = $('#log-method').val();
+  var status = $('#log-status').val();
+  var url = '/api/gateway/access-log?page=' + _logPage + '&size=15';
+  if (method) url += '&method=' + method;
+  if (status) url += '&status=' + status;
+
+  $.getJSON(url, function(res) {
+    if (!res.success) return;
+    var items = res.data.items;
+    var total = res.data.total;
+    var html = '';
+
+    items.forEach(function(r) {
+      var statusCls = r.statusCode < 400 ? 'badge-running' : 'badge-error';
+      var methodColors = { GET: 'success', POST: 'primary', PUT: 'warning', DELETE: 'danger' };
+      html += '<tr>' +
+        '<td class="text-muted">' + r.timestamp + '</td>' +
+        '<td><span class="badge-sm badge-' + (methodColors[r.method] || 'default') + '">' + r.method + '</span></td>' +
+        '<td class="mono">' + r.path + '</td>' +
+        '<td><span class="badge-status ' + statusCls + '">' + r.statusCode + '</span></td>' +
+        '<td>' + r.responseTimeMs + ' ms</td>' +
+        '<td class="text-muted">' + r.remoteAddr + '</td>' +
+        '</tr>';
+    });
+
+    $('#log-tbody').html(html || '<tr><td colspan="6" class="text-center text-muted p-24">' + __t('page.gateway.no_access_log') + '</td></tr>');
+
+    var totalPages = Math.ceil(total / 15) || 1;
+    var pHtml = '<span class="text-muted">' + __t('common.total') + ' ' + fmtNum(total) + __t('common.items') + '</span><div class="d-flex gap-8">';
+    if (_logPage > 1) pHtml += '<button class="btn btn-outline btn-sm" onclick="loadAccessLog(' + (_logPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>';
+    pHtml += '<span class="btn btn-sm" style="cursor:default">' + _logPage + ' / ' + totalPages + '</span>';
+    if (_logPage < totalPages) pHtml += '<button class="btn btn-outline btn-sm" onclick="loadAccessLog(' + (_logPage + 1) + ')"><i class="fas fa-chevron-right"></i></button>';
+    pHtml += '</div>';
+    $('#log-paging').html(pHtml);
+  });
+}
+
+function runLogCleanup() {
+  if (!confirm(__t('page.gateway.confirm_cleanup'))) return;
+  $.post('/api/gateway/access-log/cleanup', function(res) {
+    if (res.success) {
+      showToast(res.data.deleted + __t('page.gateway.toast_cleanup_success'), 'success');
+      loadAccessLog(1);
+    } else {
+      showToast(__t('page.gateway.toast_cleanup_failed') + (res.error && res.error.message), 'error');
+    }
+  });
+}
+
+
+/* ═══════════ TAB 3: API 키 관리 ═══════════ */
+
+function loadKeys() {
+  $.getJSON('/api/gateway/keys', function(res) {
+    if (!res.success) return;
+    var keys = res.data;
+    var html = '';
+
+    keys.forEach(function(k) {
+      var statusBadge = k.isActive
+        ? '<span class="badge-status badge-running">' + __t('page.gateway.badge_active') + '</span>'
+        : '<span class="badge-status badge-stopped">' + __t('page.gateway.badge_inactive') + '</span>';
+      var expiry = k.expiresAt || '<span class="text-muted">' + __t('page.gateway.label_no_expiry') + '</span>';
+      html += '<tr>' +
+        '<td class="fw-600">' + k.name + '</td>' +
+        '<td class="mono text-muted" style="font-size:12px">' + k.keyValue + '</td>' +
+        '<td>' + k.allowedPaths + '</td>' +
+        '<td>' + expiry + '</td>' +
+        '<td class="text-center">' + fmtNum(k.requestCount) + '</td>' +
+        '<td>' + statusBadge + '</td>' +
+        '<td>' +
+        '<button class="btn btn-outline btn-sm" onclick="toggleKey(' + k.id + ',' + !k.isActive + ')" title="' + (k.isActive ? __t('page.gateway.btn_deactivate') : __t('page.gateway.btn_activate')) + '">' +
+          '<i class="fas fa-' + (k.isActive ? 'pause' : 'play') + '"></i></button> ' +
+        '<button class="btn btn-outline btn-sm" onclick="deleteKey(' + k.id + ',\'' + k.name + '\')" title="' + __t('common.delete') + '">' +
+          '<i class="fas fa-trash text-danger"></i></button>' +
+        '</td></tr>';
+    });
+
+    $('#key-tbody').html(html || '<tr><td colspan="7" class="text-center text-muted p-24">' + __t('page.gateway.no_api_keys') + '</td></tr>');
+  });
+}
+
+function openCreateKeyModal() {
+  var body = '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.gateway.label_key_name') + ' <span class="text-danger">*</span></label>' +
+    '<input type="text" class="form-control" id="mk-name" placeholder="' + __t('page.gateway.placeholder_key_name') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('common.description') + '</label>' +
+    '<input type="text" class="form-control" id="mk-desc" placeholder="">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.gateway.label_allowed_paths') + '</label>' +
+    '<input type="text" class="form-control" id="mk-paths" value="*" placeholder="' + __t('page.gateway.placeholder_allowed_paths') + '">' +
+    '<span class="form-hint">' + __t('page.gateway.hint_allowed_paths') + '</span>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.gateway.label_expires_at') + '</label>' +
+    '<input type="date" class="form-control" id="mk-expires">' +
+    '<span class="form-hint">' + __t('page.gateway.hint_expires_at') + '</span>' +
+    '</div>' +
+    '</div>';
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="submitCreateKey()"><i class="fas fa-key"></i> ' + __t('common.add') + '</button>';
+  openModal(__t('page.gateway.modal_create_key'), body, footer);
+}
+
+function submitCreateKey() {
+  var name = $('#mk-name').val().trim();
+  if (!name) { showToast(__t('page.gateway.toast_key_name_required'), 'warning'); return; }
+
+  $.ajax({
+    url: '/api/gateway/keys',
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify({
+      name: name,
+      description: $('#mk-desc').val(),
+      allowedPaths: $('#mk-paths').val() || '*',
+      expiresAt: $('#mk-expires').val() || null
+    }),
+    success: function(res) {
+      closeModal();
+      if (res.success) {
+        var keyBody = '<div class="alert alert-warning mb-16">' +
+          '<i class="fas fa-exclamation-triangle"></i> ' + __t('page.gateway.warning_key_once') +
+          '</div>' +
+          '<div class="form-group">' +
+          '<label class="form-label">' + __t('page.gateway.label_api_key') + '</label>' +
+          '<div class="d-flex gap-8">' +
+          '<input type="text" class="form-control mono" value="' + res.data.keyValue + '" readonly id="generated-key">' +
+          '<button class="btn btn-outline btn-sm" onclick="copyKey()" title="' + __t('page.gateway.btn_copy') + '"><i class="fas fa-copy"></i></button>' +
+          '</div></div>';
+        var keyFooter = '<button class="btn btn-primary" onclick="closeModal()">' + __t('common.confirm') + '</button>';
+        openModal(__t('page.gateway.modal_key_created'), keyBody, keyFooter);
+        loadKeys();
+      } else {
+        showToast(res.error && res.error.message || __t('common.error'), 'error');
+      }
+    }
+  });
+}
+
+function copyKey() {
+  var el = document.getElementById('generated-key');
+  el.select();
+  document.execCommand('copy');
+  showToast(__t('page.gateway.toast_key_copied'), 'success');
+}
+
+function toggleKey(id, active) {
+  $.ajax({
+    url: '/api/gateway/keys/' + id,
+    method: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify({ isActive: active }),
+    success: function(res) {
+      if (res.success) {
+        showToast(__t('page.gateway.toast_key_status_changed'), 'success');
+        loadKeys();
+      }
+    }
+  });
+}
+
+function deleteKey(id, name) {
+  if (!confirm('"' + name + '" ' + __t('page.gateway.confirm_delete_key'))) return;
+  $.ajax({
+    url: '/api/gateway/keys/' + id,
+    method: 'DELETE',
+    success: function(res) {
+      if (res.success) {
+        showToast(__t('page.gateway.toast_key_deleted'), 'success');
+        loadKeys();
+      }
+    }
+  });
+}
+
+
+/* ═══════════ Gateway 설정 ═══════════ */
+
+function loadGwSettings() {
+  $.getJSON('/api/gateway/settings', function(res) {
+    if (!res.success) return;
+    $('#gw-cors').val(res.data.corsOrigins || '*');
+    $('#gw-retention').val(res.data.accessLogRetentionDays || '7');
+  });
+}
+
+function saveGwSettings() {
+  $.ajax({
+    url: '/api/gateway/settings',
+    method: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify({
+      corsOrigins: $('#gw-cors').val(),
+      accessLogRetentionDays: $('#gw-retention').val()
+    }),
+    success: function(res) {
+      if (res.success) showToast(__t('page.gateway.toast_settings_saved'), 'success');
+      else showToast(__t('page.gateway.toast_save_failed'), 'error');
+    }
+  });
+}
+</script>
+{% endblock %}

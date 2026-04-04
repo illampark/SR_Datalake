@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.queue.title') }}{% endblock %}
+{% block page_title %}{{ t('page.queue.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.builder.breadcrumb_pipeline') }}</li>
+<li>{{ t('page.queue.breadcrumb_page') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<span class="fs-12 text-muted" id="last-update"></span>
+<button class="btn btn-outline btn-sm" onclick="loadMqttStatus()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- MQTT Stats Cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.queue.stat_mqtt_broker') }}</h4>
+      <div class="stat-value" id="stat-broker-status">-</div>
+      <div id="stat-broker-sub" class="stat-change"><i class="fas fa-spinner fa-spin"></i> {{ t('page.queue.stat_checking') }}</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-server"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.queue.stat_subscriptions') }}</h4>
+      <div class="stat-value" id="stat-subscriptions">-</div>
+      <div class="stat-change" id="stat-subscriptions-sub"></div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-hashtag"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.queue.stat_published') }}</h4>
+      <div class="stat-value" id="stat-published">-</div>
+      <div class="stat-change" id="stat-published-sub"></div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-arrow-up-from-bracket"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.queue.stat_received') }}</h4>
+      <div class="stat-value" id="stat-received">-</div>
+      <div class="stat-change" id="stat-received-sub"></div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-arrow-down-to-bracket"></i></div>
+  </div>
+</div>
+
+<!-- Broker Status Card -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-server"></i> {{ t('page.queue.broker_title') }}</h3>
+    <span class="badge-status" id="broker-header-badge">{{ t('page.queue.broker_checking') }}</span>
+  </div>
+  <div class="card-body">
+    <div class="kv-list" id="broker-info">
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.queue.kv_host') }}</span>
+        <span class="kv-value mono" id="broker-host">-</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.queue.kv_connection_status') }}</span>
+        <span class="kv-value" id="broker-connected">-</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.queue.kv_connected_at') }}</span>
+        <span class="kv-value" id="broker-connected-at">-</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.queue.kv_last_message') }}</span>
+        <span class="kv-value" id="broker-last-message">-</span>
+      </div>
+      <div class="kv-item">
+        <span class="kv-label">{{ t('page.queue.kv_error_count') }}</span>
+        <span class="kv-value" id="broker-errors">-</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Active Subscriptions Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-rss"></i> {{ t('page.queue.subscriptions_title') }}</h3>
+    <span class="fs-12 text-muted" id="sub-count-label"></span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.queue.th_topic_pattern') }}</th>
+            <th>{{ t('page.queue.th_subscription_type') }}</th>
+            <th>{{ t('common.status') }}</th>
+          </tr>
+        </thead>
+        <tbody id="subscriptions-tbody">
+          <tr><td colspan="3" class="text-center text-muted" style="padding:40px"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- MQTT Topic Structure Reference -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-sitemap"></i> {{ t('page.queue.topic_structure_title') }}</h3>
+    <span class="badge-sm badge-primary">{{ t('page.queue.topic_structure_ref') }}</span>
+  </div>
+  <div class="card-body">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.queue.th_topic_pattern') }}</th>
+            <th>{{ t('common.description') }}</th>
+            <th>{{ t('page.queue.th_example') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono fw-600">sdl/raw/{connector_type}/{connector_id}/{tag_name}</td>
+            <td>{{ t('page.queue.topic_raw_data') }}</td>
+            <td class="mono" style="font-size:12px">sdl/raw/opcua/conn-001/temperature</td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">sdl/processed/{pipeline_id}/{tag_name}</td>
+            <td>{{ t('page.queue.topic_processed_data') }}</td>
+            <td class="mono" style="font-size:12px">sdl/processed/pip-001/temp_normalized</td>
+          </tr>
+          <tr>
+            <td class="mono fw-600">sdl/system/status/{component}</td>
+            <td>{{ t('page.queue.topic_system_status') }}</td>
+            <td class="mono" style="font-size:12px">sdl/system/status/pipeline-worker-1</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:12px;padding:10px 14px;background:var(--bg-secondary, #f8fafc);border-radius:6px;font-size:12px;color:var(--text-secondary, #64748b)">
+      <i class="fas fa-info-circle"></i>
+      {{ t('page.queue.topic_wildcard_hint') }} <code style="background:#e2e8f0;padding:1px 5px;border-radius:3px">#</code> ({{ t('page.queue.topic_multi_level') }}), <code style="background:#e2e8f0;padding:1px 5px;border-radius:3px">+</code> ({{ t('page.queue.topic_single_level') }}) &mdash; {{ t('page.queue.topic_wildcard_eg') }} <code style="background:#e2e8f0;padding:1px 5px;border-radius:3px">sdl/raw/+/+/#</code>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var MQTT_API = '/api/pipeline/mqtt/status';
+var refreshTimer = null;
+
+function formatTime(ts) {
+  if (!ts) return '-';
+  var d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  var pad = function(n) { return n < 10 ? '0' + n : n; };
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
+    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+function loadMqttStatus() {
+  $.getJSON(MQTT_API, function(res) {
+    var connected = res.connected || false;
+    var stats = res.stats || {};
+    var subs = res.subscriptions || [];
+
+    // -- Update timestamp --
+    var now = new Date();
+    var pad = function(n) { return n < 10 ? '0' + n : n; };
+    $('#last-update').text(__t('page.queue.last_update') + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds()));
+
+    // -- Stat Cards --
+    if (connected) {
+      $('#stat-broker-status').text(__t('page.queue.mqtt_connected'));
+      $('#stat-broker-sub').html('<i class="fas fa-check-circle"></i> ' + __t('page.queue.mqtt_normal')).addClass('up').removeClass('down');
+    } else {
+      $('#stat-broker-status').text(__t('page.queue.mqtt_disconnected'));
+      $('#stat-broker-sub').html('<i class="fas fa-times-circle"></i> ' + __t('page.queue.mqtt_connection_lost')).addClass('down').removeClass('up');
+    }
+
+    $('#stat-subscriptions').text(fmtNum(subs.length));
+    $('#stat-subscriptions-sub').html('<i class="fas fa-rss"></i> ' + __t('page.queue.sub_active_label'));
+
+    var published = stats.published || 0;
+    $('#stat-published').text(fmtNum(published));
+    $('#stat-published-sub').html('<i class="fas fa-arrow-up"></i> ' + __t('page.queue.pub_cumulative'));
+
+    var received = stats.received || 0;
+    $('#stat-received').text(fmtNum(received));
+    $('#stat-received-sub').html('<i class="fas fa-arrow-down"></i> ' + __t('page.queue.recv_cumulative'));
+
+    // -- Broker Status Card --
+    $('#broker-host').text('localhost:1883');
+    if (connected) {
+      $('#broker-header-badge').attr('class', 'badge-status badge-running').text(__t('page.queue.mqtt_connected'));
+      $('#broker-connected').html('<span class="badge-status badge-running">' + __t('page.queue.mqtt_connected') + '</span>');
+    } else {
+      $('#broker-header-badge').attr('class', 'badge-status badge-stopped').text(__t('page.queue.mqtt_connection_lost'));
+      $('#broker-connected').html('<span class="badge-status badge-stopped">' + __t('page.queue.mqtt_connection_lost') + '</span>');
+    }
+    $('#broker-connected-at').text(formatTime(stats.connected_at));
+    $('#broker-last-message').text(formatTime(stats.last_message_at));
+
+    var errCount = stats.errors || 0;
+    if (errCount > 0) {
+      $('#broker-errors').html('<span class="fw-600" style="color:var(--danger, #ef4444)">' + fmtNum(errCount) + '</span>');
+    } else {
+      $('#broker-errors').html('<span class="text-success">0</span>');
+    }
+
+    // -- Subscriptions Table --
+    var $tbody = $('#subscriptions-tbody');
+    $tbody.empty();
+
+    if (!subs.length) {
+      $tbody.html('<tr><td colspan="3" class="text-center text-muted" style="padding:40px">' + __t('page.queue.no_subscriptions') + '</td></tr>');
+    } else {
+      subs.forEach(function(sub) {
+        var topic = sub.topic || sub;
+        var subType = sub.type || 'raw';
+        var subStatus = sub.status || 'active';
+
+        var typeBadge = subType === 'processed'
+          ? '<span class="badge-sm badge-success">processed</span>'
+          : subType === 'system'
+            ? '<span class="badge-sm badge-warning">system</span>'
+            : '<span class="badge-sm badge-primary">raw</span>';
+
+        var statusBadge = subStatus === 'active'
+          ? '<span class="badge-status badge-running">' + __t('common.active') + '</span>'
+          : '<span class="badge-status badge-stopped">' + __t('common.inactive') + '</span>';
+
+        $tbody.append(
+          '<tr>' +
+          '<td class="mono fw-600">' + $('<span>').text(typeof topic === 'string' ? topic : (topic.pattern || '')).html() + '</td>' +
+          '<td>' + typeBadge + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '</tr>'
+        );
+      });
+    }
+
+    $('#sub-count-label').text(__t('page.queue.sub_count_label').replace('{n}', subs.length));
+
+  }).fail(function() {
+    // -- Connection failure fallback --
+    $('#stat-broker-status').text(__t('page.queue.mqtt_error'));
+    $('#stat-broker-sub').html('<i class="fas fa-exclamation-triangle"></i> ' + __t('page.queue.mqtt_api_fail')).addClass('down').removeClass('up');
+    $('#broker-header-badge').attr('class', 'badge-status badge-stopped').text(__t('page.queue.mqtt_unknown'));
+    $('#broker-connected').html('<span class="badge-status badge-stopped">' + __t('page.queue.mqtt_unknown') + '</span>');
+
+    var now = new Date();
+    var pad = function(n) { return n < 10 ? '0' + n : n; };
+    $('#last-update').text(__t('page.queue.last_attempt') + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds()) + ' ' + __t('page.queue.last_attempt_fail'));
+  });
+}
+
+$(function() {
+  loadMqttStatus();
+  refreshTimer = setInterval(loadMqttStatus, 10000);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,555 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.modbus.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.modbus.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('nav.data_collection') }}</a></li>
+<li>{{ t('page.modbus.breadcrumb_connector') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').toggle();if($('#crossSearchPanel').is(':visible'))loadCrossSearch()"><i class="fas fa-search-plus"></i> {{ t('page.opcua.btn_cross_search') }}</button>
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.modbus.btn_add_connector') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Cross-Connector Tag Search (UC-1, UC-5) -->
+<div class="card" id="crossSearchPanel" style="display:none;margin-bottom:16px;">
+  <div class="card-header">
+    <h3><i class="fas fa-search-plus"></i> {{ t('page.opcua.cross_search_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body">
+    <div class="d-flex gap-8 align-center" style="margin-bottom:12px;flex-wrap:wrap;">
+      <input type="text" class="form-control" id="cross-q" placeholder="{{ t('page.opcua.cross_search_placeholder') }}" style="flex:1;min-width:200px;padding:6px 10px;" onkeydown="if(event.key==='Enter')loadCrossSearch()">
+      <select class="form-select" id="cross-type" style="width:auto;min-width:140px;padding:6px 10px;">
+        <option value="">{{ t('page.opcua.cross_filter_all') }}</option>
+        <option value="opcua">OPC-UA</option>
+        <option value="opcda">OPC-DA</option>
+        <option value="modbus">Modbus</option>
+        <option value="mqtt">MQTT</option>
+        <option value="api">REST API</option>
+        <option value="file">{{ t('page.opcua.cross_filter_file') }}</option>
+        <option value="db">DB</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="loadCrossSearch()"><i class="fas fa-search"></i> {{ t('common.search') }}</button>
+      <button class="btn btn-outline btn-sm" onclick="loadPatterns()"><i class="fas fa-tags"></i> {{ t('page.opcua.cross_naming_pattern') }}</button>
+    </div>
+    <div class="table-wrapper" style="max-height:350px;overflow-y:auto;">
+      <table>
+        <thead><tr>
+          <th>{{ t('page.opcua.cross_th_tag_name') }}</th><th>{{ t('page.opcua.cross_th_connector') }}</th><th>{{ t('page.opcua.cross_th_connector_name') }}</th><th>{{ t('page.opcua.cross_th_value_range') }}</th><th>{{ t('page.opcua.cross_th_avg') }}</th><th>{{ t('page.opcua.cross_th_quality') }}</th><th>{{ t('page.opcua.cross_th_pipeline') }}</th><th>{{ t('page.opcua.cross_th_samples') }}</th>
+        </tr></thead>
+        <tbody id="crossSearchTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:30px">{{ t('page.opcua.cross_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="patternResults" style="display:none;margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.opcua.stat_total_connectors') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-microchip"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.modbus.stat_running') }}</h4>
+      <div class="stat-value" id="stat-running">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-play"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.opcua.stat_total_points') }}</h4>
+      <div class="stat-value" id="stat-points">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-gauge-high"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.modbus.stat_tcp_rtu') }}</h4>
+      <div class="stat-value" id="stat-tcprtu">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-network-wired"></i></div>
+  </div>
+</div>
+
+<!-- Benthos Engine Status -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-body" style="padding:10px 16px;display:flex;align-items:center;gap:12px">
+    <span class="fw-600" style="font-size:13px"><i class="fas fa-microchip"></i> {{ t('page.opcua.benthos_engine') }}</span>
+    <span id="benthos-badge" class="badge-status badge-stopped">{{ t('page.opcua.benthos_checking') }}</span>
+  </div>
+</div>
+
+<!-- Connector Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.opcua.connector_list') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('page.modbus.filter_protocol_label') }}</label>
+        <select class="form-select" id="filter-protocol" onchange="loadConnectors()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="tcp">TCP</option>
+          <option value="rtu">RTU</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>{{ t('page.opcua.filter_status_label') }}</label>
+        <select class="form-select" id="filter-status" onchange="loadConnectors()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="running">{{ t('page.opcua.filter_running') }}</option>
+          <option value="stopped">{{ t('page.opcua.filter_stopped') }}</option>
+          <option value="error">{{ t('page.opcua.filter_error') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="connector-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.opcua.th_connector_name') }}</th>
+            <th>{{ t('page.modbus.th_protocol') }}</th>
+            <th>{{ t('page.modbus.th_host_port') }}</th>
+            <th>{{ t('page.modbus.th_slave_id') }}</th>
+            <th>{{ t('page.modbus.th_function_code') }}</th>
+            <th>{{ t('page.opcua.th_status') }}</th>
+            <th>{{ t('page.opcua.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connector-tbody">
+          <tr><td colspan="7" class="text-center text-muted" style="padding:40px">{{ t('page.opcua.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/connectors/modbus';
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+var protocolBadge = {
+  tcp: '<span class="badge-sm badge-primary">TCP</span>',
+  rtu: '<span class="badge-sm badge-warning">RTU</span>',
+};
+
+var statusBadge = {
+  running: '<span class="badge-status badge-running">' + __t('common.running') + '</span>',
+  stopped: '<span class="badge-status badge-stopped">' + __t('common.stopped') + '</span>',
+  error:   '<span class="badge-status badge-error">' + __t('common.error') + '</span>',
+};
+
+/* ── Summary ── */
+function loadSummary() {
+  $.getJSON(API + '/summary', function(r) {
+    if (!r.success) return;
+    var d = r.data;
+    $('#stat-total').text(fmt(d.totalConnectors));
+    $('#stat-running').text(fmt(d.runningConnectors));
+    $('#stat-points').text(fmt(d.totalPointCount));
+    $('#stat-tcprtu').text(fmt(d.tcpCount) + ' / ' + fmt(d.rtuCount));
+    $('#benthos-badge').attr('class', d.benthos_running ? 'badge-status badge-running' : 'badge-status badge-stopped')
+      .text(d.benthos_running ? __t('common.running') : __t('common.stopped'));
+  });
+}
+
+/* ── List ── */
+function loadConnectors() {
+  var params = {};
+  var st = $('#filter-status').val(); if (st) params.status = st;
+  var pt = $('#filter-protocol').val(); if (pt) params.modbusType = pt;
+
+  $.getJSON(API, params, function(r) {
+    if (!r.success) return;
+    var items = r.data;
+    var $tb = $('#connector-tbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.opcua.no_connectors') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(c) {
+      var fcs = c.functionCodes || [];
+      var fcTags = '';
+      fcs.forEach(function(fc) {
+        fcTags += '<span class="tag tag-blue">FC' + (fc < 10 ? '0' : '') + fc + '</span>';
+      });
+
+      var hostInfo = '';
+      if (c.modbusType === 'rtu') {
+        hostInfo = '<div class="mono">' + escHtml(c.serialPort || '') + ' @ ' + c.baudrate + '</div>' +
+          '<div class="fs-11 text-muted">' + c.dataBits + c.parity + c.stopBits + '</div>';
+      } else {
+        hostInfo = '<div class="mono">' + escHtml(c.host) + ':' + c.port + '</div>';
+      }
+
+      var actionBtns = '';
+      if (c.status === 'running') {
+        actionBtns =
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.stop') + '" onclick="stopConnector('+c.id+')"><i class="fas fa-stop"></i></button>' +
+          '<button class="btn btn-outline btn-sm" title="' + __t('common.refresh') + '" onclick="restartConnector('+c.id+')"><i class="fas fa-redo"></i></button>';
+      } else {
+        actionBtns = '<button class="btn btn-success btn-sm" title="' + __t('common.start') + '" onclick="startConnector('+c.id+')"><i class="fas fa-play"></i></button>';
+      }
+      actionBtns +=
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.test_connection') + '" onclick="testConnector('+c.id+')"><i class="fas fa-plug"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteConnector('+c.id+',\''+escAttr(c.name)+'\')"><i class="fas fa-trash text-danger"></i></button>';
+
+      $tb.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(c.name) + '</div>' +
+          '<div class="fs-11 text-muted">' + escHtml(c.description || '') + '</div></td>' +
+        '<td>' + (protocolBadge[c.modbusType] || escHtml(c.modbusType)) + '</td>' +
+        '<td>' + hostInfo + '</td>' +
+        '<td><span class="badge-sm badge-success">' + escHtml(c.slaveIds || '') + '</span></td>' +
+        '<td><div class="d-flex gap-8" style="flex-wrap:wrap">' + fcTags + '</div></td>' +
+        '<td>' + (statusBadge[c.status] || escHtml(c.status)) + '</td>' +
+        '<td><div class="d-flex gap-8">' + actionBtns + '</div></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+/* ── Control ── */
+function startConnector(id) {
+  showToast(__t('page.opcua.toast_starting'), 'info');
+  $.post(API + '/' + id + '/start', function(r) {
+    showToast(r.success ? __t('page.opcua.toast_started') : (r.error && r.error.message) || __t('page.opcua.toast_start_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_start_fail'), 'error');
+  });
+}
+function stopConnector(id) {
+  confirmAction(__t('page.opcua.confirm_stop'), function() {
+    $.post(API + '/' + id + '/stop', function(r) {
+      showToast(r.success ? __t('page.opcua.toast_stopped') : __t('page.opcua.toast_stop_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    });
+  });
+}
+function restartConnector(id) {
+  showToast(__t('page.opcua.toast_restarting'), 'info');
+  $.post(API + '/' + id + '/restart', function(r) {
+    showToast(r.success ? __t('page.opcua.toast_restarted') : __t('page.opcua.toast_restart_fail'), r.success ? 'success' : 'error');
+    refreshAll();
+  });
+}
+function testConnector(id) {
+  showToast(__t('page.opcua.toast_testing'), 'info');
+  $.post(API + '/' + id + '/test', function(r) {
+    if (r.success && r.data) {
+      var d = r.data;
+      showToast(d.message, d.success ? 'success' : 'error');
+    }
+  });
+}
+function deleteConnector(id, name) {
+  confirmAction(name +  + __t('page.opcua.confirm_delete'), function() {
+    $.ajax({ url: API + '/' + id, type: 'DELETE', success: function(r) {
+      showToast(r.success ? __t('page.opcua.toast_deleted') : __t('page.opcua.toast_delete_fail'), r.success ? 'success' : 'error');
+      refreshAll();
+    }});
+  });
+}
+
+/* ── Modals ── */
+function toggleProtocolFields() {
+  var proto = $('#modal-protocol').val();
+  if (proto === 'tcp') {
+    $('#tcp-fields').show();
+    $('#rtu-fields').hide();
+  } else {
+    $('#tcp-fields').hide();
+    $('#rtu-fields').show();
+  }
+}
+
+function openAddModal() {
+  var body =
+    '<form id="modbus-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_connector_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="' + __t('page.modbus.placeholder_name_example') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_description') + '</label>' +
+    '  <input type="text" class="form-control" id="f-desc" placeholder="' + __t('page.opcua.form_desc_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.modbus.form_protocol') + ' <span class="text-danger">*</span></label>' +
+    '  <select class="form-select" id="modal-protocol" onchange="toggleProtocolFields()">' +
+    '    <option value="tcp" selected>Modbus TCP</option>' +
+    '    <option value="rtu">Modbus RTU</option>' +
+    '  </select>' +
+    '</div>' +
+    '<div id="tcp-fields">' +
+    '  <div class="form-row">' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('page.opcda.form_host_ip') + ' <span class="text-danger">*</span></label>' +
+    '      <input type="text" class="form-control" id="f-host" placeholder="192.168.x.x" value="localhost">' +
+    '    </div>' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('common.port') + '</label>' +
+    '      <input type="number" class="form-control" id="f-port" value="502">' +
+    '    </div>' +
+    '  </div>' +
+    '</div>' +
+    '<div id="rtu-fields" style="display:none">' +
+    '  <div class="form-row">' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('page.modbus.form_serial_port') + ' <span class="text-danger">*</span></label>' +
+    '      <input type="text" class="form-control" id="f-serial" placeholder="/dev/ttyUSB0">' +
+    '    </div>' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('page.modbus.form_baudrate') + '</label>' +
+    '      <select class="form-select" id="f-baudrate">' +
+    '        <option value="9600" selected>9600</option>' +
+    '        <option value="19200">19200</option>' +
+    '        <option value="38400">38400</option>' +
+    '        <option value="115200">115200</option>' +
+    '      </select>' +
+    '    </div>' +
+    '  </div>' +
+    '  <div class="form-row">' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('page.modbus.form_data_bits') + '</label>' +
+    '      <select class="form-select" id="f-databits"><option value="8" selected>8</option><option value="7">7</option></select>' +
+    '    </div>' +
+    '    <div class="form-group">' +
+    '      <label class="form-label">' + __t('page.modbus.form_parity') + '</label>' +
+    '      <select class="form-select" id="f-parity"><option value="N" selected>None</option><option value="E">Even</option><option value="O">Odd</option></select>' +
+    '    </div>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.modbus.form_slave_id') + '</label>' +
+    '    <input type="text" class="form-control" id="f-slaves" placeholder="' + __t('page.modbus.form_slave_id_placeholder') + '" value="1">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.opcda.form_polling_interval_ms') + '</label>' +
+    '    <input type="number" class="form-control" id="f-interval" value="1000" min="100" step="100">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.modbus.form_timeout_ms') + '</label>' +
+    '    <input type="number" class="form-control" id="f-timeout" value="3000" min="500" step="500">' +
+    '  </div>' +
+    '  <div class="form-group"></div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.modbus.form_function_code') + '</label>' +
+    '  <div class="d-flex gap-16" style="flex-wrap:wrap">' +
+    '    <label class="form-check"><input type="checkbox" class="fc-check" value="1"> FC01 (Coils)</label>' +
+    '    <label class="form-check"><input type="checkbox" class="fc-check" value="2"> FC02 (Discrete Inputs)</label>' +
+    '    <label class="form-check"><input type="checkbox" class="fc-check" value="3" checked> FC03 (Holding Registers)</label>' +
+    '    <label class="form-check"><input type="checkbox" class="fc-check" value="4" checked> FC04 (Input Registers)</label>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.modbus.form_register_map') + '</label>' +
+    '  <textarea class="form-control" id="f-regmap" rows="3" placeholder="' + __t('page.modbus.form_register_map_placeholder') + '"></textarea>' +
+    '  <div class="form-hint">' + __t('page.modbus.form_register_map_hint') + '</div>' +
+    '</div>' +
+    '</form>';
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-outline" onclick="testConnectionDirect()"><i class="fas fa-plug"></i> ' + __t('page.opcua.btn_connection_test') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnector()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+  openModal(__t('page.modbus.modal_add_title'), body, footer, 'modal-lg');
+}
+
+function _collectForm() {
+  var fcs = [];
+  $('.fc-check:checked').each(function() { fcs.push(parseInt($(this).val())); });
+  return {
+    name: $('#f-name').val().trim(),
+    description: $('#f-desc').val().trim(),
+    modbusType: $('#modal-protocol').val(),
+    host: $('#f-host').val().trim(),
+    port: parseInt($('#f-port').val()) || 502,
+    serialPort: $('#f-serial').val().trim(),
+    baudrate: parseInt($('#f-baudrate').val()) || 9600,
+    dataBits: parseInt($('#f-databits').val()) || 8,
+    parity: $('#f-parity').val() || 'N',
+    stopBits: 1,
+    slaveIds: $('#f-slaves').val().trim() || '1',
+    pollingInterval: parseInt($('#f-interval').val()) || 1000,
+    timeout: parseInt($('#f-timeout').val()) || 3000,
+    functionCodes: fcs.length ? fcs : [3, 4],
+    registerMap: $('#f-regmap').val().trim(),
+  };
+}
+
+function testConnectionDirect() {
+  var d = _collectForm();
+  showToast(__t('page.opcua.toast_testing'), 'info');
+  $.ajax({ url: API + '/test-connection', type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success && r.data) {
+        var info = r.data;
+        showToast(info.message, info.success ? 'success' : 'error');
+      }
+    },
+    error: function() { showToast(__t('page.opcua.toast_test_fail'), 'error'); }
+  });
+}
+
+function saveConnector() {
+  var d = _collectForm();
+  if (!d.name) { showToast(__t('page.opcua.validate_name'), 'error'); return; }
+
+  $.ajax({ url: API, type: 'POST', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.opcua.toast_registered'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_register_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_register_fail'), 'error');
+    }
+  });
+}
+
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.opcua.toast_query_fail'), 'error'); return; }
+    var c = r.data;
+    var cfg = c.config || {};
+
+    // Reuse add modal form, pre-fill values
+    openAddModal();
+    setTimeout(function() {
+      $('#f-name').val(c.name).prop('readonly', true).css('background','#f1f5f9');
+      $('#f-desc').val(c.description);
+      $('#modal-protocol').val(c.modbusType);
+      toggleProtocolFields();
+      $('#f-host').val(c.host);
+      $('#f-port').val(c.port);
+      $('#f-serial').val(c.serialPort);
+      $('#f-baudrate').val(String(c.baudrate));
+      $('#f-databits').val(String(c.dataBits));
+      $('#f-parity').val(c.parity);
+      $('#f-slaves').val(c.slaveIds);
+      $('#f-interval').val(c.pollingInterval);
+      $('#f-timeout').val(c.timeout);
+      $('#f-regmap').val(cfg.registerMap || '');
+
+      // Set function code checkboxes
+      var fcs = c.functionCodes || [3, 4];
+      $('.fc-check').each(function() {
+        $(this).prop('checked', fcs.indexOf(parseInt($(this).val())) !== -1);
+      });
+
+      // Replace modal title and save button
+      $('.modal-title').text(__t('page.modbus.modal_edit_title') + c.name);
+      window._editId = id;
+      $('.modal-footer .btn-primary').removeAttr('onclick').off('click').on('click', function() { updateConnector(id); });
+    }, 100);
+  });
+}
+
+function updateConnector(id) {
+  var d = _collectForm();
+  $.ajax({ url: API + '/' + id, type: 'PUT', contentType: 'application/json', data: JSON.stringify(d),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('page.opcua.toast_updated'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('page.opcua.toast_update_fail'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.opcua.toast_update_fail'), 'error');
+    }
+  });
+}
+
+/* ── Refresh ── */
+function refreshAll() { loadSummary(); loadConnectors(); }
+
+/* ── Cross-Connector Tag Search (UC-1, UC-5) ── */
+function loadCrossSearch() {
+  var params = { size: 100, active: 'true' };
+  var q = ($('#cross-q').val() || '').trim();
+  var ct = $('#cross-type').val();
+  if (q) params.q = q;
+  if (ct) params.connector_type = ct;
+
+  var $tb = $('#crossSearchTbody').html('<tr><td colspan="8" class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.opcua.cross_searching') + '</td></tr>');
+  $('#patternResults').hide();
+
+  $.getJSON('/api/metadata/search/unified', params, function(r) {
+    if (!r.success || !r.data) return;
+    var items = r.data.items || [];
+    $tb = $('#crossSearchTbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:30px">' + __t('page.opcua.cross_no_results') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(t) {
+      var pipeStatus = t.pipelineLinked
+        ? '<span class="badge-status badge-running" style="font-size:11px">' + t.pipelines.length + __t('common.ea') + '</span>'
+        : '<span class="badge-status badge-stopped" style="font-size:11px">' + __t('page.opcua.cross_pipe_none') + '</span>';
+      var range = (t.minObserved != null && t.maxObserved != null)
+        ? t.minObserved + '~' + t.maxObserved : '-';
+      $tb.append(
+        '<tr>' +
+        '<td class="fw-600">' + escHtml(t.tagName) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(t.connectorLabel || t.connectorType) + '</span> <span class="mono text-muted fs-11">#' + t.connectorId + '</span></td>' +
+        '<td class="fs-12">' + escHtml(t.connectorName || '-') + '</td>' +
+        '<td class="mono fs-12">' + range + '</td>' +
+        '<td class="mono fs-12">' + (t.avgObserved != null ? Number(t.avgObserved).toFixed(1) : '-') + '</td>' +
+        '<td>' + (t.qualityScore != null ? '<span class="badge-sm ' + (t.qualityScore >= 80 ? 'badge-success' : 'badge-danger') + '">' + t.qualityScore + '</span>' : '-') + '</td>' +
+        '<td>' + pipeStatus + '</td>' +
+        '<td class="mono fs-12">' + (t.sampleCount || 0) + '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function loadPatterns() {
+  var ct = $('#cross-type').val();
+  var params = ct ? { connector_type: ct } : {};
+  var $el = $('#patternResults').show().html('<div class="text-center text-muted" style="padding:16px"><i class="fas fa-spinner fa-spin"></i></div>');
+
+  $.getJSON('/api/metadata/search/patterns', params, function(r) {
+    if (!r.success || !r.data) return;
+    var patterns = r.data.patterns || [];
+    var html = '<div class="fw-600 fs-12 mb-8"><i class="fas fa-tags"></i> ' + __t('page.opcua.cross_pattern_title') + ' (' + r.data.totalTags + __t('page.opcua.cross_pattern_count_suffix') + ')</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+    patterns.forEach(function(p) {
+      html += '<div style="background:var(--bg-secondary);border-radius:6px;padding:6px 12px;border:1px solid var(--border);">' +
+        '<span class="fw-600">' + escHtml(p.prefix) + '_*</span>' +
+        ' <span class="badge-sm badge-primary">' + p.count + __t('common.ea') + '</span>' +
+        '<div class="fs-11 text-muted" style="margin-top:2px;">' + p.sampleTags.slice(0,3).map(function(t){return escHtml(t)}).join(', ') + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    $el.html(html);
+  });
+}
+
+$(document).ready(function() { refreshAll(); });
+</script>
+{% endblock %}

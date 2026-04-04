@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+minio_data/
+data/
+*.tar
+*.tar.gz
+.env
+sessions/
+.claude/
+.pytest_cache/

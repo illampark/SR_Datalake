@@ -1,0 +1,439 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.backup.title') }}{% endblock %}
+{% block page_title %}{{ t('page.backup.title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('page.backup.breadcrumb_system') }}</li>
+<li>{{ t('page.backup.breadcrumb_infra') }}</li>
+<li>{{ t('page.backup.breadcrumb_backup') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-primary btn-sm" onclick="executeBackup()"><i class="fas fa-cloud-arrow-up"></i> {{ t('page.backup.btn_backup_now') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab-item active" data-tab="tab-settings"><i class="fas fa-cog"></i> {{ t('page.backup.tab_settings') }}</div>
+  <div class="tab-item" data-tab="tab-history"><i class="fas fa-clock-rotate-left"></i> {{ t('page.backup.tab_history') }}</div>
+  <div class="tab-item" data-tab="tab-restore"><i class="fas fa-rotate-left"></i> {{ t('page.backup.tab_restore') }}</div>
+</div>
+
+<!-- ═══ Tab: 백업 설정 ═══ -->
+<div class="tab-content active" id="tab-settings">
+  <div class="card mb-24">
+    <div class="card-header">
+      <h3><i class="fas fa-cog"></i> {{ t('page.backup.section_backup_targets') }}</h3>
+      <button class="btn btn-primary btn-sm" onclick="saveSettings()"><i class="fas fa-save"></i> {{ t('common.save') }}</button>
+    </div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.backup.label_backup_targets') }}</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+          <label class="form-check"><input type="checkbox" id="chk-target-postgresql" checked> <strong>{{ t('page.backup.target_postgresql') }}</strong> <span class="text-muted fs-12">- {{ t('page.backup.target_postgresql_desc') }}</span></label>
+          <label class="form-check"><input type="checkbox" id="chk-target-minio"> <strong>{{ t('page.backup.target_minio') }}</strong> <span class="text-muted fs-12">- {{ t('page.backup.target_minio_desc') }}</span></label>
+          <label class="form-check"><input type="checkbox" id="chk-target-config" checked> <strong>{{ t('page.backup.target_config') }}</strong> <span class="text-muted fs-12">- {{ t('page.backup.target_config_desc') }}</span></label>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">{{ t('page.backup.label_backup_schedule') }}</label>
+          <select id="sel-schedule" class="form-select" style="max-width:300px;">
+            <option value="매일 새벽 2시">{{ t('page.backup.schedule_daily_2am') }}</option>
+            <option value="매일 새벽 3시" selected>{{ t('page.backup.schedule_daily_3am') }}</option>
+            <option value="매일 새벽 4시">{{ t('page.backup.schedule_daily_4am') }}</option>
+            <option value="매주 일요일 새벽 3시">{{ t('page.backup.schedule_weekly_sun_3am') }}</option>
+            <option value="매주 일요일 새벽 4시">{{ t('page.backup.schedule_weekly_sun_4am') }}</option>
+            <option value="매월 1일 새벽 3시">{{ t('page.backup.schedule_monthly_1st_3am') }}</option>
+          </select>
+          <span class="form-hint">{{ t('page.backup.hint_schedule') }}</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('page.backup.label_retention_period') }}</label>
+          <select id="sel-retention" class="form-select" style="max-width:200px;">
+            <option value="7">{{ t('page.backup.retention_7d') }}</option>
+            <option value="14">{{ t('page.backup.retention_14d') }}</option>
+            <option value="30" selected>{{ t('page.backup.retention_30d') }}</option>
+            <option value="60">{{ t('page.backup.retention_60d') }}</option>
+            <option value="90">{{ t('page.backup.retention_90d') }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-check"><input type="checkbox" id="chk-compression" checked> {{ t('page.backup.label_compression') }}</label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Current Status -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-info-circle"></i> {{ t('page.backup.section_current_status') }}</h3>
+      <button class="btn btn-outline btn-sm" onclick="loadStatus()"><i class="fas fa-refresh"></i> {{ t('common.refresh') }}</button>
+    </div>
+    <div class="card-body">
+      <div id="status-area" class="kv-list">
+        <div class="kv-item"><span class="kv-label">{{ t('common.status') }}</span><span class="kv-value text-muted">{{ t('page.backup.status_loading') }}</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Tab: 백업 이력 ═══ -->
+<div class="tab-content" id="tab-history">
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-clock-rotate-left"></i> {{ t('page.backup.section_backup_history') }}</h3>
+      <div class="filter-group">
+        <select id="filter-status" class="form-select" onchange="loadHistory(1)" style="min-width:120px;">
+          <option value="">{{ t('page.backup.filter_all_status') }}</option>
+          <option value="success">{{ t('page.backup.filter_success') }}</option>
+          <option value="failed">{{ t('page.backup.filter_failed') }}</option>
+          <option value="running">{{ t('page.backup.filter_running') }}</option>
+        </select>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.backup.th_datetime') }}</th>
+              <th>{{ t('page.backup.th_operation') }}</th>
+              <th>{{ t('page.backup.th_type') }}</th>
+              <th>{{ t('page.backup.th_target') }}</th>
+              <th>{{ t('page.backup.th_size') }}</th>
+              <th>{{ t('page.backup.th_duration') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.backup.th_manage') }}</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr><td colspan="8" class="text-center text-muted" style="padding:40px;">{{ t('page.backup.msg_select_tab_to_load') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="history-paging" class="d-flex justify-between align-center" style="padding:12px 16px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Tab: 복구 ═══ -->
+<div class="tab-content" id="tab-restore">
+  <div class="card mb-24">
+    <div class="card-header">
+      <h3><i class="fas fa-rotate-left"></i> {{ t('page.backup.section_data_restore') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="form-label">{{ t('page.backup.label_select_backup') }} <span class="text-danger">*</span></label>
+        <select id="sel-restore-backup" class="form-select" onchange="onRestoreSelect()">
+          <option value="">{{ t('page.backup.placeholder_select_backup') }}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">{{ t('page.backup.label_restore_targets') }}</label>
+        <div id="restore-targets" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        </div>
+      </div>
+
+      <div class="card mb-16" style="background:var(--c-warning-bg);border-color:var(--c-warning);">
+        <div class="card-body" style="padding:12px 16px;">
+          <div class="fw-600 text-warning mb-8"><i class="fas fa-triangle-exclamation"></i> {{ t('page.backup.warning_title') }}</div>
+          <ol style="font-size:13px;padding-left:20px;color:var(--text);line-height:1.8;">
+            <li>{{ t('page.backup.warning_1') }}</li>
+            <li>{{ t('page.backup.warning_2') }}</li>
+            <li>{{ t('page.backup.warning_3') }}</li>
+            <li>{{ t('page.backup.warning_4') }}</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="d-flex gap-8">
+        <button class="btn btn-danger" onclick="executeRestore()"><i class="fas fa-rotate-left"></i> {{ t('page.backup.btn_execute_restore') }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/* ── 설정 로드/저장 ── */
+function loadSettings() {
+  $.getJSON('/api/backup/settings', function(res) {
+    if (!res.success) return;
+    var s = res.data;
+    var targets = (s.targets || '').split(',');
+    $('#chk-target-postgresql').prop('checked', targets.indexOf('postgresql') >= 0);
+    $('#chk-target-minio').prop('checked', targets.indexOf('minio') >= 0);
+    $('#chk-target-config').prop('checked', targets.indexOf('config') >= 0);
+    $('#sel-schedule').val(s.schedule);
+    $('#sel-retention').val(s.retentionDays);
+    $('#chk-compression').prop('checked', s.compression === 'true');
+  });
+}
+
+function saveSettings() {
+  var targets = [];
+  if ($('#chk-target-postgresql').is(':checked')) targets.push('postgresql');
+  if ($('#chk-target-minio').is(':checked')) targets.push('minio');
+  if ($('#chk-target-config').is(':checked')) targets.push('config');
+
+  if (targets.length === 0) { showToast(__t('page.backup.toast_select_target'), 'error'); return; }
+
+  $.ajax({
+    url: '/api/backup/settings',
+    method: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify({
+      targets: targets.join(','),
+      schedule: $('#sel-schedule').val(),
+      retentionDays: $('#sel-retention').val(),
+      compression: $('#chk-compression').is(':checked') ? 'true' : 'false'
+    }),
+    success: function(res) {
+      if (res.success) showToast(__t('page.backup.toast_settings_saved'), 'success');
+      else showToast(res.error.message, 'error');
+    },
+    error: function() { showToast(__t('page.backup.toast_save_error'), 'error'); }
+  });
+}
+
+/* ── 상태 로드 ── */
+function loadStatus() {
+  $.getJSON('/api/backup/status', function(res) {
+    if (!res.success) return;
+    var d = res.data;
+    var html = '';
+
+    if (d.isRunning && d.runningOperation) {
+      html += kv(__t('common.status'), '<span class="badge-status badge-warning">' + __t('page.backup.status_in_progress') + ' (' + d.runningOperation.operation + ')</span>');
+    }
+
+    if (d.lastBackup) {
+      var lb = d.lastBackup;
+      html += kv(__t('page.backup.status_last_backup'), lb.executionTime);
+      html += kv(__t('page.backup.status_backup_result'), statusBadge(lb.status));
+      html += kv(__t('page.backup.status_backup_size'), fmtBytes(lb.totalBytes));
+      html += kv(__t('page.backup.status_duration'), fmtDuration(lb.durationSeconds));
+      html += kv(__t('page.backup.status_backup_target'), lb.targets);
+    } else {
+      html += kv(__t('page.backup.status_last_backup'), '<span class="text-muted">' + __t('page.backup.status_no_history') + '</span>');
+    }
+
+    html += kv(__t('page.backup.status_scheduler'), d.scheduler.running
+      ? '<span class="badge-status badge-running">' + __t('page.backup.status_running') + '</span>'
+      : '<span class="badge-status badge-stopped">' + __t('page.backup.status_stopped') + '</span>');
+
+    if (d.storage) {
+      html += kv(__t('page.backup.status_backup_storage'), fmtBytes(d.storage.totalBytes) + ' (' + (d.storage.objectCount || 0) + __t('page.backup.status_files_count') + ')');
+    }
+
+    $('#status-area').html(html || kv(__t('common.status'), __t('common.no_data')));
+  });
+}
+
+function kv(label, value) {
+  return '<div class="kv-item"><span class="kv-label">' + label + '</span><span class="kv-value">' + value + '</span></div>';
+}
+
+function statusBadge(s) {
+  var map = { success: 'badge-success', failed: 'badge-danger', running: 'badge-warning' };
+  var label = { success: __t('page.backup.badge_success'), failed: __t('page.backup.badge_failed'), running: __t('page.backup.badge_running') };
+  return '<span class="badge-sm ' + (map[s] || 'badge-muted') + '">' + (label[s] || s) + '</span>';
+}
+
+function fmtBytes(b) {
+  if (!b || b === 0) return '0 B';
+  var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var i = 0;
+  while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
+  return b.toFixed(1) + ' ' + units[i];
+}
+
+function fmtDuration(sec) {
+  if (!sec || sec === 0) return '-';
+  if (sec < 60) return sec.toFixed(1) + __t('common.sec');
+  var m = Math.floor(sec / 60);
+  var s = Math.round(sec % 60);
+  return m + __t('page.users.unit_minutes') + ' ' + s + __t('common.sec');
+}
+
+/* ── 이력 로드 ── */
+var _histPage = 1;
+
+function loadHistory(page) {
+  _histPage = page || 1;
+  var status = $('#filter-status').val();
+  var url = '/api/backup/history?page=' + _histPage + '&size=10';
+  if (status) url += '&status=' + status;
+
+  $.getJSON(url, function(res) {
+    if (!res.success) return;
+    var rows = res.data.history;
+    var total = res.data.total;
+    var tbody = '';
+
+    if (!rows.length) {
+      tbody = '<tr><td colspan="8" class="text-center text-muted" style="padding:40px;">' + __t('page.backup.no_history') + '</td></tr>';
+    } else {
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        var opLabel = r.operation === 'backup' ? __t('page.backup.operation_backup') : __t('page.backup.operation_restore');
+        var typeLabel = r.backupType === 'scheduled'
+          ? '<span class="badge-sm badge-primary">' + __t('page.backup.type_scheduled') + '</span>'
+          : '<span class="badge-sm badge-warning">' + __t('page.backup.type_manual') + '</span>';
+
+        tbody += '<tr>';
+        tbody += '<td class="mono">' + (r.executionTime || '-') + '</td>';
+        tbody += '<td>' + opLabel + '</td>';
+        tbody += '<td>' + typeLabel + '</td>';
+        tbody += '<td>' + escHtml(r.targets) + '</td>';
+        tbody += '<td class="fw-600">' + fmtBytes(r.totalBytes) + '</td>';
+        tbody += '<td>' + fmtDuration(r.durationSeconds) + '</td>';
+        tbody += '<td>' + statusBadge(r.status) + '</td>';
+        tbody += '<td>';
+        if (r.status === 'failed' && r.errorMessage) {
+          tbody += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.backup.btn_show_error') + '" onclick="showToast(\'' + escHtml(r.errorMessage).replace(/'/g, "\\'") + '\',\'error\')"><i class="fas fa-circle-info"></i></button> ';
+        }
+        if (r.operation === 'backup' && r.status === 'success') {
+          tbody += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteHistory(' + r.id + ')"><i class="fas fa-trash"></i></button>';
+        }
+        tbody += '</td>';
+        tbody += '</tr>';
+      }
+    }
+    $('#history-tbody').html(tbody);
+
+    // Paging
+    var totalPages = Math.ceil(total / 10) || 1;
+    var paging = '<span class="text-muted fs-12">' + __t('common.total') + ' ' + total + __t('common.items') + '</span><div class="d-flex gap-4">';
+    if (_histPage > 1) paging += '<button class="btn btn-outline btn-sm" onclick="loadHistory(' + (_histPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>';
+    paging += '<span class="btn btn-sm" style="pointer-events:none;">' + _histPage + ' / ' + totalPages + '</span>';
+    if (_histPage < totalPages) paging += '<button class="btn btn-outline btn-sm" onclick="loadHistory(' + (_histPage + 1) + ')"><i class="fas fa-chevron-right"></i></button>';
+    paging += '</div>';
+    $('#history-paging').html(paging);
+  });
+}
+
+function deleteHistory(id) {
+  confirmAction(__t('page.backup.confirm_delete_backup'), function() {
+    $.ajax({
+      url: '/api/backup/history/' + id,
+      method: 'DELETE',
+      success: function(res) {
+        if (res.success) {
+          showToast(__t('page.backup.toast_backup_deleted'), 'success');
+          loadHistory(_histPage);
+          loadStatus();
+        } else showToast(res.error.message, 'error');
+      }
+    });
+  });
+}
+
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── 수동 백업 ── */
+function executeBackup() {
+  var targets = [];
+  if ($('#chk-target-postgresql').is(':checked')) targets.push('postgresql');
+  if ($('#chk-target-minio').is(':checked')) targets.push('minio');
+  if ($('#chk-target-config').is(':checked')) targets.push('config');
+
+  if (targets.length === 0) { showToast(__t('page.backup.toast_select_target'), 'error'); return; }
+
+  confirmAction(__t('page.backup.btn_backup_now') + '?<br><small>' + __t('page.backup.th_target') + ': ' + targets.join(', ') + '</small>', function() {
+    $.ajax({
+      url: '/api/backup/execute',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ targets: targets }),
+      success: function(res) {
+        if (res.success) {
+          showToast(__t('page.backup.toast_backup_started'), 'info');
+          setTimeout(function() { loadStatus(); }, 3000);
+          setTimeout(function() { loadStatus(); loadHistory(1); }, 10000);
+        } else showToast(res.error.message, 'error');
+      },
+      error: function() { showToast(__t('page.backup.toast_backup_error'), 'error'); }
+    });
+  });
+}
+
+/* ── 복구 ── */
+function loadRestoreOptions() {
+  $.getJSON('/api/backup/history?status=success&operation=backup&size=20', function(res) {
+    if (!res.success) return;
+    var rows = res.data.history;
+    var sel = $('#sel-restore-backup');
+    sel.find('option:not(:first)').remove();
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      sel.append('<option value="' + r.id + '" data-targets="' + escHtml(r.targets) + '">'
+        + r.executionTime + ' (' + fmtBytes(r.totalBytes) + ') - '
+        + (r.backupType === 'scheduled' ? __t('page.backup.type_scheduled') : __t('page.backup.type_manual')) + ' ' + __t('page.backup.operation_backup')
+        + '</option>');
+    }
+  });
+}
+
+function onRestoreSelect() {
+  var opt = $('#sel-restore-backup option:selected');
+  var targets = (opt.data('targets') || '').split(',');
+  var html = '';
+  var labelMap = { postgresql: __t('page.backup.target_postgresql'), minio: __t('page.backup.target_minio'), config: __t('page.backup.target_config') };
+  for (var i = 0; i < targets.length; i++) {
+    var t = targets[i].trim();
+    if (!t) continue;
+    html += '<label class="form-check"><input type="checkbox" class="restore-target" value="' + t + '" checked> ' + (labelMap[t] || t) + '</label>';
+  }
+  $('#restore-targets').html(html);
+}
+
+function executeRestore() {
+  var backupId = $('#sel-restore-backup').val();
+  if (!backupId) { showToast(__t('page.backup.toast_select_backup'), 'error'); return; }
+
+  var targets = [];
+  $('.restore-target:checked').each(function() { targets.push($(this).val()); });
+  if (targets.length === 0) { showToast(__t('page.backup.toast_select_restore_target'), 'error'); return; }
+
+  confirmAction(__t('page.backup.btn_execute_restore') + '?', function() {
+    $.ajax({
+      url: '/api/backup/restore',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ backupId: parseInt(backupId), targets: targets }),
+      success: function(res) {
+        if (res.success) {
+          showToast(__t('page.backup.toast_restore_started'), 'warning');
+          setTimeout(function() { loadStatus(); }, 3000);
+        } else showToast(res.error.message, 'error');
+      },
+      error: function() { showToast(__t('page.backup.toast_restore_error'), 'error'); }
+    });
+  });
+}
+
+/* ── 초기 로드 ── */
+$(function() {
+  loadSettings();
+  loadStatus();
+
+  var histLoaded = false;
+  $(document).on('click', '.tab-item[data-tab="tab-history"]', function() {
+    if (!histLoaded) { loadHistory(1); histLoaded = true; }
+  });
+  $(document).on('click', '.tab-item[data-tab="tab-restore"]', function() {
+    loadRestoreOptions();
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,535 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.mqtt.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.mqtt.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('nav.data_collection') }}</a></li>
+<li>{{ t('page.mqtt.breadcrumb_connector') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').toggle();if($('#crossSearchPanel').is(':visible'))loadCrossSearch()"><i class="fas fa-search-plus"></i> {{ t('page.opcua.btn_cross_search') }}</button>
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.mqtt.btn_add_connector') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Cross-Connector Tag Search (UC-1, UC-5) -->
+<div class="card" id="crossSearchPanel" style="display:none;margin-bottom:16px;">
+  <div class="card-header">
+    <h3><i class="fas fa-search-plus"></i> {{ t('page.opcua.cross_search_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body">
+    <div class="d-flex gap-8 align-center" style="margin-bottom:12px;flex-wrap:wrap;">
+      <input type="text" class="form-control" id="cross-q" placeholder="{{ t('page.opcua.cross_search_placeholder') }}" style="flex:1;min-width:200px;padding:6px 10px;" onkeydown="if(event.key==='Enter')loadCrossSearch()">
+      <select class="form-select" id="cross-type" style="width:auto;min-width:140px;padding:6px 10px;">
+        <option value="">{{ t('page.opcua.cross_filter_all') }}</option>
+        <option value="opcua">OPC-UA</option>
+        <option value="opcda">OPC-DA</option>
+        <option value="modbus">Modbus</option>
+        <option value="mqtt">MQTT</option>
+        <option value="api">REST API</option>
+        <option value="file">{{ t('page.opcua.cross_filter_file') }}</option>
+        <option value="db">DB</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="loadCrossSearch()"><i class="fas fa-search"></i> {{ t('common.search') }}</button>
+      <button class="btn btn-outline btn-sm" onclick="loadPatterns()"><i class="fas fa-tags"></i> {{ t('page.opcua.cross_naming_pattern') }}</button>
+    </div>
+    <div class="table-wrapper" style="max-height:350px;overflow-y:auto;">
+      <table>
+        <thead><tr>
+          <th>{{ t('page.opcua.cross_th_tag_name') }}</th><th>{{ t('page.opcua.cross_th_connector') }}</th><th>{{ t('page.opcua.cross_th_connector_name') }}</th><th>{{ t('page.opcua.cross_th_value_range') }}</th><th>{{ t('page.opcua.cross_th_avg') }}</th><th>{{ t('page.opcua.cross_th_quality') }}</th><th>{{ t('page.opcua.cross_th_pipeline') }}</th><th>{{ t('page.opcua.cross_th_samples') }}</th>
+        </tr></thead>
+        <tbody id="crossSearchTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:30px">{{ t('page.opcua.cross_empty') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="patternResults" style="display:none;margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.opcua.stat_total_connectors') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-satellite-dish"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.mqtt.stat_running') }}</h4>
+      <div class="stat-value" id="stat-running">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-play"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.mqtt.stat_message_rate') }}</h4>
+      <div class="stat-value" id="stat-rate">- <span style="font-size:14px;color:var(--text-secondary)">msg/s</span></div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-gauge-high"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.mqtt.stat_subscribe_topics') }}</h4>
+      <div class="stat-value" id="stat-topics">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-hashtag"></i></div>
+  </div>
+</div>
+
+<!-- Benthos status -->
+<div class="card" style="margin-bottom:16px;padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px">
+  <i class="fas fa-microchip" style="color:var(--text-secondary)"></i>
+  <span>{{ t('page.mqtt.stream_engine') }}</span>
+  <span id="benthos-badge" class="badge-status badge-stopped">{{ t('page.mqtt.checking') }}</span>
+  <span style="color:var(--text-secondary)">Redpanda Connect (Benthos) v4.80.1</span>
+</div>
+
+<!-- Connector Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.opcua.connector_list') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('page.opcua.filter_status_label') }}</label>
+        <select class="form-select" id="filter-status" onchange="loadConnectors()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="running">{{ t('page.opcua.filter_running') }}</option>
+          <option value="stopped">{{ t('page.opcua.filter_stopped') }}</option>
+          <option value="error">{{ t('page.opcua.filter_error') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="connector-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.opcua.th_connector_name') }}</th>
+            <th>{{ t('page.mqtt.th_broker') }}</th>
+            <th>{{ t('page.mqtt.th_topic') }}</th>
+            <th>QoS</th>
+            <th>{{ t('page.mqtt.th_tls') }}</th>
+            <th>{{ t('page.opcua.th_status') }}</th>
+            <th>{{ t('page.mqtt.th_message') }}</th>
+            <th>{{ t('page.opcua.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connector-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/connectors/mqtt';
+
+function escHtml(s) { return $('<span>').text(s || '').html(); }
+function escAttr(s) { return (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+// ── Load Summary Stats ──
+function loadSummary() {
+  $.getJSON(API + '/summary', function(res) {
+    if (!res.success) return;
+    var d = res.data;
+    $('#stat-total').text(fmtNum(d.totalConnectors));
+    $('#stat-running').text(fmtNum(d.runningConnectors));
+    $('#stat-rate').html(fmtNum(Math.round(d.totalMessageRate)) +
+      ' <span style="font-size:14px;color:var(--text-secondary)">msg/s</span>');
+    $('#stat-topics').text(fmtNum(d.totalTopics));
+
+    if (d.benthos_running) {
+      $('#benthos-badge').attr('class', 'badge-status badge-running').text(__t('common.running'));
+    } else {
+      $('#benthos-badge').attr('class', 'badge-status badge-stopped').text(__t('common.stopped'));
+    }
+  });
+}
+
+// ── Load Connector Table ──
+function loadConnectors() {
+  var status = $('#filter-status').val();
+  var url = API + '?size=100' + (status ? '&status=' + status : '');
+
+  $.getJSON(url, function(res) {
+    if (!res.success) return;
+    var rows = res.data;
+    var $tbody = $('#connector-tbody');
+    $tbody.empty();
+
+    if (!rows.length) {
+      $tbody.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' +
+        ' + __t('page.mqtt.no_mqtt_connectors') + '</td></tr>');
+      return;
+    }
+
+    rows.forEach(function(c) {
+      var cfg = c.config || {};
+      var topics = cfg.topics || [];
+      var topicHtml = topics.slice(0, 3).map(function(t) {
+        return '<span class="tag tag-blue">' + escHtml(t) + '</span>';
+      }).join(' ');
+      if (topics.length > 3) topicHtml += ' <span class="fs-11 text-muted">+' + (topics.length - 3) + __t('common.ea') + '</span>';
+      if (topics.length) topicHtml += '<div class="fs-11 text-muted mt-4">' + __t('page.mqtt.topic_subscribe_count') + ' ' + topics.length + __t('common.ea') + '</div>';
+
+      var scheme = cfg.tls ? 'mqtts' : 'mqtt';
+      var brokerUrl = scheme + '://' + escHtml(c.host) + ':' + c.port;
+      var clientId = escHtml(cfg.clientId || '');
+
+      var statusBadge = c.status === 'running'
+        ? '<span class="badge-status badge-running">' + __t('common.running') + '</span>'
+        : c.status === 'error'
+          ? '<span class="badge-status badge-error">' + __t('common.error') + '</span>'
+          : '<span class="badge-status badge-stopped">' + __t('common.stopped') + '</span>';
+
+      var qosBadge = '<span class="badge-sm badge-primary">QoS ' + (cfg.qos != null ? cfg.qos : 1) + '</span>';
+      var tlsBadge = cfg.tls
+        ? '<span class="badge-sm badge-success"><i class="fas fa-lock"></i> ' + __t('page.mqtt.tls_active') + '</span>'
+        : '<span class="badge-sm badge-outline">' + __t('page.mqtt.tls_inactive') + '</span>';
+
+      var msgInfo = c.status === 'running'
+        ? '<span class="fw-600">' + fmtNum(c.messageCount || 0) + '</span>'
+        : '<span class="text-muted">-</span>';
+
+      var actions = '';
+      if (c.status === 'running') {
+        actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.stop') + '" onclick="stopConnector(' + c.id + ')"><i class="fas fa-stop"></i></button>';
+      } else {
+        actions += '<button class="btn btn-success btn-sm" title="' + __t('common.start') + '" onclick="startConnector(' + c.id + ')"><i class="fas fa-play"></i></button>';
+      }
+      actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.test') + '" onclick="testConnector(' + c.id + ')"><i class="fas fa-plug"></i></button>';
+      actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal(' + c.id + ')"><i class="fas fa-pen"></i></button>';
+      actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteConnector(' + c.id + ',\'' + escAttr(c.name) + '\')"><i class="fas fa-trash text-danger"></i></button>';
+
+      $tbody.append(
+        '<tr>' +
+        '<td><div class="fw-600">' + escHtml(c.name) + '</div>' +
+          '<div class="fs-11 text-muted">' + escHtml(c.description) + '</div></td>' +
+        '<td><div class="mono">' + brokerUrl + '</div>' +
+          '<div class="fs-11 text-muted">Client ID: ' + clientId + '</div></td>' +
+        '<td><div class="d-flex gap-8" style="flex-wrap:wrap">' + topicHtml + '</div></td>' +
+        '<td>' + qosBadge + '</td>' +
+        '<td>' + tlsBadge + '</td>' +
+        '<td>' + statusBadge + '</td>' +
+        '<td>' + msgInfo + '</td>' +
+        '<td><div class="d-flex gap-8">' + actions + '</div></td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+// ── Actions ──
+function startConnector(id) {
+  confirmAction(__t('page.mqtt.confirm_start'), function() {
+    $.post(API + '/' + id + '/start', function(res) {
+      if (res.success) { showToast(__t('page.opcua.toast_started'), 'success'); refreshAll(); }
+      else showToast(res.error.message, 'error');
+    }).fail(function(xhr) {
+      var msg = __t('page.opcua.toast_start_fail');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    });
+  });
+}
+
+function stopConnector(id) {
+  confirmAction(__t('page.opcua.confirm_stop'), function() {
+    $.post(API + '/' + id + '/stop', function(res) {
+      if (res.success) { showToast(__t('page.opcua.toast_stopped'), 'success'); refreshAll(); }
+      else showToast(res.error.message, 'error');
+    });
+  });
+}
+
+function testConnector(id) {
+  showToast(__t('page.opcua.toast_testing'), 'info');
+  $.post(API + '/' + id + '/test', function(res) {
+    if (res.success && res.data.success) {
+      showToast(__t('page.mqtt.toast_test_success') + res.data.host + ':' + res.data.port, 'success');
+    } else {
+      showToast(__t('page.mqtt.toast_test_fail') + (res.data ? res.data.message : __t('page.mqtt.toast_test_unknown')), 'error');
+    }
+  }).fail(function() { showToast(__t('page.mqtt.toast_test_request_fail'), 'error'); });
+}
+
+function deleteConnector(id, name) {
+  confirmAction(escHtml(name) +  + __t('page.opcua.confirm_delete'), function() {
+    $.ajax({ url: API + '/' + id, type: 'DELETE', success: function(res) {
+      if (res.success) { showToast(__t('page.opcua.toast_deleted'), 'success'); refreshAll(); }
+      else showToast(res.error.message, 'error');
+    }});
+  });
+}
+
+// ── Add Modal ──
+function openAddModal() {
+  var body = '<form id="mqtt-form">' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_connector_name') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="text" class="form-control" id="f-name" placeholder="' + __t('page.mqtt.placeholder_name_example') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.opcua.form_description') + '</label>' +
+    '  <input type="text" class="form-control" id="f-desc" placeholder="' + __t('page.mqtt.form_desc_placeholder') + '">' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.mqtt.form_broker_host') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-host" value="localhost">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('common.port') + '</label>' +
+    '    <input type="number" class="form-control" id="f-port" value="1883">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Client ID</label>' +
+    '    <input type="text" class="form-control" id="f-clientId" placeholder="sdl-mqtt-xxx">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.mqtt.form_qos_level') + '</label>' +
+    '    <select class="form-select" id="f-qos">' +
+    '      <option value="0">QoS 0 (At most once)</option>' +
+    '      <option value="1" selected>QoS 1 (At least once)</option>' +
+    '      <option value="2">QoS 2 (Exactly once)</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.opcua.form_username') + '</label>' +
+    '    <input type="text" class="form-control" id="f-user" placeholder="' + __t('page.mqtt.form_username_placeholder') + '">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.opcua.form_password') + '</label>' +
+    '    <input type="password" class="form-control" id="f-pass" placeholder="' + __t('page.mqtt.form_username_placeholder') + '">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.mqtt.form_tls_use') + '</label>' +
+    '    <select class="form-select" id="f-tls">' +
+    '      <option value="false" selected>' + __t('page.mqtt.tls_inactive') + '</option>' +
+    '      <option value="true">' + __t('page.mqtt.tls_active') + '</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.mqtt.form_keep_alive') + '</label>' +
+    '    <input type="number" class="form-control" id="f-keepalive" value="60" min="10">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.mqtt.form_subscribe_topics') + ' <span class="text-danger">*</span></label>' +
+    '  <textarea class="form-control" id="f-topics" rows="4" placeholder="factory1/sensor/#&#10;factory1/plc/+/data"></textarea>' +
+    '  <div class="form-hint">' + __t('page.mqtt.form_topic_hint') + '</div>' +
+    '</div>' +
+    '</form>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnector()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+  openModal(__t('page.mqtt.modal_add_title'), body, footer, 'modal-lg');
+}
+
+function saveConnector() {
+  var name = $('#f-name').val().trim();
+  var topics = $('#f-topics').val().trim().split('\n').map(function(t){ return t.trim(); }).filter(Boolean);
+
+  if (!name) { showToast(__t('page.opcua.validate_name'), 'warning'); return; }
+  if (!topics.length) { showToast(__t('page.mqtt.validate_topic'), 'warning'); return; }
+
+  var data = {
+    name: name,
+    description: $('#f-desc').val().trim(),
+    host: $('#f-host').val().trim() || 'localhost',
+    port: parseInt($('#f-port').val()) || 1883,
+    clientId: $('#f-clientId').val().trim() || ('sdl-mqtt-' + name),
+    qos: parseInt($('#f-qos').val()),
+    tls: $('#f-tls').val() === 'true',
+    username: $('#f-user').val().trim(),
+    password: $('#f-pass').val(),
+    keepAlive: parseInt($('#f-keepalive').val()) || 60,
+    cleanSession: true,
+    topics: topics
+  };
+
+  $.ajax({
+    url: API, type: 'POST', contentType: 'application/json',
+    data: JSON.stringify(data),
+    success: function(res) {
+      if (res.success) { closeModal(); showToast(__t('page.opcua.toast_registered'), 'success'); refreshAll(); }
+      else showToast(res.error.message, 'error');
+    },
+    error: function(xhr) {
+      var msg = __t('page.opcua.toast_register_fail');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    }
+  });
+}
+
+// ── Edit Modal ──
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(res) {
+    if (!res.success) { showToast(__t('page.mqtt.toast_query_fail'), 'error'); return; }
+    var c = res.data;
+    var cfg = c.config || {};
+
+    var body = '<form id="mqtt-form">' +
+      '<input type="hidden" id="e-id" value="' + c.id + '">' +
+      '<div class="form-group">' +
+      '  <label class="form-label">' + __t('page.opcua.form_connector_name') + '</label>' +
+      '  <input type="text" class="form-control" value="' + escAttr(c.name) + '" readonly style="background:#f1f5f9">' +
+      '</div>' +
+      '<div class="form-group">' +
+      '  <label class="form-label">' + __t('page.opcua.form_description') + '</label>' +
+      '  <input type="text" class="form-control" id="e-desc" value="' + escAttr(c.description) + '">' +
+      '</div>' +
+      '<div class="form-row">' +
+      '  <div class="form-group">' +
+      '    <label class="form-label">' + __t('page.mqtt.form_broker_host') + '</label>' +
+      '    <input type="text" class="form-control" id="e-host" value="' + escAttr(c.host) + '">' +
+      '  </div>' +
+      '  <div class="form-group">' +
+      '    <label class="form-label">' + __t('common.port') + '</label>' +
+      '    <input type="number" class="form-control" id="e-port" value="' + c.port + '">' +
+      '  </div>' +
+      '</div>' +
+      '<div class="form-row">' +
+      '  <div class="form-group">' +
+      '    <label class="form-label">Client ID</label>' +
+      '    <input type="text" class="form-control" id="e-clientId" value="' + escAttr(cfg.clientId || '') + '">' +
+      '  </div>' +
+      '  <div class="form-group">' +
+      '    <label class="form-label">' + __t('page.mqtt.form_qos_level') + '</label>' +
+      '    <select class="form-select" id="e-qos">' +
+      '      <option value="0"' + (cfg.qos==0?' selected':'') + '>QoS 0</option>' +
+      '      <option value="1"' + (cfg.qos==1||cfg.qos==null?' selected':'') + '>QoS 1</option>' +
+      '      <option value="2"' + (cfg.qos==2?' selected':'') + '>QoS 2</option>' +
+      '    </select>' +
+      '  </div>' +
+      '</div>' +
+      '<div class="form-group">' +
+      '  <label class="form-label">' + __t('page.mqtt.form_subscribe_topics') + '</label>' +
+      '  <textarea class="form-control" id="e-topics" rows="4">' + escHtml((cfg.topics||[]).join('\n')) + '</textarea>' +
+      '</div>' +
+      '</form>';
+    var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+      '<button class="btn btn-primary" onclick="updateConnector()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+    openModal(__t('page.mqtt.modal_edit_title') + escHtml(c.name), body, footer, 'modal-lg');
+  });
+}
+
+function updateConnector() {
+  var id = $('#e-id').val();
+  var topics = $('#e-topics').val().trim().split('\n').map(function(t){ return t.trim(); }).filter(Boolean);
+
+  var data = {
+    description: $('#e-desc').val().trim(),
+    host: $('#e-host').val().trim(),
+    port: parseInt($('#e-port').val()) || 1883,
+    clientId: $('#e-clientId').val().trim(),
+    qos: parseInt($('#e-qos').val()),
+    topics: topics
+  };
+
+  $.ajax({
+    url: API + '/' + id, type: 'PUT', contentType: 'application/json',
+    data: JSON.stringify(data),
+    success: function(res) {
+      if (res.success) { closeModal(); showToast(__t('page.opcua.toast_updated'), 'success'); refreshAll(); }
+      else showToast(res.error.message, 'error');
+    },
+    error: function(xhr) {
+      var msg = __t('page.opcua.toast_update_fail');
+      try { msg = JSON.parse(xhr.responseText).error.message; } catch(e) {}
+      showToast(msg, 'error');
+    }
+  });
+}
+
+// ── Refresh ──
+function refreshAll() {
+  loadSummary();
+  loadConnectors();
+}
+
+/* ── Cross-Connector Tag Search (UC-1, UC-5) ── */
+function loadCrossSearch() {
+  var params = { size: 100, active: 'true' };
+  var q = ($('#cross-q').val() || '').trim();
+  var ct = $('#cross-type').val();
+  if (q) params.q = q;
+  if (ct) params.connector_type = ct;
+
+  var $tb = $('#crossSearchTbody').html('<tr><td colspan="8" class="text-center text-muted" style="padding:20px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.opcua.cross_searching') + '</td></tr>');
+  $('#patternResults').hide();
+
+  $.getJSON('/api/metadata/search/unified', params, function(r) {
+    if (!r.success || !r.data) return;
+    var items = r.data.items || [];
+    $tb = $('#crossSearchTbody').empty();
+    if (!items.length) {
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:30px">' + __t('page.opcua.cross_no_results') + '</td></tr>');
+      return;
+    }
+    items.forEach(function(t) {
+      var pipeStatus = t.pipelineLinked
+        ? '<span class="badge-status badge-running" style="font-size:11px">' + t.pipelines.length + __t('common.ea') + '</span>'
+        : '<span class="badge-status badge-stopped" style="font-size:11px">' + __t('page.opcua.cross_pipe_none') + '</span>';
+      var range = (t.minObserved != null && t.maxObserved != null)
+        ? t.minObserved + '~' + t.maxObserved : '-';
+      $tb.append(
+        '<tr>' +
+        '<td class="fw-600">' + escHtml(t.tagName) + '</td>' +
+        '<td><span class="badge-sm badge-primary">' + escHtml(t.connectorLabel || t.connectorType) + '</span> <span class="mono text-muted fs-11">#' + t.connectorId + '</span></td>' +
+        '<td class="fs-12">' + escHtml(t.connectorName || '-') + '</td>' +
+        '<td class="mono fs-12">' + range + '</td>' +
+        '<td class="mono fs-12">' + (t.avgObserved != null ? Number(t.avgObserved).toFixed(1) : '-') + '</td>' +
+        '<td>' + (t.qualityScore != null ? '<span class="badge-sm ' + (t.qualityScore >= 80 ? 'badge-success' : 'badge-danger') + '">' + t.qualityScore + '</span>' : '-') + '</td>' +
+        '<td>' + pipeStatus + '</td>' +
+        '<td class="mono fs-12">' + (t.sampleCount || 0) + '</td>' +
+        '</tr>'
+      );
+    });
+  });
+}
+
+function loadPatterns() {
+  var ct = $('#cross-type').val();
+  var params = ct ? { connector_type: ct } : {};
+  var $el = $('#patternResults').show().html('<div class="text-center text-muted" style="padding:16px"><i class="fas fa-spinner fa-spin"></i></div>');
+
+  $.getJSON('/api/metadata/search/patterns', params, function(r) {
+    if (!r.success || !r.data) return;
+    var patterns = r.data.patterns || [];
+    var html = '<div class="fw-600 fs-12 mb-8"><i class="fas fa-tags"></i> ' + __t('page.opcua.cross_pattern_title') + ' (' + r.data.totalTags + __t('page.opcua.cross_pattern_count_suffix') + ')</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+    patterns.forEach(function(p) {
+      html += '<div style="background:var(--bg-secondary);border-radius:6px;padding:6px 12px;border:1px solid var(--border);">' +
+        '<span class="fw-600">' + escHtml(p.prefix) + '_*</span>' +
+        ' <span class="badge-sm badge-primary">' + p.count + __t('common.ea') + '</span>' +
+        '<div class="fs-11 text-muted" style="margin-top:2px;">' + p.sampleTags.slice(0,3).map(function(t){return escHtml(t)}).join(', ') + '</div>' +
+        '</div>';
+    });
+    html += '</div>';
+    $el.html(html);
+  });
+}
+
+$(function() { refreshAll(); });
+</script>
+{% endblock %}

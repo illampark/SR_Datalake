@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="{{ current_lang or 'ko' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ t('login.submit') }} - {{ system_name }}</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background: var(--bg-main, #f0f2f5);
+    }
+    .login-wrapper {
+      width: 100%;
+      max-width: 400px;
+      padding: 16px;
+    }
+    .login-card {
+      background: var(--bg-card, #fff);
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 40px 32px 32px;
+    }
+    .login-header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .login-header .logo-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+      background: var(--primary, #3b82f6);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+    .login-header h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-primary, #1e293b);
+      margin: 0 0 4px;
+    }
+    .login-header p {
+      font-size: 13px;
+      color: var(--text-muted, #94a3b8);
+      margin: 0;
+    }
+    .login-form .form-group {
+      margin-bottom: 16px;
+    }
+    .login-form .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary, #475569);
+      margin-bottom: 6px;
+    }
+    .login-form .form-control {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .login-form .input-icon-wrapper {
+      position: relative;
+    }
+    .login-form .input-icon-wrapper i {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted, #94a3b8);
+      font-size: 14px;
+    }
+    .login-form .input-icon-wrapper .form-control {
+      padding-left: 36px;
+    }
+    .btn-login {
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      background: var(--primary, #3b82f6);
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 8px;
+    }
+    .btn-login:hover {
+      background: var(--primary-dark, #2563eb);
+    }
+    .btn-login:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .login-error {
+      display: none;
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.2);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #dc2626;
+    }
+    .login-error i {
+      margin-right: 6px;
+    }
+    .login-footer {
+      text-align: center;
+      margin-top: 24px;
+      font-size: 12px;
+      color: var(--text-muted, #94a3b8);
+    }
+    .lang-toggle {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: var(--bg-card, #fff);
+      border: 1px solid var(--border, #e2e8f0);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--text-secondary, #475569);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .lang-toggle:hover {
+      background: var(--bg-hover, #f8fafc);
+      border-color: var(--primary, #3b82f6);
+    }
+  </style>
+</head>
+<body>
+  <!-- Language toggle -->
+  <button class="lang-toggle" onclick="toggleLang()">
+    <i class="fas fa-globe"></i>
+    <span id="lang-label">{{ 'English' if current_lang == 'ko' else '한국어' }}</span>
+  </button>
+
+  <div class="login-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="logo-icon"><i class="fas fa-network-wired"></i></div>
+        <h1>{{ system_name }}</h1>
+        <p>{{ t('login.subtitle') }}</p>
+      </div>
+
+      <div class="login-error" id="login-error">
+        <i class="fas fa-exclamation-circle"></i>
+        <span id="error-msg"></span>
+      </div>
+
+      <form class="login-form" onsubmit="doLogin(event)">
+        <div class="form-group">
+          <label class="form-label">{{ t('login.user_id') }}</label>
+          <div class="input-icon-wrapper">
+            <i class="fas fa-user"></i>
+            <input type="text" class="form-control" id="login-username" placeholder="{{ t('login.user_id_placeholder') }}" autocomplete="username" autofocus>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">{{ t('login.password') }}</label>
+          <div class="input-icon-wrapper">
+            <i class="fas fa-lock"></i>
+            <input type="password" class="form-control" id="login-password" placeholder="{{ t('login.password_placeholder') }}" autocomplete="current-password">
+          </div>
+        </div>
+        <button type="submit" class="btn-login" id="btn-login">
+          <i class="fas fa-sign-in-alt"></i> {{ t('login.submit') }}
+        </button>
+      </form>
+
+      <div class="login-footer">
+        &copy; 2025 {{ system_name }}
+      </div>
+    </div>
+  </div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script>
+  // i18n for login page (no base.html)
+  window.__i18n = {{ i18n_all | tojson }};
+  window.__lang = '{{ current_lang }}';
+  function __t(key, fallback) {
+    var parts = key.split('.'), v = window.__i18n;
+    for (var i = 0; i < parts.length; i++) {
+      if (v && typeof v === 'object') v = v[parts[i]]; else return fallback || key;
+    }
+    return (typeof v === 'string') ? v : (fallback || key);
+  }
+
+  function doLogin(e) {
+    e.preventDefault();
+    var username = $('#login-username').val().trim();
+    var password = $('#login-password').val().trim();
+
+    if (!username || !password) {
+      showError(__t('login.error_required'));
+      return;
+    }
+
+    $('#btn-login').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('login.logging_in'));
+    hideError();
+
+    $.ajax({
+      url: '/api/admin/auth/login',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ username: username, password: password }),
+      success: function(res) {
+        if (res.success) {
+          window.location.href = '/';
+        } else {
+          showError(res.error && res.error.message || __t('login.error_failed'));
+          resetBtn();
+        }
+      },
+      error: function(xhr) {
+        try {
+          var res = JSON.parse(xhr.responseText);
+          showError(res.error && res.error.message || __t('login.error_failed'));
+        } catch(e) {
+          showError(__t('login.error_server'));
+        }
+        resetBtn();
+      }
+    });
+  }
+
+  function showError(msg) {
+    $('#error-msg').text(msg);
+    $('#login-error').show();
+  }
+
+  function hideError() {
+    $('#login-error').hide();
+  }
+
+  function resetBtn() {
+    $('#btn-login').prop('disabled', false).html('<i class="fas fa-sign-in-alt"></i> ' + __t('login.submit'));
+  }
+
+  // Enter key support
+  $('#login-password').on('keydown', function(e) {
+    if (e.key === 'Enter') doLogin(e);
+  });
+
+  // Language toggle
+  function toggleLang() {
+    var newLang = window.__lang === 'ko' ? 'en' : 'ko';
+    $.ajax({
+      url: '/api/admin/lang',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ lang: newLang }),
+      success: function() { location.reload(); },
+      error: function() { location.reload(); }
+    });
+  }
+  </script>
+</body>
+</html>

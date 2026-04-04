@@ -1,0 +1,415 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.engine_status.title') }}{% endblock %}
+{% block page_title %}{{ t('page.engine_status.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li>{{ t('nav.data_collection') }}</li>
+<li>{{ t('nav.collection_engine') }}</li>
+<li>{{ t('page.engine_status.breadcrumb_status') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<div class="d-flex align-center gap-8">
+  <select class="form-select" id="refresh-interval" style="width:auto;min-width:130px;padding:5px 10px;font-size:12px;">
+    <option value="0">{{ t('page.engine_status.auto_refresh_off') }}</option>
+    <option value="5000">{{ t('page.engine_status.auto_refresh_5s') }}</option>
+    <option value="10000" selected>{{ t('page.engine_status.auto_refresh_10s') }}</option>
+    <option value="30000">{{ t('page.engine_status.auto_refresh_30s') }}</option>
+  </select>
+  <button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stat Cards -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_status.stat_active_connectors') }}</h4>
+      <div class="stat-value" id="stat-connectors">-</div>
+      <div class="stat-change" id="stat-connectors-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-plug-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_status.stat_mqtt_broker') }}</h4>
+      <div class="stat-value" id="stat-mqtt">-</div>
+      <div class="stat-change" id="stat-mqtt-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-satellite-dish"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_status.stat_active_pipelines') }}</h4>
+      <div class="stat-value" id="stat-pipelines">-</div>
+      <div class="stat-change" id="stat-pipelines-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-diagram-project"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.engine_status.stat_benthos_streams') }}</h4>
+      <div class="stat-value" id="stat-benthos">-</div>
+      <div class="stat-change" id="stat-benthos-sub">&nbsp;</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-microchip"></i></div>
+  </div>
+</div>
+
+<!-- Connector Status Table -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="fas fa-plug"></i> {{ t('page.engine_status.connector_status_title') }}</h3>
+    <div class="d-flex gap-8">
+      <select class="form-select" id="filter-type" style="width:auto;min-width:120px;padding:5px 10px;">
+        <option value="">{{ t('page.engine_status.filter_all_types') }}</option>
+        <option value="opcua">OPC-UA</option>
+        <option value="opcda">OPC-DA</option>
+        <option value="modbus">Modbus</option>
+        <option value="mqtt">MQTT</option>
+        <option value="api">API</option>
+        <option value="file">File</option>
+        <option value="db">DB</option>
+      </select>
+      <select class="form-select" id="filter-status" style="width:auto;min-width:120px;padding:5px 10px;">
+        <option value="">{{ t('page.engine_status.filter_all_status') }}</option>
+        <option value="running">{{ t('common.running') }}</option>
+        <option value="stopped">{{ t('common.stopped') }}</option>
+        <option value="error">{{ t('common.error') }}</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.engine_status.th_type') }}</th>
+            <th>{{ t('common.name') }}</th>
+            <th>{{ t('common.status') }}</th>
+            <th>{{ t('page.engine_status.th_tag_points') }}</th>
+            <th>{{ t('page.engine_status.th_key_metrics') }}</th>
+            <th>{{ t('page.engine_status.th_error') }}</th>
+            <th>{{ t('page.engine_status.th_last_collection') }}</th>
+            <th>Benthos</th>
+          </tr>
+        </thead>
+        <tbody id="connector-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:32px">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Benthos + MQTT 2-column Grid -->
+<div class="grid-2 mb-24">
+  <!-- Benthos Streams -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-microchip"></i> {{ t('page.engine_status.benthos_stream_title') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Stream ID</th>
+              <th>{{ t('common.status') }}</th>
+              <th>Uptime</th>
+            </tr>
+          </thead>
+          <tbody id="benthos-tbody">
+            <tr><td colspan="3" class="text-center text-muted" style="padding:24px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MQTT Broker -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-satellite-dish"></i> {{ t('page.engine_status.mqtt_broker_title') }}</h3>
+    </div>
+    <div class="card-body">
+      <div class="kv-list" id="mqtt-kv">
+        <div class="kv-item"><span class="kv-label">{{ t('page.engine_status.mqtt_connection_status') }}</span><span class="kv-value text-muted">{{ t('common.loading') }}</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Pipeline + File Scanner 2-column Grid -->
+<div class="grid-2 mb-24">
+  <!-- Pipelines -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-diagram-project"></i> {{ t('page.engine_status.pipeline_status_title') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.engine_status.th_name') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.engine_status.th_process') }}</th>
+              <th>{{ t('page.engine_status.th_error') }}</th>
+              <th>{{ t('page.engine_status.th_start_time') }}</th>
+            </tr>
+          </thead>
+          <tbody id="pipeline-tbody">
+            <tr><td colspan="5" class="text-center text-muted" style="padding:24px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Scanners -->
+  <div class="card">
+    <div class="card-header">
+      <h3><i class="fas fa-folder-open"></i> {{ t('page.engine_status.file_scanner_title') }}</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('page.engine_status.th_collector_name') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('page.engine_status.th_tracked_files') }}</th>
+            </tr>
+          </thead>
+          <tbody id="scanner-tbody">
+            <tr><td colspan="3" class="text-center text-muted" style="padding:24px">{{ t('common.loading') }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Last Updated -->
+<div style="text-align:right;font-size:12px;color:var(--text-muted);padding:4px 0;">
+  {{ t('page.engine_status.last_updated') }}<span id="last-updated">-</span>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/engine/status';
+var _data = null;
+var _refreshTimer = null;
+
+/* ── Type badge color map ── */
+var TYPE_COLORS = {
+  'opcua': 'tag-blue', 'opcda': 'tag-blue', 'modbus': 'tag-green',
+  'mqtt': 'tag-green', 'api': 'tag-yellow', 'file': 'tag-cyan', 'db': 'tag-cyan'
+};
+
+/* ── Helpers ── */
+function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmtTime(iso) {
+  if (!iso) return '<span class="text-muted">-</span>';
+  var d = new Date(iso), now = new Date(), sec = Math.floor((now - d) / 1000);
+  if (sec < 60) return sec + __t('page.engine_status.time_seconds_ago');
+  if (sec < 3600) return Math.floor(sec / 60) + __t('page.engine_status.time_minutes_ago');
+  if (sec < 86400) return Math.floor(sec / 3600) + __t('page.engine_status.time_hours_ago');
+  return d.toLocaleDateString('ko-KR') + ' ' + d.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'});
+}
+
+/* ── Load All ── */
+function loadAll() {
+  $.getJSON(API, function(res) {
+    if (!res.success) { showToast(__t('page.engine_status.toast_status_fail') + (res.error && res.error.message || ''), 'error'); return; }
+    _data = res.data;
+    renderSummary();
+    renderConnectors();
+    renderBenthos();
+    renderMqtt();
+    renderPipelines();
+    renderScanners();
+    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+  }).fail(function() {
+    showToast(__t('page.engine_status.toast_api_fail'), 'error');
+  });
+}
+
+/* ── Summary Cards ── */
+function renderSummary() {
+  var s = _data.summary;
+  $('#stat-connectors').text(s.runningConnectors + ' / ' + s.totalConnectors);
+  var connSub = [];
+  if (s.errorConnectors > 0) connSub.push('<span class="text-danger">' + __t('page.engine_status.error_count_prefix') + s.errorConnectors + '</span>');
+  if (s.stoppedConnectors > 0) connSub.push(__t('page.engine_status.stopped_count_prefix') + s.stoppedConnectors);
+  $('#stat-connectors-sub').html(connSub.join(' &middot; ') || __t('page.engine_status.all_normal'));
+
+  var mqttConn = s.mqttConnected;
+  var mqttStats = _data.mqttBroker.stats || {};
+  $('#stat-mqtt').html(mqttConn ? '<span class="text-success">' + __t('page.engine_status.mqtt_connected') + '</span>' : '<span class="text-danger">' + __t('page.engine_status.mqtt_disconnected') + '</span>');
+  $('#stat-mqtt-sub').html(mqttConn ? __t('page.engine_status.mqtt_received_label') + fmtNum(mqttStats.received || 0) : __t('page.engine_status.mqtt_broker_check'));
+
+  $('#stat-pipelines').text(s.activePipelines + ' / ' + s.totalPipelines);
+  $('#stat-pipelines-sub').html(s.activePipelines > 0 ? __t('page.engine_status.pipeline_active') : __t('page.engine_status.pipeline_waiting'));
+
+  $('#stat-benthos').text(s.activeBenthosStreams + ' / ' + s.totalBenthosStreams);
+  $('#stat-benthos-sub').html(s.activeBenthosStreams > 0 ? __t('page.engine_status.benthos_active') : s.totalBenthosStreams > 0 ? __t('page.engine_status.benthos_inactive') : __t('page.engine_status.benthos_no_streams'));
+}
+
+/* ── Connector Table ── */
+function renderConnectors() {
+  var typeFilter = $('#filter-type').val();
+  var statusFilter = $('#filter-status').val();
+  var list = (_data.connectors || []).filter(function(c) {
+    if (typeFilter && c.connectorType !== typeFilter) return false;
+    if (statusFilter && c.status !== statusFilter) return false;
+    return true;
+  });
+  var html = '';
+  if (list.length === 0) {
+    html = '<tr><td colspan="8" class="text-center text-muted" style="padding:32px">' + __t('page.engine_status.no_matching_connectors') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var badgeCls = c.status === 'running' ? 'badge-running' : c.status === 'error' ? 'badge-error' : 'badge-stopped';
+      var badgeLabel = c.status === 'running' ? __t('common.running') : c.status === 'error' ? __t('common.error') : __t('common.stopped');
+      var typeCls = TYPE_COLORS[c.connectorType] || 'tag-blue';
+      var benthosHtml = c.benthosActive
+        ? '<span class="badge-sm badge-success">' + __t('common.active') + '</span>'
+        : '<span class="badge-sm badge-warning">' + __t('common.inactive') + '</span>';
+      html += '<tr>' +
+        '<td><span class="tag ' + typeCls + '">' + escHtml(c.connectorTypeLabel) + '</span></td>' +
+        '<td class="fw-600">' + escHtml(c.name) + '</td>' +
+        '<td><span class="badge-status ' + badgeCls + '">' + badgeLabel + '</span></td>' +
+        '<td>' + fmtNum(c.tagCount || 0) + '</td>' +
+        '<td>' + escHtml(c.metric.label) + ': ' + fmtNum(c.metric.value) + '</td>' +
+        '<td>' + (c.errorCount > 0 ? '<span class="text-danger fw-600">' + c.errorCount + '</span>' : '<span class="text-muted">0</span>') + '</td>' +
+        '<td>' + fmtTime(c.lastCollectedAt) + '</td>' +
+        '<td>' + benthosHtml + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#connector-tbody').html(html);
+}
+
+/* ── Benthos Streams ── */
+function renderBenthos() {
+  var streams = _data.benthosStreams || {};
+  var keys = Object.keys(streams);
+  var html = '';
+  if (keys.length === 0) {
+    html = '<tr><td colspan="3" class="text-center text-muted" style="padding:24px">' + __t('page.engine_status.no_active_streams') + '</td></tr>';
+  } else {
+    for (var i = 0; i < keys.length; i++) {
+      var sid = keys[i], st = streams[sid];
+      var active = st && st.active;
+      html += '<tr>' +
+        '<td class="mono fw-600">' + escHtml(sid) + '</td>' +
+        '<td>' + (active ? '<span class="badge-sm badge-success">' + __t('common.active') + '</span>' : '<span class="badge-sm badge-warning">' + __t('common.inactive') + '</span>') + '</td>' +
+        '<td>' + escHtml(st && st.uptime_str || '-') + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#benthos-tbody').html(html);
+}
+
+/* ── MQTT Broker ── */
+function renderMqtt() {
+  var m = _data.mqttBroker || {};
+  var stats = m.stats || {};
+  var subs = m.subscriptions || [];
+  var connected = m.connected;
+
+  var html = '<div class="kv-item"><span class="kv-label">' + __t('page.engine_status.mqtt_connection_status') + '</span><span class="kv-value">' +
+    (connected ? '<span class="badge-status badge-running">' + __t('page.engine_status.mqtt_connected') + '</span>' : '<span class="badge-status badge-error">' + __t('page.engine_status.mqtt_disconnected') + '</span>') +
+    '</span></div>';
+  html += '<div class="kv-item"><span class="kv-label">' + __t('page.engine_status.mqtt_published_label') + '</span><span class="kv-value">' + fmtNum(stats.published || 0) + '</span></div>';
+  html += '<div class="kv-item"><span class="kv-label">' + __t('page.engine_status.mqtt_received_msg_label') + '</span><span class="kv-value">' + fmtNum(stats.received || 0) + '</span></div>';
+  html += '<div class="kv-item"><span class="kv-label">' + __t('page.engine_status.mqtt_error_count') + '</span><span class="kv-value">' +
+    (stats.errors > 0 ? '<span class="text-danger fw-600">' + stats.errors + '</span>' : '0') + '</span></div>';
+  if (stats.connected_at) {
+    html += '<div class="kv-item"><span class="kv-label">' + __t('page.engine_status.mqtt_connected_at') + '</span><span class="kv-value">' + fmtTime(stats.connected_at) + '</span></div>';
+  }
+  if (stats.last_message_at) {
+    html += '<div class="kv-item"><span class="kv-label">' + __t('page.engine_status.mqtt_last_message') + '</span><span class="kv-value">' + fmtTime(stats.last_message_at) + '</span></div>';
+  }
+  if (subs.length > 0) {
+    var tagHtml = '';
+    for (var i = 0; i < subs.length; i++) {
+      tagHtml += '<span class="tag tag-blue" style="margin:2px;font-size:11px">' + escHtml(subs[i]) + '</span>';
+    }
+    html += '<div class="kv-item"><span class="kv-label">' + __t('page.mqtt.stat_subscribe_topics') + '</span><span class="kv-value" style="display:flex;flex-wrap:wrap;gap:2px">' + tagHtml + '</span></div>';
+  }
+  $('#mqtt-kv').html(html);
+}
+
+/* ── Pipelines ── */
+function renderPipelines() {
+  var list = _data.pipelines || [];
+  var html = '';
+  if (list.length === 0) {
+    html = '<tr><td colspan="5" class="text-center text-muted" style="padding:24px">' + __t('page.engine_status.no_pipelines') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      var badgeCls = p.status === 'running' ? 'badge-running' : p.status === 'error' ? 'badge-error' : 'badge-stopped';
+      var badgeLabel = p.status === 'running' ? __t('common.running') : p.status === 'error' ? __t('common.error') : __t('common.stopped');
+      html += '<tr>' +
+        '<td class="fw-600">' + escHtml(p.name) + '</td>' +
+        '<td><span class="badge-status ' + badgeCls + '">' + badgeLabel + '</span></td>' +
+        '<td>' + fmtNum(p.processedCount) + '</td>' +
+        '<td>' + (p.errorCount > 0 ? '<span class="text-danger fw-600">' + p.errorCount + '</span>' : '<span class="text-muted">0</span>') + '</td>' +
+        '<td>' + fmtTime(p.startedAt) + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#pipeline-tbody').html(html);
+}
+
+/* ── File Scanners ── */
+function renderScanners() {
+  var list = _data.fileScanners || [];
+  var html = '';
+  if (list.length === 0) {
+    html = '<tr><td colspan="3" class="text-center text-muted" style="padding:24px">' + __t('page.engine_status.no_file_collectors') + '</td></tr>';
+  } else {
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      html += '<tr>' +
+        '<td class="fw-600">' + escHtml(s.collectorName) + '</td>' +
+        '<td>' + (s.running ? '<span class="badge-sm badge-success">' + __t('page.engine_status.scanner_running') + '</span>' : '<span class="badge-sm badge-warning">' + __t('page.engine_status.scanner_stopped') + '</span>') + '</td>' +
+        '<td>' + fmtNum(s.trackedFiles) + '</td>' +
+        '</tr>';
+    }
+  }
+  $('#scanner-tbody').html(html);
+}
+
+/* ── Auto Refresh ── */
+function setupRefresh() {
+  var ms = parseInt($('#refresh-interval').val());
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+}
+
+$('#refresh-interval').on('change', function() {
+  clearInterval(_refreshTimer);
+  var ms = parseInt(this.value);
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+});
+
+/* ── Client-side filters ── */
+$('#filter-type, #filter-status').on('change', function() {
+  if (_data) renderConnectors();
+});
+
+/* ── Init ── */
+$(function() {
+  loadAll();
+  setupRefresh();
+});
+</script>
+{% endblock %}
