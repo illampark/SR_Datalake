@@ -183,8 +183,7 @@ def _execute_import_files(collector, file_data_list, db_session):
 
     cid = collector.id
     bucket = collector.target_bucket or "sdl-files"
-    date_prefix = datetime.utcnow().strftime("%Y%m%d")
-    prefix = f"import/{cid}/{date_prefix}/"
+    prefix = f"import/{cid}/"
 
     try:
         client = get_minio_client(db_session)
@@ -208,39 +207,7 @@ def _execute_import_files(collector, file_data_list, db_session):
                     content_type=mimetypes.guess_type(fname)[0] or "application/octet-stream",
                 )
 
-                # 파일별 카탈로그 등록
-                existing = db_session.query(DataCatalog).filter_by(
-                    connector_type="import", connector_id=cid, tag_name=fname
-                ).first()
-                if not existing:
-                    file_category = _classify_file(fname, mimetypes.guess_type(fname)[0] or "")
-                    mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
-                    cat = DataCatalog(
-                        name=f"{fname} (Import {collector.name})",
-                        tag_name=fname,
-                        connector_type="import",
-                        connector_id=cid,
-                        connector_description=collector.description or "",
-                        description=f"데이터 가져오기 '{collector.name}'에서 수집된 파일",
-                        owner="시스템 자동",
-                        category=file_category,
-                        data_level="user_created",
-                        sensitivity="internal",
-                        access_url=f"s3://{bucket}/{obj_name}",
-                        format=mime,
-                        sink_type="internal_file_sink",
-                        is_published=True,
-                    )
-                    db_session.add(cat)
-                    db_session.flush()
-                    # 검색 태그 생성
-                    _add_search_tags(db_session, cat.id, [
-                        "import", collector.name, file_category, fname,
-                        os.path.splitext(fname)[1].lstrip("."),
-                    ])
-
                 imported += 1
-                logger.info(f"Import #{cid} file uploaded: {bucket}/{obj_name}")
             except Exception as e:
                 errors += 1
                 logger.warning(f"Import file '{fdata.get('name','')}' error: {e}")
@@ -256,6 +223,35 @@ def _execute_import_files(collector, file_data_list, db_session):
         db_session.commit()
         logger.info(f"Import #{cid} files completed: {imported}/{total}")
 
+        # 그룹 카탈로그 1건만 등록 (파일 브라우저로 탐색)
+        existing = db_session.query(DataCatalog).filter_by(
+            connector_type="import", connector_id=cid, tag_name=""
+        ).first()
+        if not existing:
+            cat = DataCatalog(
+                name=f"Import {collector.name} — 전체 파일",
+                tag_name="",
+                connector_type="import",
+                connector_id=cid,
+                connector_description=collector.description or "",
+                description=f"데이터 가져오기 '{collector.name}'에서 수집된 {imported}개 파일",
+                owner="시스템 자동",
+                category="파일",
+                data_level="user_created",
+                sensitivity="internal",
+                access_url=f"s3://{bucket}/{prefix}",
+                format="mixed",
+                sink_type="internal_file_sink",
+                is_published=True,
+            )
+            db_session.add(cat)
+            db_session.flush()
+            _add_search_tags(db_session, cat.id, ["import", collector.name, "파일"])
+        else:
+            existing.description = f"데이터 가져오기 '{collector.name}'에서 수집된 {imported}개 파일"
+            existing.access_url = f"s3://{bucket}/{prefix}"
+        db_session.commit()
+
     except Exception as e:
         logger.error(f"Import #{cid} files failed: {e}")
         collector.status = "error"
@@ -265,18 +261,32 @@ def _execute_import_files(collector, file_data_list, db_session):
 
 
 def extract_zip(zip_content):
-    """ZIP 아카이브에서 파일 목록 추출"""
+    """ZIP 아카이브에서 파일 목록 추출 — 디렉토리 구조 유지"""
     result = []
+    # ZIP 내 공통 prefix 제거 (예: sample_timeseries/ → 내부 상대 경로만)
     with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
+        names = [i.filename for i in zf.infolist() if not i.is_dir()]
+        # 공통 prefix 찾기
+        common = ""
+        if names:
+            parts = names[0].split("/")
+            if len(parts) > 1:
+                candidate = parts[0] + "/"
+                if all(n.startswith(candidate) for n in names):
+                    common = candidate
+
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            # 숨김 파일/macOS 메타데이터 제외
             name = info.filename
             if name.startswith("__MACOSX") or name.startswith(".") or "/.DS_Store" in name:
                 continue
+            # 공통 prefix 제거 후 상대 경로 유지
+            rel_path = name[len(common):] if common and name.startswith(common) else name
+            if not rel_path:
+                continue
             result.append({
-                "name": os.path.basename(name) if "/" in name else name,
+                "name": rel_path,  # 상대 경로 유지 (예: 2026-04-01/sensor_0000.csv)
                 "path": name,
                 "content": zf.read(name),
                 "size": info.file_size,

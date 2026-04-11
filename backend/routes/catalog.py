@@ -999,6 +999,14 @@ def _export_recipe_data(db, c, fmt):
 # ──────────────────────────────────────────────
 @catalog_bp.route("/<int:cid>/files", methods=["GET"])
 def list_catalog_files(cid):
+    """파일 브라우저 — 디렉토리 구조 탐색 지원
+
+    Query params:
+        path: 탐색할 하위 경로 (예: "2026-04-01/")
+        search: 파일명 검색 (recursive)
+        date_from/date_to: 수정일 필터
+        page/size: 페이징
+    """
     db = _db()
     try:
         c = db.query(DataCatalog).get(cid)
@@ -1008,7 +1016,7 @@ def list_catalog_files(cid):
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", 50, type=int)
         search = request.args.get("search", "").lower()
-        date_filter = request.args.get("date", "")
+        browse_path = request.args.get("path", "")  # 하위 디렉토리 탐색
         date_from = request.args.get("date_from", "")
         date_to = request.args.get("date_to", "")
 
@@ -1017,51 +1025,70 @@ def list_catalog_files(cid):
         from backend.services.minio_client import get_minio_client
         client = get_minio_client(db)
 
-        # 파이프라인 File 싱크: sink config의 bucket/pathPrefix 사용
+        # base prefix 결정
         if c.connector_type == "pipeline" and c.sink_type == "internal_file_sink":
             sink_cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_file_sink")
-            sink_bucket = sink_cfg.get("bucket", "sdl-files")
-            prefix = sink_cfg.get("pathPrefix", f"pipeline/{c.pipeline_id}/")
-            if prefix and not prefix.endswith("/"):
-                prefix += "/"
-            bucket = sink_bucket
-        elif c.connector_type == "file":
-            # 파일 커넥터: raw/{connector_id}/ 경로
-            prefix = f"raw/{c.connector_id}/"
-        else:
-            prefix = f"raw/{c.connector_id}/"
-
-        if date_filter:
-            prefix = prefix + date_filter + "/"
-
-        # 파이프라인 File 싱크에서 이미 bucket이 설정된 경우 유지
-        if not (c.connector_type == "pipeline" and c.sink_type == "internal_file_sink"):
+            bucket = sink_cfg.get("bucket", "sdl-files")
+            base_prefix = sink_cfg.get("pathPrefix", f"pipeline/{c.pipeline_id}/")
+        elif c.connector_type == "import":
             bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
-        items = []
-        try:
-            # 수정일 필터 파싱
-            dt_from = None
-            dt_to = None
-            if date_from:
-                try:
-                    dt_from = datetime.fromisoformat(date_from)
-                except ValueError:
-                    pass
-            if date_to:
-                try:
-                    dt_to = datetime.fromisoformat(date_to)
-                    if dt_to.hour == 0 and dt_to.minute == 0:
-                        dt_to += timedelta(days=1)
-                except ValueError:
-                    pass
+            base_prefix = f"import/{c.connector_id}/"
+        elif c.connector_type == "file":
+            bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+            base_prefix = f"raw/{c.connector_id}/"
+        else:
+            bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+            base_prefix = f"raw/{c.connector_id}/"
 
-            for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
-                filename = os.path.basename(obj.object_name)
+        if base_prefix and not base_prefix.endswith("/"):
+            base_prefix += "/"
+
+        # 탐색 경로 적용
+        current_prefix = base_prefix + browse_path
+        if current_prefix and not current_prefix.endswith("/"):
+            current_prefix += "/"
+
+        # 검색 모드: recursive로 전체 검색
+        is_search = bool(search)
+        use_recursive = is_search
+
+        # 수정일 필터 파싱
+        dt_from = dt_to = None
+        if date_from:
+            try: dt_from = datetime.fromisoformat(date_from)
+            except ValueError: pass
+        if date_to:
+            try:
+                dt_to = datetime.fromisoformat(date_to)
+                if dt_to.hour == 0 and dt_to.minute == 0:
+                    dt_to += timedelta(days=1)
+            except ValueError: pass
+
+        dirs = []       # 하위 디렉토리 목록
+        files = []      # 파일 목록
+        seen_dirs = set()
+
+        try:
+            for obj in client.list_objects(bucket, prefix=current_prefix, recursive=use_recursive):
+                obj_name = obj.object_name
+
+                if not use_recursive and obj.is_dir:
+                    # 디렉토리 항목
+                    dir_name = obj_name[len(current_prefix):].rstrip("/")
+                    if dir_name and dir_name not in seen_dirs:
+                        seen_dirs.add(dir_name)
+                        dirs.append({
+                            "name": dir_name,
+                            "type": "directory",
+                            "path": browse_path + dir_name + "/",
+                        })
+                    continue
+
+                filename = os.path.basename(obj_name)
                 if not filename:
                     continue
-                if search and search not in filename.lower():
+                if search and search not in filename.lower() and search not in obj_name.lower():
                     continue
-                # 수정일 필터
                 if obj.last_modified:
                     mod_naive = obj.last_modified.replace(tzinfo=None)
                     if dt_from and mod_naive < dt_from:
@@ -1070,62 +1097,47 @@ def list_catalog_files(cid):
                         continue
 
                 ext = os.path.splitext(filename)[1].lower()
-                ftype = _file_type(ext)
+                rel_path = obj_name[len(base_prefix):] if obj_name.startswith(base_prefix) else obj_name
 
-                items.append({
+                files.append({
                     "name": filename,
-                    "objectName": obj.object_name,
+                    "objectName": obj_name,
                     "bucket": bucket,
-                    "type": ftype,
+                    "type": _file_type(ext),
                     "extension": ext,
                     "size": obj.size,
                     "sizeDisplay": _fmt_bytes(obj.size),
-                    "path": "/" + os.path.dirname(obj.object_name) + "/",
+                    "path": rel_path,
                     "modifiedAt": obj.last_modified.isoformat() if obj.last_modified else None,
                 })
         except S3Error:
             pass
 
-        # pipeline 출력 파일도 포함 (파이프라인 File 싱크 카탈로그는 이미 prefix로 조회했으므로 스킵)
-        if not (c.connector_type == "pipeline" and c.sink_type == "internal_file_sink"):
-            try:
-                for obj in client.list_objects(bucket, prefix="pipeline/", recursive=True):
-                    filename = os.path.basename(obj.object_name)
-                    if not filename:
-                        continue
-                    # 이 카탈로그의 커넥터/태그와 관련된 파일만 포함
-                    tag_lower = (c.tag_name or "").lower()
-                    if tag_lower and tag_lower not in filename.lower():
-                        continue
-                    if search and search not in filename.lower():
-                        continue
+        # 디렉토리 정렬 (이름순) + 파일 정렬 (수정일 역순)
+        dirs.sort(key=lambda x: x["name"])
+        files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
 
-                    ext = os.path.splitext(filename)[1].lower()
-                    ftype = _file_type(ext)
-                    items.append({
-                        "name": filename,
-                        "objectName": obj.object_name,
-                        "bucket": bucket,
-                        "type": ftype,
-                        "extension": ext,
-                        "size": obj.size,
-                        "sizeDisplay": _fmt_bytes(obj.size),
-                        "path": "/" + os.path.dirname(obj.object_name) + "/",
-                        "modifiedAt": obj.last_modified.isoformat() if obj.last_modified else None,
-                    })
-            except S3Error:
-                pass
-
-        items.sort(key=lambda x: x["modifiedAt"] or "", reverse=True)
-        total = len(items)
+        total = len(files)
         start = (page - 1) * size
-        paged = items[start:start + size]
+        paged_files = files[start:start + size]
+
+        # 빵크럼 경로 생성
+        breadcrumb = [{"name": "root", "path": ""}]
+        if browse_path:
+            parts = browse_path.strip("/").split("/")
+            acc = ""
+            for p in parts:
+                acc += p + "/"
+                breadcrumb.append({"name": p, "path": acc})
 
         return _ok({
-            "items": paged,
+            "directories": dirs,
+            "items": paged_files,
             "total": total,
             "page": page,
             "size": size,
+            "currentPath": browse_path,
+            "breadcrumb": breadcrumb,
             "catalog": {"id": c.id, "name": c.name, "connectorType": c.connector_type},
         })
     finally:

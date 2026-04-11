@@ -920,6 +920,7 @@ function openDataPanel(catalogId, connectorType, sinkType) {
 
   $('#data-api-box').hide();
   if (connectorType === 'file' || _dataSinkType === 'internal_file_sink') {
+    _fileBrowsePath = '';  // 경로 초기화
     $('#data-panel-title').html('<i class="fas fa-folder-open"></i> ' + __t('page.catalog.file_browser_title'));
     $('#btn-export-csv, #btn-export-json, #btn-show-api').hide();
     $('#data-search').attr('placeholder', __t('page.catalog.data_search_placeholder'));
@@ -1143,9 +1144,15 @@ function loadCatalogData(page) {
 }
 
 var _fileItems = []; // 현재 페이지 파일 목록 캐시
+var _fileBrowsePath = ''; // 현재 탐색 경로
+
+function browseFilePath(path) {
+  _fileBrowsePath = path || '';
+  loadCatalogFiles(1);
+}
 
 function loadCatalogFiles(page) {
-  var params = { page: page, size: _dataPageSize };
+  var params = { page: page, size: _dataPageSize, path: _fileBrowsePath };
   var dateFrom = $('#data-from').val();
   var dateTo = $('#data-to').val();
   if (dateFrom) params.date_from = dateFrom;
@@ -1162,16 +1169,16 @@ function loadCatalogFiles(page) {
       '<th>' + __t('page.catalog.file_header_name') + '</th>' +
       '<th>' + __t('page.catalog.file_header_type') + '</th>' +
       '<th>' + __t('page.catalog.file_header_size') + '</th>' +
-      '<th>' + __t('page.catalog.file_header_path') + '</th>' +
       '<th>' + __t('page.catalog.file_header_modified') + '</th>' +
       '<th>' + __t('page.catalog.file_header_download') + '</th>' +
     '</tr>'
   );
 
-  // Stats bar with download button
+  // Stats bar: breadcrumb + select count + download
   $('#data-stats').show().find('.stat-grid').html(
     '<div class="stat-card" style="padding:8px 12px;">' +
-      '<div style="display:flex;align-items:center;gap:12px;">' +
+      '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+        '<div id="file-breadcrumb" style="flex:1;"></div>' +
         '<span class="fs-12" id="file-select-count">0 ' + __t('page.catalog.file_selected') + '</span>' +
         '<button class="btn btn-primary btn-sm" id="btn-download-zip" onclick="downloadSelectedZip()" disabled>' +
           '<i class="fas fa-file-zipper"></i> ' + __t('page.catalog.file_download_zip') +
@@ -1186,18 +1193,48 @@ function loadCatalogFiles(page) {
       return;
     }
     var data = r.data;
+    var dirs = data.directories || [];
     _fileItems = data.items || [];
     var total = data.total || 0;
 
+    // Breadcrumb 렌더링
+    var bc = data.breadcrumb || [];
+    var bcHtml = '';
+    bc.forEach(function(b, i) {
+      if (i === bc.length - 1 && i > 0) {
+        bcHtml += '<span class="fw-600 fs-12"><i class="fas fa-folder-open" style="margin-right:4px;color:var(--warning);"></i>' + escHtml(b.name) + '</span>';
+      } else {
+        bcHtml += '<a href="javascript:browseFilePath(\'' + escAttr(b.path) + '\')" class="fs-12" style="color:var(--primary);">' +
+          (i === 0 ? '<i class="fas fa-home"></i>' : escHtml(b.name)) + '</a>';
+      }
+      if (i < bc.length - 1) bcHtml += '<span class="text-muted" style="margin:0 4px;">/</span>';
+    });
+    $('#file-breadcrumb').html(bcHtml);
+
     $tb = $('#data-tbody').empty();
-    if (!_fileItems.length) {
+
+    // 디렉토리 행
+    dirs.forEach(function(d) {
+      $tb.append(
+        '<tr style="background:var(--bg-secondary);">' +
+          '<td></td>' +
+          '<td colspan="4" style="cursor:pointer;" onclick="browseFilePath(\'' + escAttr(d.path) + '\')">' +
+            '<i class="fas fa-folder" style="color:var(--warning);margin-right:8px;"></i>' +
+            '<span class="fw-600">' + escHtml(d.name) + '</span>' +
+          '</td>' +
+          '<td></td>' +
+        '</tr>'
+      );
+    });
+
+    if (!_fileItems.length && !dirs.length) {
       $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.file_no_files') + '</td></tr>');
       $('#data-pagination-info').text('0' + __t('page.catalog.pagination_count_unit'));
       $('#data-pagination-controls').empty();
-      $('#data-stats').hide();
       return;
     }
 
+    // 파일 행
     var fileIcons = { image: 'fa-file-image', csv: 'fa-file-csv', data: 'fa-file-code', doc: 'fa-file-alt', excel: 'fa-file-excel', archive: 'fa-file-archive', log: 'fa-file-alt' };
     _fileItems.forEach(function(f, idx) {
       var ficon = fileIcons[f.type] || 'fa-file';
@@ -1207,7 +1244,6 @@ function loadCatalogFiles(page) {
           '<td><i class="fas ' + ficon + ' text-muted" style="margin-right:6px;"></i><span class="fw-600">' + escHtml(f.name) + '</span></td>' +
           '<td><span class="badge-sm badge-primary">' + escHtml(f.type || 'other') + '</span></td>' +
           '<td class="mono fs-12">' + escHtml(f.sizeDisplay || '-') + '</td>' +
-          '<td class="mono fs-11 text-muted">' + escHtml(f.path || '/') + '</td>' +
           '<td class="fs-12">' + escHtml((f.modifiedAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
           '<td><a href="' + API + '/' + _dataCatalogId + '/files/download?objectName=' + encodeURIComponent(f.objectName || '') + '&bucket=' + encodeURIComponent(f.bucket || '') + '" class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '"><i class="fas fa-download"></i></a></td>' +
         '</tr>'
