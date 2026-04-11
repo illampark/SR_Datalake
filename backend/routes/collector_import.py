@@ -1,0 +1,569 @@
+"""
+Import Collector — 오프라인 데이터 가져오기 API
+
+엔드포인트:
+  IMP-001  GET    /api/connectors/import           목록 조회
+  IMP-002  GET    /api/connectors/import/<id>       상세 조회
+  IMP-003  POST   /api/connectors/import           생성
+  IMP-004  PUT    /api/connectors/import/<id>       수정
+  IMP-005  DELETE /api/connectors/import/<id>       삭제
+  IMP-006  POST   /api/connectors/import/<id>/upload   파일 업로드
+  IMP-007  POST   /api/connectors/import/<id>/preview  미리보기
+  IMP-008  POST   /api/connectors/import/<id>/execute  실행
+  IMP-009  GET    /api/connectors/import/<id>/status    진행 상태
+  IMP-010  POST   /api/connectors/import/<id>/stop     중지
+  IMP-011  GET    /api/connectors/import/targets       대상 스토리지 목록
+"""
+
+import os
+import logging
+from flask import Blueprint, request, jsonify
+from backend.database import SessionLocal
+from backend.models.collector import ImportCollector
+
+logger = logging.getLogger(__name__)
+import_bp = Blueprint("collector_import", __name__, url_prefix="/api/connectors/import")
+
+_upload_store = {}      # collector_id → file bytes (CSV/JSON 단일 파일)
+_upload_files = {}      # collector_id → [{"name":..., "content":..., "size":...}, ...] (다중 파일)
+
+
+def _ok(data=None, meta=None):
+    resp = {"success": True, "data": data, "error": None}
+    if meta:
+        resp["meta"] = meta
+    return jsonify(resp)
+
+
+def _err(msg, code="ERROR", status=400):
+    return jsonify({"success": False, "data": None,
+                    "error": {"code": code, "message": msg}}), status
+
+
+def _db():
+    return SessionLocal()
+
+
+# ═══════════════════════════════════════════
+# IMP-001: 목록 조회
+# ═══════════════════════════════════════════
+@import_bp.route("", methods=["GET"])
+def list_imports():
+    db = _db()
+    try:
+        page = request.args.get("page", 1, type=int)
+        size = request.args.get("size", 50, type=int)
+        status_filter = request.args.get("status", "")
+
+        q = db.query(ImportCollector)
+        if status_filter:
+            q = q.filter(ImportCollector.status == status_filter)
+
+        total = q.count()
+        items = q.order_by(ImportCollector.created_at.desc())\
+                 .offset((page - 1) * size).limit(size).all()
+
+        return _ok([c.to_dict() for c in items],
+                   meta={"page": page, "size": size, "total": total})
+    except Exception as e:
+        logger.error(f"IMP-001 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-002: 상세 조회
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>", methods=["GET"])
+def get_import(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+        return _ok(c.to_dict())
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-003: 생성
+# ═══════════════════════════════════════════
+@import_bp.route("", methods=["POST"])
+def create_import():
+    db = _db()
+    try:
+        body = request.get_json(silent=True) or {}
+        name = body.get("name", "").strip()
+        if not name:
+            return _err("커넥터명은 필수입니다.", "VALIDATION")
+        if db.query(ImportCollector).filter_by(name=name).first():
+            return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
+
+        c = ImportCollector(
+            name=name,
+            description=body.get("description", ""),
+            import_type=body.get("importType", "csv"),
+            target_type=body.get("targetType", "tsdb"),
+            target_id=body.get("targetId"),
+            target_table=body.get("targetTable", ""),
+            target_measurement=body.get("targetMeasurement", ""),
+            target_bucket=body.get("targetBucket", "sdl-files"),
+            timestamp_column=body.get("timestampColumn", ""),
+            tag_column=body.get("tagColumn", ""),
+            value_columns=body.get("valueColumns", []),
+            column_mapping=body.get("columnMapping", {}),
+            batch_size=body.get("batchSize", 1000),
+            encoding=body.get("encoding", "utf-8"),
+            delimiter=body.get("delimiter", ","),
+            skip_header=body.get("skipHeader", True),
+            publish_mqtt=body.get("publishMqtt", True),
+            source_mode=body.get("sourceMode", "upload"),
+            local_path=body.get("localPath", ""),
+            file_patterns=body.get("filePatterns", ["*"]),
+            recursive=body.get("recursive", True),
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        return _ok(c.to_dict()), 201
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-003 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-004: 수정
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>", methods=["PUT"])
+def update_import(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        body = request.get_json(silent=True) or {}
+        field_map = {
+            "name": "name", "description": "description",
+            "importType": "import_type", "targetType": "target_type",
+            "targetId": "target_id", "targetTable": "target_table",
+            "targetMeasurement": "target_measurement",
+            "targetBucket": "target_bucket",
+            "timestampColumn": "timestamp_column", "tagColumn": "tag_column",
+            "valueColumns": "value_columns", "columnMapping": "column_mapping",
+            "batchSize": "batch_size", "encoding": "encoding",
+            "delimiter": "delimiter", "skipHeader": "skip_header",
+            "publishMqtt": "publish_mqtt",
+            "sourceMode": "source_mode", "localPath": "local_path",
+            "filePatterns": "file_patterns", "recursive": "recursive",
+        }
+        for api_key, db_key in field_map.items():
+            if api_key in body:
+                setattr(c, db_key, body[api_key])
+
+        if "name" in body:
+            dup = db.query(ImportCollector).filter(
+                ImportCollector.name == body["name"],
+                ImportCollector.id != cid
+            ).first()
+            if dup:
+                return _err(f"이미 존재하는 커넥터명입니다: {body['name']}", "DUPLICATE")
+
+        db.commit()
+        db.refresh(c)
+
+        if "description" in body:
+            from backend.services.catalog_sync import sync_connector_description
+            sync_connector_description(db, "import", cid, body["description"])
+
+        return _ok(c.to_dict())
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-004 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-005: 삭제
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>", methods=["DELETE"])
+def delete_import(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        from backend.services.catalog_sync import delete_connector_catalogs
+        delete_connector_catalogs(db, "import", cid)
+
+        db.delete(c)
+        db.commit()
+        _upload_store.pop(cid, None)
+        return _ok({"deleted": cid})
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-005 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-006: 파일 업로드 (단일 또는 다중)
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/upload", methods=["POST"])
+def upload_file(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        files = request.files.getlist("file")
+        if not files or (len(files) == 1 and files[0].filename == ""):
+            return _err("파일이 필요합니다.", "VALIDATION")
+
+        c.status = "ready"
+        c.total_rows = 0
+        c.imported_rows = 0
+        c.error_rows = 0
+        c.progress = 0
+
+        if c.import_type == "files":
+            # 다중 파일 모드
+            file_list = []
+            total_size = 0
+            for f in files:
+                content = f.read()
+                fname = f.filename
+                # ZIP 파일이면 압축 해제
+                if fname.lower().endswith(".zip"):
+                    from backend.services.import_parser import extract_zip
+                    extracted = extract_zip(content)
+                    file_list.extend(extracted)
+                    total_size += sum(e["size"] for e in extracted)
+                else:
+                    file_list.append({
+                        "name": fname,
+                        "content": content,
+                        "size": len(content),
+                    })
+                    total_size += len(content)
+
+            _upload_files[cid] = file_list
+            _upload_store.pop(cid, None)
+            c.file_name = f"{len(file_list)} files"
+            c.file_size = total_size
+            db.commit()
+
+            return _ok({
+                "fileName": c.file_name,
+                "fileSize": total_size,
+                "fileCount": len(file_list),
+                "connectorId": cid,
+            })
+        else:
+            # 단일 파일 모드 (CSV/JSON)
+            f = files[0]
+            content = f.read()
+            c.file_name = f.filename
+            c.file_size = len(content)
+            db.commit()
+
+            _upload_store[cid] = content
+            _upload_files.pop(cid, None)
+
+            return _ok({
+                "fileName": f.filename,
+                "fileSize": len(content),
+                "connectorId": cid,
+            })
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-006 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-007: 미리보기
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/preview", methods=["POST"])
+def preview_import(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        if c.import_type == "files":
+            # 파일 모드 — 파일 목록 미리보기
+            file_list = _upload_files.get(cid, [])
+            if not file_list:
+                return _err("업로드된 파일이 없습니다.", "VALIDATION")
+            from backend.services.import_parser import preview_files
+            result = preview_files([{"name": f["name"], "size": f["size"]} for f in file_list])
+            return _ok(result)
+        else:
+            # 데이터 모드 — CSV/JSON 내용 미리보기
+            content = _upload_store.get(cid)
+            if not content:
+                f = request.files.get("file")
+                if f:
+                    content = f.read()
+                else:
+                    return _err("업로드된 파일이 없습니다.", "VALIDATION")
+
+            from backend.services.import_parser import preview_file
+            result = preview_file(
+                content,
+                import_type=c.import_type,
+                encoding=c.encoding or "utf-8",
+                delimiter=c.delimiter or ",",
+                skip_header=c.skip_header,
+            )
+            return _ok(result)
+    except Exception as e:
+        logger.error(f"IMP-007 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-008: 실행
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/execute", methods=["POST"])
+def execute_import(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        if c.status == "running":
+            return _err("이미 실행 중입니다.", "ALREADY_RUNNING")
+
+        content = _upload_store.get(cid)
+        file_list = _upload_files.get(cid)
+
+        if not content and not file_list:
+            return _err("업로드된 파일이 없습니다. 먼저 파일을 업로드하세요.", "VALIDATION")
+
+        # 실행 전 상태 초기화
+        c.status = "running"
+        c.imported_rows = 0
+        c.error_rows = 0
+        c.progress = 0
+        c.last_error = ""
+        db.commit()
+
+        from backend.services.import_parser import start_import
+        start_import(cid, content, file_data_list=file_list)
+
+        return _ok({"connectorId": cid, "status": "running"})
+    except RuntimeError as e:
+        return _err(str(e), "ALREADY_RUNNING")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-008 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-009: 진행 상태
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/status", methods=["GET"])
+def import_status(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        from backend.services.import_parser import is_running
+        return _ok({
+            "connectorId": cid,
+            "status": c.status,
+            "progress": c.progress,
+            "totalRows": c.total_rows,
+            "importedRows": c.imported_rows,
+            "errorRows": c.error_rows,
+            "lastError": c.last_error,
+            "isRunning": is_running(cid),
+        })
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-010: 중지
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/stop", methods=["POST"])
+def stop_import(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        c.status = "stopped"
+        db.commit()
+        return _ok(c.to_dict())
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-012: 재발행 (저장된 원본 → MQTT)
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/republish", methods=["POST"])
+def republish_import(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        if c.status == "running":
+            return _err("이미 실행 중입니다.", "ALREADY_RUNNING")
+
+        if c.status not in ("completed",):
+            return _err("완료된 Import만 재발행할 수 있습니다.", "INVALID_STATUS")
+
+        c.status = "running"
+        c.progress = 0
+        c.last_error = ""
+        db.commit()
+
+        from backend.services.import_parser import republish
+        republish(cid)
+
+        return _ok({"connectorId": cid, "status": "running", "action": "republish"})
+    except RuntimeError as e:
+        return _err(str(e), "ALREADY_RUNNING")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-012 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-013: 서버 경로 스캔
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/scan-path", methods=["POST"])
+def scan_path(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        body = request.get_json(silent=True) or {}
+        local_path = body.get("localPath", "") or c.local_path
+        patterns = body.get("filePatterns") or c.file_patterns or ["*"]
+        recursive = body.get("recursive", c.recursive if c.recursive is not None else True)
+
+        if not local_path:
+            return _err("서버 경로를 입력하세요.", "VALIDATION")
+
+        from backend.services.import_parser import scan_local_path
+        result = scan_local_path(local_path, patterns, recursive)
+
+        if result.get("error"):
+            return _err(result["error"], "SCAN_ERROR")
+
+        # 설정 업데이트
+        c.local_path = local_path
+        c.file_patterns = patterns
+        c.recursive = recursive
+        c.source_mode = "local_path"
+        db.commit()
+
+        return _ok(result)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-013 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-014: 서버 경로에서 실행
+# ═══════════════════════════════════════════
+@import_bp.route("/<int:cid>/execute-path", methods=["POST"])
+def execute_from_path(cid):
+    db = _db()
+    try:
+        c = db.query(ImportCollector).get(cid)
+        if not c:
+            return _err("Import collector not found", "NOT_FOUND", 404)
+
+        if c.status == "running":
+            return _err("이미 실행 중입니다.", "ALREADY_RUNNING")
+
+        if not c.local_path:
+            return _err("서버 경로가 설정되지 않았습니다. 먼저 경로를 스캔하세요.", "VALIDATION")
+
+        c.status = "running"
+        c.imported_rows = 0
+        c.error_rows = 0
+        c.progress = 0
+        c.last_error = ""
+        db.commit()
+
+        from backend.services.import_parser import start_import_from_path
+        start_import_from_path(cid)
+
+        return _ok({"connectorId": cid, "status": "running", "source": "local_path"})
+    except RuntimeError as e:
+        return _err(str(e), "ALREADY_RUNNING")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"IMP-014 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-011: 대상 스토리지 목록
+# ═══════════════════════════════════════════
+@import_bp.route("/targets", methods=["GET"])
+def list_targets():
+    db = _db()
+    try:
+        from backend.models.storage import TsdbConfig, RdbmsConfig
+        tsdbs = db.query(TsdbConfig).all()
+        rdbmss = db.query(RdbmsConfig).all()
+
+        return _ok({
+            "tsdb": [{"id": t.id, "name": t.name, "dbType": t.db_type} for t in tsdbs],
+            "rdbms": [{"id": r.id, "name": r.name, "dbType": r.db_type} for r in rdbmss],
+            "file": [
+                {"bucket": "sdl-files", "label": "SDL Files"},
+                {"bucket": "sdl-archive", "label": "SDL Archive"},
+            ],
+        })
+    except Exception as e:
+        logger.error(f"IMP-011 error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()

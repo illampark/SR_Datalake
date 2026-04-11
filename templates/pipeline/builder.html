@@ -79,6 +79,7 @@
         <div class="palette-item" draggable="true" data-module="api_source"><i class="fas fa-code text-primary"></i> {{ t('page.builder.node_api_source') }}</div>
         <div class="palette-item" draggable="true" data-module="file_source"><i class="fas fa-file-import text-primary"></i> {{ t('page.builder.node_file_source') }}</div>
         <div class="palette-item" draggable="true" data-module="db_source"><i class="fas fa-database text-primary"></i> {{ t('page.builder.node_db_source') }}</div>
+        <div class="palette-item" draggable="true" data-module="import_source"><i class="fas fa-cloud-arrow-up text-primary"></i> {{ t('page.builder.node_import_source') }}</div>
       </div>
     </div>
     <div class="node-palette mb-16 collapsed">
@@ -171,6 +172,7 @@
             <option value="api">REST API</option>
             <option value="file">{{ t('page.builder.tag_search_file') }}</option>
             <option value="db">DB</option>
+            <option value="import">Import</option>
           </select>
           <button class="btn btn-primary btn-sm" onclick="loadTagSearch()"><i class="fas fa-search"></i> {{ t('common.search') }}</button>
         </div>
@@ -252,11 +254,13 @@ var currentBindings = [];
 
 var sourceToConnectorType = {
   'opcua_source': 'opcua', 'opcda_source': 'opcda', 'modbus_source': 'modbus',
-  'mqtt_source': 'mqtt', 'api_source': 'api', 'file_source': 'file', 'db_source': 'db'
+  'mqtt_source': 'mqtt', 'api_source': 'api', 'file_source': 'file', 'db_source': 'db',
+  'import_source': 'import'
 };
 var connectorTypeLabels = {
   'opcua': 'OPC-UA', 'opcda': 'OPC-DA', 'modbus': 'Modbus',
-  'mqtt': 'MQTT', 'api': 'REST API', 'file': __t('page.builder.tag_search_file'), 'db': 'DB'
+  'mqtt': 'MQTT', 'api': 'REST API', 'file': __t('page.builder.tag_search_file'), 'db': 'DB',
+  'import': __t('page.builder.node_import_source')
 };
 
 function escHtml(s) { return $('<span>').text(s || '').html(); }
@@ -266,6 +270,7 @@ function escAttr(s) { return (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#
 var moduleLabels = {
   'opcua_source': __t('page.builder.node_opcua_source'), 'opcda_source': __t('page.builder.node_opcda_source'), 'modbus_source': __t('page.builder.node_modbus_source'),
   'mqtt_source': __t('page.builder.node_mqtt_source'), 'api_source': __t('page.builder.node_api_source'), 'file_source': __t('page.builder.node_file_source'), 'db_source': __t('page.builder.node_db_source'),
+  'import_source': __t('page.builder.node_import_source'),
   'normalize': __t('page.builder.node_normalize'), 'unit_convert': __t('page.builder.node_unit_convert'), 'filter': __t('page.builder.node_filter'),
   'anomaly': __t('page.builder.node_anomaly'), 'aggregate': __t('page.builder.node_aggregate'), 'enrich': __t('page.builder.node_enrich'), 'script': __t('page.builder.node_script'),
   'internal_tsdb_sink': __t('page.builder.node_internal_tsdb'), 'internal_rdbms_sink': __t('page.builder.node_internal_rdbms'), 'internal_file_sink': __t('page.builder.node_internal_file'),
@@ -275,6 +280,7 @@ var moduleLabels = {
 var moduleIcons = {
   'opcua_source': 'fa-plug-circle-bolt', 'opcda_source': 'fa-plug', 'modbus_source': 'fa-microchip',
   'mqtt_source': 'fa-satellite-dish', 'api_source': 'fa-code', 'file_source': 'fa-file-import', 'db_source': 'fa-database',
+  'import_source': 'fa-cloud-arrow-up',
   'normalize': 'fa-right-left', 'unit_convert': 'fa-ruler-combined', 'filter': 'fa-filter',
   'anomaly': 'fa-triangle-exclamation', 'aggregate': 'fa-chart-bar', 'enrich': 'fa-puzzle-piece', 'script': 'fa-terminal',
   'internal_tsdb_sink': 'fa-clock-rotate-left', 'internal_rdbms_sink': 'fa-table', 'internal_file_sink': 'fa-folder',

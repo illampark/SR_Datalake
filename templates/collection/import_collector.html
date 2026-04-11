@@ -1,0 +1,684 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.import_collector.title') }}{% endblock %}
+{% block page_title %}{{ t('page.import_collector.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('nav.data_collection') }}</a></li>
+<li>{{ t('page.import_collector.breadcrumb') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="loadList()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.import_collector.btn_add') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.import_collector.stat_total') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-cloud-arrow-up"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.import_collector.stat_completed') }}</h4>
+      <div class="stat-value" id="stat-completed">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.import_collector.stat_running') }}</h4>
+      <div class="stat-value" id="stat-running">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-spinner"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.import_collector.stat_errors') }}</h4>
+      <div class="stat-value" id="stat-errors">-</div>
+    </div>
+    <div class="stat-icon yellow"><i class="fas fa-triangle-exclamation"></i></div>
+  </div>
+</div>
+
+<!-- Import List Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.import_collector.list_title') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <label>{{ t('page.opcua.filter_status_label') }}</label>
+        <select class="form-select" id="filter-status" onchange="loadList()">
+          <option value="">{{ t('page.opcua.filter_all') }}</option>
+          <option value="ready">Ready</option>
+          <option value="running">{{ t('common.running') }}</option>
+          <option value="completed">{{ t('page.import_collector.status_completed') }}</option>
+          <option value="error">{{ t('common.error') }}</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table id="import-table">
+        <thead>
+          <tr>
+            <th>{{ t('page.import_collector.th_name') }}</th>
+            <th>{{ t('page.import_collector.th_type') }}</th>
+            <th>{{ t('page.import_collector.th_target') }}</th>
+            <th>{{ t('page.import_collector.th_file') }}</th>
+            <th>{{ t('page.import_collector.th_progress') }}</th>
+            <th>{{ t('page.opcua.th_status') }}</th>
+            <th>{{ t('page.import_collector.th_result') }}</th>
+            <th>{{ t('page.opcua.th_actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="import-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('page.opcua.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="modal-overlay" style="display:none" onclick="if(event.target===this)closeModal()">
+  <div class="modal" style="max-width:700px">
+    <div class="modal-header">
+      <h3 id="modal-title">{{ t('page.import_collector.modal_add_title') }}</h3>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-id">
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group">
+          <label>{{ t('page.import_collector.lbl_name') }} <span class="text-danger">*</span></label>
+          <input type="text" class="form-control" id="f-name" placeholder="{{ t('page.import_collector.ph_name') }}">
+        </div>
+        <div class="form-group">
+          <label>{{ t('page.import_collector.lbl_import_type') }}</label>
+          <select class="form-select" id="f-importType" onchange="onImportTypeChange()">
+            <option value="csv">CSV</option>
+            <option value="json">JSON</option>
+            <option value="files">{{ t('page.import_collector.type_files') }}</option>
+          </select>
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>{{ t('page.import_collector.lbl_description') }}</label>
+          <input type="text" class="form-control" id="f-description">
+        </div>
+        <div class="form-group">
+          <label>{{ t('page.import_collector.lbl_target_type') }}</label>
+          <select class="form-select" id="f-targetType" onchange="onTargetTypeChange()">
+            <option value="tsdb">{{ t('page.import_collector.target_tsdb') }}</option>
+            <option value="rdbms">{{ t('page.import_collector.target_rdbms') }}</option>
+            <option value="file">{{ t('page.import_collector.target_file') }}</option>
+          </select>
+        </div>
+        <div class="form-group" id="grp-targetId">
+          <label>{{ t('page.import_collector.lbl_target_instance') }}</label>
+          <select class="form-select" id="f-targetId"></select>
+        </div>
+        <div class="form-group" id="grp-measurement" style="display:none">
+          <label>Measurement</label>
+          <input type="text" class="form-control" id="f-measurement" placeholder="sensor_data">
+        </div>
+        <div class="form-group" id="grp-table" style="display:none">
+          <label>{{ t('page.import_collector.lbl_target_table') }}</label>
+          <input type="text" class="form-control" id="f-targetTable" placeholder="imported_data">
+        </div>
+        <div class="form-group" id="grp-bucket" style="display:none">
+          <label>{{ t('page.import_collector.lbl_target_bucket') }}</label>
+          <select class="form-select" id="f-targetBucket">
+            <option value="sdl-files">sdl-files</option>
+            <option value="sdl-archive">sdl-archive</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>{{ t('page.import_collector.lbl_encoding') }}</label>
+          <select class="form-select" id="f-encoding">
+            <option value="utf-8">UTF-8</option>
+            <option value="euc-kr">EUC-KR</option>
+            <option value="cp949">CP949</option>
+          </select>
+        </div>
+        <div class="form-group data-only-field" id="grp-delimiter">
+          <label>{{ t('page.import_collector.lbl_delimiter') }}</label>
+          <select class="form-select" id="f-delimiter">
+            <option value=",">, ({{ t('page.import_collector.comma') }})</option>
+            <option value="&#9;">TAB</option>
+            <option value="|">| (Pipe)</option>
+            <option value=";">; ({{ t('page.import_collector.semicolon') }})</option>
+          </select>
+        </div>
+        <div class="form-group data-only-field">
+          <label>{{ t('page.import_collector.lbl_timestamp_col') }}</label>
+          <input type="text" class="form-control" id="f-tsCol" placeholder="timestamp">
+        </div>
+        <div class="form-group data-only-field">
+          <label>{{ t('page.import_collector.lbl_batch_size') }}</label>
+          <input type="number" class="form-control" id="f-batchSize" value="1000">
+        </div>
+        <div class="form-group data-only-field" style="grid-column:1/-1">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="f-publishMqtt" checked>
+            {{ t('page.import_collector.lbl_publish_mqtt') }}
+          </label>
+          <div class="fs-11 text-muted">{{ t('page.import_collector.mqtt_help') }}</div>
+        </div>
+        <div style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+          <label class="form-label fw-600">{{ t('page.import_collector.lbl_source_mode') }}</label>
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <div class="d-flex gap-16">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="sourceMode" value="upload" checked onchange="onSourceModeChange()"> {{ t('page.import_collector.source_upload') }}
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="sourceMode" value="local_path" onchange="onSourceModeChange()"> {{ t('page.import_collector.source_local_path') }}
+            </label>
+          </div>
+        </div>
+        <div id="grp-localPath" style="display:none;grid-column:1/-1">
+          <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group" style="grid-column:1/-1">
+              <label>{{ t('page.import_collector.lbl_local_path') }}</label>
+              <input type="text" class="form-control" id="f-localPath" placeholder="{{ t('page.import_collector.ph_local_path') }}">
+            </div>
+            <div class="form-group">
+              <label>{{ t('page.import_collector.lbl_file_patterns') }}</label>
+              <input type="text" class="form-control" id="f-filePatterns" placeholder="*.csv, *.jpg, *.png" value="*">
+            </div>
+            <div class="form-group">
+              <label style="display:flex;align-items:center;gap:8px;margin-top:20px;">
+                <input type="checkbox" id="f-recursive" checked>
+                {{ t('page.import_collector.lbl_recursive') }}
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal()">{{ t('common.cancel') }}</button>
+      <button class="btn btn-primary" onclick="saveImport()">{{ t('common.save') }}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload & Preview Modal -->
+<div class="modal-overlay" id="upload-overlay" style="display:none" onclick="if(event.target===this)closeUpload()">
+  <div class="modal" style="max-width:900px">
+    <div class="modal-header">
+      <h3 id="upload-title">{{ t('page.import_collector.upload_title') }}</h3>
+      <button class="modal-close" onclick="closeUpload()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="upload-cid">
+      <input type="hidden" id="upload-source-mode" value="upload">
+      <!-- Step 1: File Upload or Server Path -->
+      <div id="upload-step1">
+        <!-- Upload mode -->
+        <div id="upload-mode-upload">
+          <div class="form-group">
+            <label>{{ t('page.import_collector.lbl_select_file') }}</label>
+            <input type="file" class="form-control" id="upload-file" accept=".csv,.json,.txt,.tsv,.zip,.png,.jpg,.jpeg,.gif,.bmp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.mp4,.avi,.mov,.mp3,.wav,.hwp">
+          </div>
+          <button class="btn btn-primary" onclick="doUpload()"><i class="fas fa-upload"></i> {{ t('page.import_collector.btn_upload') }}</button>
+        </div>
+        <!-- Server path mode -->
+        <div id="upload-mode-path" style="display:none">
+          <div class="form-group">
+            <label>{{ t('page.import_collector.lbl_local_path') }}</label>
+            <div class="d-flex gap-8">
+              <input type="text" class="form-control" id="scan-path-input" style="flex:1">
+              <button class="btn btn-primary btn-sm" onclick="doScanPath()"><i class="fas fa-search"></i> {{ t('page.import_collector.btn_scan') }}</button>
+            </div>
+          </div>
+          <div id="scan-result" style="display:none;margin-top:12px;">
+            <div class="d-flex gap-12 align-center" style="margin-bottom:8px;">
+              <span class="tag tag-blue" id="scan-total-files"></span>
+              <span class="tag tag-purple" id="scan-total-size"></span>
+              <button class="btn btn-success btn-sm" id="btn-scan-execute" onclick="doExecutePath()"><i class="fas fa-play"></i> {{ t('page.import_collector.btn_execute') }}</button>
+            </div>
+            <div class="table-wrapper" style="max-height:350px;overflow:auto;">
+              <table><thead><tr>
+                <th></th><th>{{ t('page.import_collector.th_file_name') }}</th>
+                <th>{{ t('page.import_collector.th_file_size') }}</th>
+                <th>{{ t('page.import_collector.th_file_category') }}</th>
+                <th>{{ t('page.import_collector.scan_th_modified') }}</th>
+              </tr></thead><tbody id="scan-tbody"></tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Step 2: Preview -->
+      <div id="upload-step2" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div>
+            <span class="tag tag-blue" id="preview-filename"></span>
+            <span class="tag tag-purple" id="preview-rows"></span>
+          </div>
+          <button class="btn btn-success btn-sm" onclick="doExecute()"><i class="fas fa-play"></i> {{ t('page.import_collector.btn_execute') }}</button>
+        </div>
+        <div class="table-wrapper" style="max-height:400px;overflow:auto;">
+          <table id="preview-table">
+            <thead><tr id="preview-thead"></tr></thead>
+            <tbody id="preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- Step 3: Progress -->
+      <div id="upload-step3" style="display:none">
+        <div style="text-align:center;padding:20px 0;">
+          <div style="font-size:48px;color:var(--primary);margin-bottom:12px;" id="progress-icon"><i class="fas fa-spinner fa-spin"></i></div>
+          <div style="font-size:24px;font-weight:bold;" id="progress-pct">0%</div>
+          <div class="text-muted" id="progress-detail">0 / 0 rows</div>
+          <div style="margin:16px auto;max-width:400px;height:8px;background:#e9ecef;border-radius:4px;overflow:hidden;">
+            <div id="progress-bar" style="height:100%;width:0%;background:var(--primary);transition:width 0.3s;"></div>
+          </div>
+          <div class="text-muted" id="progress-status"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/connectors/import';
+var _targets = {tsdb:[], rdbms:[], file:[]};
+var _pollTimer = null;
+
+function escHtml(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function fmt(n){return n!=null?Number(n).toLocaleString():'-';}
+function fmtSize(b){if(!b)return'-';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
+
+var statusBadge = {
+  ready:     '<span class="badge-status badge-stopped">Ready</span>',
+  running:   '<span class="badge-status badge-running">' + __t('common.running') + '</span>',
+  completed: '<span class="badge-status badge-success">' + __t('page.import_collector.status_completed') + '</span>',
+  error:     '<span class="badge-status badge-error">' + __t('common.error') + '</span>',
+  stopped:   '<span class="badge-status badge-stopped">' + __t('common.stopped') + '</span>',
+};
+
+var targetLabel = {tsdb:'TSDB', rdbms:'RDBMS', file:'File (MinIO)'};
+var categoryIcon = {image:'fa-image',video:'fa-video',audio:'fa-music',text:'fa-file-lines',document:'fa-file-alt',archive:'fa-file-zipper',other:'fa-file'};
+
+/* ── Import type change ── */
+function onImportTypeChange(){
+  var it=$('#f-importType').val();
+  var isFile = (it==='files');
+  // 파일 모드: 대상을 file로 고정, 데이터 관련 필드 숨김
+  if(isFile){
+    $('#f-targetType').val('file');
+    onTargetTypeChange();
+    $('#f-targetType').prop('disabled', true);
+    $('.data-only-field').hide();
+  } else {
+    $('#f-targetType').prop('disabled', false);
+    $('.data-only-field').show();
+  }
+  // 파일 업로드 input 설정
+  if(isFile){
+    $('#upload-file').attr('multiple','multiple');
+  } else {
+    $('#upload-file').removeAttr('multiple');
+  }
+}
+
+/* ── Load targets ── */
+function loadTargets(cb){
+  $.getJSON(API+'/targets', function(r){
+    if(r.success) _targets = r.data;
+    if(cb) cb();
+  });
+}
+
+/* ── List ── */
+function loadList(){
+  var params = {};
+  var st=$('#filter-status').val(); if(st)params.status=st;
+  $.getJSON(API, params, function(r){
+    if(!r.success)return;
+    var items=r.data, $tb=$('#import-tbody').empty();
+    var cntTotal=items.length, cntCompleted=0, cntRunning=0, cntErrors=0;
+    if(!items.length){
+      $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' + __t('page.import_collector.no_data') + '</td></tr>');
+    }
+    items.forEach(function(c){
+      if(c.status==='completed') cntCompleted++;
+      if(c.status==='running') cntRunning++;
+      if(c.status==='error') cntErrors++;
+      var progressHtml = '';
+      if(c.status==='running'){
+        progressHtml = '<div style="display:flex;align-items:center;gap:6px;"><div style="flex:1;height:6px;background:#e9ecef;border-radius:3px;overflow:hidden;min-width:60px;"><div style="height:100%;width:'+c.progress+'%;background:var(--primary);"></div></div><span class="fs-11">'+c.progress+'%</span></div>';
+      } else if(c.status==='completed'){
+        progressHtml = '<span class="tag tag-green">100%</span>';
+      } else {
+        progressHtml = '-';
+      }
+      var resultHtml = c.importedRows ? fmt(c.importedRows)+' / '+fmt(c.totalRows) : '-';
+      if(c.errorRows>0) resultHtml += ' <span class="text-danger">('+c.errorRows+' err)</span>';
+      var republishBtn = (c.status==='completed')
+        ? '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_republish')+'" onclick="doRepublish('+c.id+')"><i class="fas fa-rotate"></i></button>'
+        : '';
+      var actions =
+        '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_upload_file')+'" onclick="openUpload('+c.id+')"><i class="fas fa-upload"></i></button>' +
+        republishBtn +
+        '<button class="btn btn-outline btn-sm" title="'+__t('common.edit')+'" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
+        '<button class="btn btn-outline btn-sm" title="'+__t('common.delete')+'" onclick="deleteImport('+c.id+',\''+escHtml(c.name)+'\')"><i class="fas fa-trash text-danger"></i></button>';
+      $tb.append('<tr>'+
+        '<td><strong>'+escHtml(c.name)+'</strong><div class="fs-11 text-muted">'+escHtml(c.description||'')+'</div></td>'+
+        '<td><span class="tag tag-blue">'+c.importType.toUpperCase()+'</span></td>'+
+        '<td><span class="tag tag-purple">'+(targetLabel[c.targetType]||c.targetType)+'</span></td>'+
+        '<td>'+(c.fileName?'<i class="fas fa-file"></i> '+escHtml(c.fileName)+'<div class="fs-11 text-muted">'+fmtSize(c.fileSize)+'</div>':'-')+'</td>'+
+        '<td>'+progressHtml+'</td>'+
+        '<td>'+(statusBadge[c.status]||c.status)+'</td>'+
+        '<td>'+resultHtml+'</td>'+
+        '<td><div class="action-btns">'+actions+'</div></td>'+
+      '</tr>');
+    });
+    $('#stat-total').text(cntTotal);
+    $('#stat-completed').text(cntCompleted);
+    $('#stat-running').text(cntRunning);
+    $('#stat-errors').text(cntErrors);
+  });
+}
+
+/* ── Target type change ── */
+function onTargetTypeChange(){
+  var tt=$('#f-targetType').val();
+  $('#grp-targetId, #grp-measurement, #grp-table, #grp-bucket').hide();
+  if(tt==='tsdb'){
+    $('#grp-targetId, #grp-measurement').show();
+    var $sel=$('#f-targetId').empty();
+    (_targets.tsdb||[]).forEach(function(t){$sel.append('<option value="'+t.id+'">'+escHtml(t.name)+' ('+t.dbType+')</option>');});
+  } else if(tt==='rdbms'){
+    $('#grp-targetId, #grp-table').show();
+    var $sel=$('#f-targetId').empty();
+    (_targets.rdbms||[]).forEach(function(r){$sel.append('<option value="'+r.id+'">'+escHtml(r.name)+' ('+r.dbType+')</option>');});
+  } else {
+    $('#grp-bucket').show();
+  }
+}
+
+/* ── Add/Edit Modal ── */
+function openAddModal(){
+  $('#edit-id').val('');
+  $('#modal-title').text(__t('page.import_collector.modal_add_title'));
+  $('#f-name, #f-description, #f-tsCol, #f-measurement, #f-targetTable').val('');
+  $('#f-importType').val('csv');
+  $('#f-targetType').val('tsdb');
+  $('#f-encoding').val('utf-8');
+  $('#f-delimiter').val(',');
+  $('#f-batchSize').val(1000);
+  $('#f-publishMqtt').prop('checked', true);
+  $('input[name=sourceMode][value="upload"]').prop('checked', true);
+  $('#f-localPath').val('');
+  $('#f-filePatterns').val('*');
+  $('#f-recursive').prop('checked', true);
+  onSourceModeChange();
+  loadTargets(function(){onTargetTypeChange();});
+  $('#modal-overlay').show();
+}
+
+function openEditModal(id){
+  $.getJSON(API+'/'+id, function(r){
+    if(!r.success)return alert(r.error.message);
+    var c=r.data;
+    $('#edit-id').val(c.id);
+    $('#modal-title').text(__t('page.import_collector.modal_edit_title'));
+    $('#f-name').val(c.name);
+    $('#f-description').val(c.description);
+    $('#f-importType').val(c.importType);
+    $('#f-targetType').val(c.targetType);
+    $('#f-encoding').val(c.encoding);
+    $('#f-delimiter').val(c.delimiter);
+    $('#f-batchSize').val(c.batchSize);
+    $('#f-tsCol').val(c.timestampColumn);
+    $('#f-measurement').val(c.targetMeasurement);
+    $('#f-targetTable').val(c.targetTable);
+    $('#f-targetBucket').val(c.targetBucket);
+    $('#f-publishMqtt').prop('checked', c.publishMqtt);
+    $('input[name=sourceMode][value="'+(c.sourceMode||'upload')+'"]').prop('checked',true);
+    $('#f-localPath').val(c.localPath||'');
+    $('#f-filePatterns').val((c.filePatterns||['*']).join(', '));
+    $('#f-recursive').prop('checked', c.recursive!==false);
+    onSourceModeChange();
+    loadTargets(function(){
+      onTargetTypeChange();
+      if(c.targetId) $('#f-targetId').val(c.targetId);
+    });
+    $('#modal-overlay').show();
+  });
+}
+
+function closeModal(){$('#modal-overlay').hide();}
+
+function saveImport(){
+  var id=$('#edit-id').val();
+  var body={
+    name: $('#f-name').val().trim(),
+    description: $('#f-description').val(),
+    importType: $('#f-importType').val(),
+    targetType: $('#f-targetType').val(),
+    targetId: parseInt($('#f-targetId').val())||null,
+    targetTable: $('#f-targetTable').val(),
+    targetMeasurement: $('#f-measurement').val(),
+    targetBucket: $('#f-targetBucket').val(),
+    timestampColumn: $('#f-tsCol').val(),
+    encoding: $('#f-encoding').val(),
+    delimiter: $('#f-delimiter').val(),
+    batchSize: parseInt($('#f-batchSize').val())||1000,
+    publishMqtt: $('#f-publishMqtt').is(':checked'),
+    sourceMode: $('input[name=sourceMode]:checked').val() || 'upload',
+    localPath: $('#f-localPath').val() || '',
+    filePatterns: ($('#f-filePatterns').val()||'*').split(',').map(function(s){return s.trim()}).filter(Boolean),
+    recursive: $('#f-recursive').is(':checked'),
+  };
+  if(!body.name) return alert(__t('page.import_collector.err_name_required'));
+  var method = id ? 'PUT' : 'POST';
+  var url = id ? API+'/'+id : API;
+  $.ajax({url:url, method:method, contentType:'application/json', data:JSON.stringify(body), success:function(r){
+    if(!r.success) return alert(r.error.message);
+    closeModal(); loadList();
+  }});
+}
+
+function doRepublish(id){
+  if(!confirm(__t('page.import_collector.confirm_republish')))return;
+  $.ajax({url:API+'/'+id+'/republish', method:'POST', success:function(r){
+    if(!r.success) return alert(r.error.message);
+    // 진행률 모달 표시
+    $('#upload-cid').val(id);
+    $('#upload-step1, #upload-step2').hide();
+    $('#upload-step3').show();
+    $('#progress-icon').html('<i class="fas fa-spinner fa-spin"></i>');
+    $('#progress-pct').text('0%');
+    $('#progress-detail').text(__t('page.import_collector.republish_in_progress'));
+    $('#progress-status').text('');
+    $('#upload-overlay').show();
+    _pollTimer = setInterval(function(){pollProgress(id);}, 1000);
+  }});
+}
+
+function doScanPath(){
+  var cid = $('#upload-cid').val();
+  var localPath = $('#scan-path-input').val().trim();
+  if(!localPath) return alert(__t('page.import_collector.err_no_path'));
+  $.ajax({url:API+'/'+cid+'/scan-path', method:'POST', contentType:'application/json',
+    data:JSON.stringify({localPath:localPath}),
+    success:function(r){
+      if(!r.success) return alert(r.error.message);
+      var d = r.data;
+      $('#scan-total-files').text(fmt(d.totalFiles)+' files');
+      $('#scan-total-size').text(d.totalSizeStr);
+      var $tb = $('#scan-tbody').empty();
+      var catIcon = {image:'fa-file-image',video:'fa-video',audio:'fa-music',text:'fa-file-lines',document:'fa-file-alt',archive:'fa-file-zipper',other:'fa-file'};
+      (d.files||[]).forEach(function(f){
+        var icon = catIcon[f.category]||'fa-file';
+        $tb.append('<tr><td><i class="fas '+icon+'"></i></td><td>'+escHtml(f.path)+'</td><td>'+escHtml(f.sizeStr)+'</td><td><span class="tag tag-blue">'+escHtml(f.category)+'</span></td><td class="fs-12">'+escHtml((f.modifiedAt||'').slice(0,16).replace('T',' '))+'</td></tr>');
+      });
+      if(d.totalFiles > d.files.length){
+        $tb.append('<tr><td colspan="5" class="text-center text-muted fs-12" style="padding:8px;">... '+(d.totalFiles - d.files.length)+' more files</td></tr>');
+      }
+      $('#scan-result').show();
+    }
+  });
+}
+
+function doExecutePath(){
+  var cid = $('#upload-cid').val();
+  $.ajax({url:API+'/'+cid+'/execute-path', method:'POST', success:function(r){
+    if(!r.success) return alert(r.error.message);
+    $('#upload-step1').hide();
+    $('#upload-step3').show();
+    $('#progress-icon').html('<i class="fas fa-spinner fa-spin"></i>');
+    $('#progress-pct').text('0%');
+    $('#progress-detail').text(__t('page.import_collector.path_importing'));
+    $('#progress-status').text('');
+    _pollTimer = setInterval(function(){pollProgress(cid);}, 1000);
+  }});
+}
+
+function deleteImport(id,name){
+  if(!confirm(__t('page.import_collector.confirm_delete').replace('{name}',name)))return;
+  $.ajax({url:API+'/'+id, method:'DELETE', success:function(r){
+    if(!r.success) return alert(r.error.message);
+    loadList();
+  }});
+}
+
+/* ── Upload & Execute ── */
+function onSourceModeChange(){
+  var mode = $('input[name=sourceMode]:checked').val();
+  if(mode==='local_path'){
+    $('#grp-localPath').show();
+  } else {
+    $('#grp-localPath').hide();
+  }
+}
+
+function openUpload(id){
+  $('#upload-cid').val(id);
+  $('#upload-step1').show();
+  $('#upload-step2, #upload-step3').hide();
+  $('#upload-file').val('');
+  $('#scan-result').hide();
+
+  $.getJSON(API+'/'+id, function(r){
+    if(!r.success) return;
+    var c = r.data;
+    var mode = c.sourceMode || 'upload';
+    $('#upload-source-mode').val(mode);
+
+    if(mode === 'local_path'){
+      $('#upload-mode-upload').hide();
+      $('#upload-mode-path').show();
+      $('#upload-title').text(__t('page.import_collector.scan_title'));
+      $('#scan-path-input').val(c.localPath || '');
+    } else {
+      $('#upload-mode-upload').show();
+      $('#upload-mode-path').hide();
+      $('#upload-title').text(__t('page.import_collector.upload_title'));
+      if(c.importType==='files'){
+        $('#upload-file').attr('multiple','multiple');
+      } else {
+        $('#upload-file').removeAttr('multiple');
+      }
+    }
+  });
+  $('#upload-overlay').show();
+}
+function closeUpload(){
+  $('#upload-overlay').hide();
+  if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}
+  loadList();
+}
+
+function doUpload(){
+  var cid=$('#upload-cid').val();
+  var fileInput=$('#upload-file')[0];
+  if(!fileInput.files.length) return alert(__t('page.import_collector.err_no_file'));
+  var fd=new FormData();
+  for(var i=0;i<fileInput.files.length;i++){
+    fd.append('file', fileInput.files[i]);
+  }
+  $.ajax({url:API+'/'+cid+'/upload', method:'POST', data:fd, processData:false, contentType:false, success:function(r){
+    if(!r.success) return alert(r.error.message);
+    // Preview
+    $.ajax({url:API+'/'+cid+'/preview', method:'POST', success:function(pr){
+      if(!pr.success) return alert(pr.error.message);
+      var d=pr.data;
+      $('#preview-filename').text(r.data.fileName);
+      $('#preview-rows').text(d.isFileMode ? fmt(d.totalRows)+' files' : fmt(d.totalRows)+' rows');
+      if(d.detectedEncoding) $('#preview-filename').after(' <span class="tag tag-green">'+d.detectedEncoding+'</span>');
+      var $th=$('#preview-thead').empty();
+      if(d.isFileMode){
+        $th.append('<th>'+__t('page.import_collector.th_file_icon')+'</th><th>'+__t('page.import_collector.th_file_name')+'</th><th>'+__t('page.import_collector.th_file_size')+'</th><th>'+__t('page.import_collector.th_file_category')+'</th>');
+        var $tb=$('#preview-tbody').empty();
+        (d.rows||[]).forEach(function(row){
+          var icon = categoryIcon[row.category]||'fa-file';
+          $tb.append('<tr><td><i class="fas '+icon+'"></i></td><td>'+escHtml(row.name)+'</td><td>'+escHtml(row.sizeStr)+'</td><td><span class="tag tag-blue">'+escHtml(row.category)+'</span></td></tr>');
+        });
+      } else {
+        (d.columns||[]).forEach(function(c){$th.append('<th>'+escHtml(c)+'</th>');});
+        var $tb=$('#preview-tbody').empty();
+        (d.rows||[]).slice(0,50).forEach(function(row){
+          var cells='';
+          (d.columns||[]).forEach(function(c){cells+='<td>'+escHtml(row[c]!=null?row[c]:'')+'</td>';});
+          $tb.append('<tr>'+cells+'</tr>');
+        });
+      }
+      $('#upload-step1').hide();
+      $('#upload-step2').show();
+    }});
+  }});
+}
+
+function doExecute(){
+  var cid=$('#upload-cid').val();
+  $.ajax({url:API+'/'+cid+'/execute', method:'POST', success:function(r){
+    if(!r.success) return alert(r.error.message);
+    $('#upload-step2').hide();
+    $('#upload-step3').show();
+    _pollTimer = setInterval(function(){pollProgress(cid);}, 1000);
+  }});
+}
+
+function pollProgress(cid){
+  $.getJSON(API+'/'+cid+'/status', function(r){
+    if(!r.success)return;
+    var d=r.data;
+    $('#progress-pct').text(d.progress+'%');
+    $('#progress-bar').css('width', d.progress+'%');
+    $('#progress-detail').text(fmt(d.importedRows)+' / '+fmt(d.totalRows)+' rows');
+    if(d.status==='completed'){
+      clearInterval(_pollTimer); _pollTimer=null;
+      $('#progress-icon').html('<i class="fas fa-circle-check" style="color:var(--success)"></i>');
+      $('#progress-status').html('<span style="color:var(--success)">'+__t('page.import_collector.import_complete')+'</span>');
+      loadList();
+    } else if(d.status==='error'){
+      clearInterval(_pollTimer); _pollTimer=null;
+      $('#progress-icon').html('<i class="fas fa-circle-xmark" style="color:var(--danger)"></i>');
+      $('#progress-status').html('<span class="text-danger">'+escHtml(d.lastError)+'</span>');
+      loadList();
+    }
+  });
+}
+
+/* ── Init ── */
+$(function(){
+  loadTargets();
+  loadList();
+});
+</script>
+{% endblock %}

@@ -206,6 +206,18 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
         except Exception:
             conn_desc = ""
 
+        # Import 커넥터인 경우 sink_type 자동 설정
+        _sink_type = ""
+        if connector_type == "import":
+            try:
+                from backend.models.collector import ImportCollector
+                imp = db.query(ImportCollector).get(connector_id)
+                if imp:
+                    _SINK_MAP = {"tsdb": "internal_tsdb_sink", "rdbms": "internal_rdbms_sink", "file": "internal_file_sink"}
+                    _sink_type = _SINK_MAP.get(imp.target_type, "")
+            except Exception:
+                pass
+
         catalog = DataCatalog(
             name=f"{label} {conn_label} — 전체 데이터",
             description=f"{label} 커넥터 {conn_label}의 모든 태그 데이터를 조회합니다",
@@ -219,6 +231,7 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
             sensitivity="internal",
             access_url=f"sdl/raw/{connector_type}/{connector_id}/*",
             format="mixed",
+            sink_type=_sink_type,
             is_published=True,
         )
         db.add(catalog)
@@ -244,6 +257,16 @@ def _auto_create_catalog(db, connector_type, connector_id,
         _auto_create_connector_catalog(db, connector_type, connector_id,
                                        connector_name)
 
+        # Import + RDBMS → 태그별 카탈로그 생성 안 함 (테이블 단위 관리)
+        if connector_type == "import":
+            try:
+                from backend.models.collector import ImportCollector
+                _imp_check = db.query(ImportCollector).get(connector_id)
+                if _imp_check and _imp_check.target_type == "rdbms":
+                    return
+            except Exception:
+                pass
+
         # 이미 동일 커넥터+태그의 카탈로그가 있으면 스킵
         existing = db.query(DataCatalog).filter_by(
             connector_type=connector_type,
@@ -257,6 +280,18 @@ def _auto_create_catalog(db, connector_type, connector_id,
         conn_label = connector_name or f"#{connector_id}"
         category = _guess_category(tag_name)
 
+        # Import 커넥터인 경우 sink_type 자동 설정
+        _sink_type = ""
+        if connector_type == "import":
+            try:
+                from backend.models.collector import ImportCollector
+                imp = db.query(ImportCollector).get(connector_id)
+                if imp:
+                    _SINK_MAP = {"tsdb": "internal_tsdb_sink", "rdbms": "internal_rdbms_sink", "file": "internal_file_sink"}
+                    _sink_type = _SINK_MAP.get(imp.target_type, "")
+            except Exception:
+                pass
+
         catalog = DataCatalog(
             name=f"{tag_name} ({label} {conn_label})",
             description=f"{label} 커넥터 {conn_label}에서 자동 수집된 태그 데이터",
@@ -269,6 +304,7 @@ def _auto_create_catalog(db, connector_type, connector_id,
             sensitivity="internal",
             access_url=f"sdl/raw/{connector_type}/{connector_id}/{tag_name}",
             format=data_type or "float",
+            sink_type=_sink_type,
             is_published=True,
         )
         db.add(catalog)

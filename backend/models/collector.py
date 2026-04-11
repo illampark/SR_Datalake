@@ -625,3 +625,97 @@ class ApiEndpoint(Base):
             "description": self.description,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+# ══════════════════════════════════════════════
+# Import Collector Model (오프라인 데이터 가져오기)
+# ══════════════════════════════════════════════
+
+class ImportCollector(Base):
+    __tablename__ = "import_collector"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(String(500), default="")
+    # 가져오기 설정
+    import_type = Column(String(20), nullable=False, default="csv")  # csv / json / sql_dump
+    target_type = Column(String(20), nullable=False, default="tsdb")  # tsdb / rdbms / file
+    target_id = Column(Integer, nullable=True)                        # TSDB/RDBMS config ID
+    target_table = Column(String(200), default="")                    # 대상 테이블명 (RDBMS)
+    target_measurement = Column(String(200), default="")              # 대상 measurement (TSDB)
+    target_bucket = Column(String(100), default="sdl-files")          # 대상 버킷 (file)
+    # 파일 정보
+    file_name = Column(String(500), default="")
+    file_path = Column(String(1000), default="")  # MinIO 업로드 경로
+    file_size = Column(Integer, default=0)
+    # 컬럼 매핑
+    column_mapping = Column(JSON, default={})  # {"sourceCol": "targetCol", ...}
+    timestamp_column = Column(String(200), default="")  # 시계열용 타임스탬프 컬럼
+    tag_column = Column(String(200), default="")         # 시계열용 태그 컬럼
+    value_columns = Column(JSON, default=[])             # 값 컬럼 목록
+    # 실행 설정
+    batch_size = Column(Integer, default=1000)
+    encoding = Column(String(20), default="utf-8")
+    delimiter = Column(String(5), default=",")
+    skip_header = Column(Boolean, default=True)
+    publish_mqtt = Column(Boolean, default=True)  # MQTT 발행 여부 (파이프라인 연계)
+    # 소스 모드
+    source_mode = Column(String(20), default="upload")  # upload / local_path
+    local_path = Column(String(1000), default="")        # 서버 로컬 경로
+    file_patterns = Column(JSON, default=["*"])           # 파일 패턴 ["*.csv", "*.jpg"]
+    recursive = Column(Boolean, default=True)             # 하위 디렉토리 포함
+    # 상태
+    status = Column(String(20), default="ready")  # ready / running / completed / error
+    enabled = Column(Boolean, default=True)
+    config = Column(JSON, default={})
+    # 실행 통계
+    total_rows = Column(Integer, default=0)
+    imported_rows = Column(Integer, default=0)
+    error_rows = Column(Integer, default=0)
+    progress = Column(Integer, default=0)  # 0~100
+    error_count = Column(Integer, default=0)
+    last_error = Column(Text, default="")
+    last_imported_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "importType": self.import_type,
+            "targetType": self.target_type,
+            "targetId": self.target_id,
+            "targetTable": self.target_table,
+            "targetMeasurement": self.target_measurement,
+            "targetBucket": self.target_bucket,
+            "fileName": self.file_name,
+            "filePath": self.file_path,
+            "fileSize": self.file_size,
+            "columnMapping": self.column_mapping or {},
+            "timestampColumn": self.timestamp_column,
+            "tagColumn": self.tag_column,
+            "valueColumns": self.value_columns or [],
+            "batchSize": self.batch_size,
+            "encoding": self.encoding,
+            "delimiter": self.delimiter,
+            "skipHeader": self.skip_header,
+            "publishMqtt": self.publish_mqtt,
+            "sourceMode": self.source_mode or "upload",
+            "localPath": self.local_path or "",
+            "filePatterns": self.file_patterns or ["*"],
+            "recursive": self.recursive if self.recursive is not None else True,
+            "status": self.status,
+            "enabled": self.enabled,
+            "config": self.config or {},
+            "totalRows": self.total_rows,
+            "importedRows": self.imported_rows,
+            "errorRows": self.error_rows,
+            "progress": self.progress,
+            "errorCount": self.error_count,
+            "lastError": self.last_error,
+            "lastImportedAt": self.last_imported_at.isoformat() if self.last_imported_at else None,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
+            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+        }

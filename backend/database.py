@@ -23,6 +23,10 @@ def _migrate_add_columns():
         ("data_catalog", "connector_description", "TEXT", "''"),
         ("data_catalog", "pipeline_id", "INTEGER", "NULL"),
         ("data_catalog", "sink_type", "VARCHAR(30)", "''"),
+        ("import_collector", "source_mode", "VARCHAR(20)", "'upload'"),
+        ("import_collector", "local_path", "VARCHAR(1000)", "''"),
+        ("import_collector", "file_patterns", "JSON", "'[\"*\"]'"),
+        ("import_collector", "recursive", "BOOLEAN", "true"),
     ]
     with engine.begin() as conn:
         for table, col, col_type, default in _additions:

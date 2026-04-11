@@ -83,6 +83,7 @@
             <option value="api">API</option>
             <option value="pipeline">Pipeline</option>
             <option value="recipe">Recipe</option>
+            <option value="import">Import</option>
           </select>
           <select class="form-select" id="filter-data-level" style="width:auto;min-width:130px;padding:5px 10px;" onchange="loadCatalogs(1)">
             <option value="">{{ t('page.catalog.filter_all_levels') }}</option>
@@ -165,6 +166,28 @@
       <div style="align-self:flex-end;">
         <button class="btn btn-primary btn-sm" onclick="queryData(1)"><i class="fas fa-search"></i> {{ t('page.metadata.btn_query') }}</button>
       </div>
+    </div>
+    <!-- RDBMS Column Filter -->
+    <div id="rdbms-filter-panel" style="display:none;margin-bottom:16px;">
+      <div class="d-flex gap-8 align-center" style="flex-wrap:wrap;margin-bottom:8px;">
+        <select class="form-select" id="rdbms-filter-col" style="width:auto;min-width:140px;padding:5px 10px;font-size:12px;">
+          <option value="">{{ t('page.catalog.rdbms_filter_col') }}</option>
+        </select>
+        <select class="form-select" id="rdbms-filter-op" style="width:auto;min-width:80px;padding:5px 10px;font-size:12px;">
+          <option value="=">=</option>
+          <option value="!=">!=</option>
+          <option value=">">></option>
+          <option value="<"><</option>
+          <option value=">=">>=</option>
+          <option value="<="><=</option>
+          <option value="LIKE">LIKE</option>
+          <option value="IN">IN</option>
+        </select>
+        <input type="text" class="form-control" id="rdbms-filter-val" placeholder="{{ t('page.catalog.rdbms_filter_val') }}" style="width:180px;padding:5px 10px;font-size:12px;">
+        <button class="btn btn-outline btn-sm" onclick="addRdbmsFilter()"><i class="fas fa-plus"></i> {{ t('page.catalog.rdbms_filter_add') }}</button>
+        <button class="btn btn-outline btn-sm" onclick="clearRdbmsFilters()"><i class="fas fa-eraser"></i> {{ t('page.catalog.rdbms_filter_clear') }}</button>
+      </div>
+      <div id="rdbms-filter-tags" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
     </div>
     <!-- Stats Summary -->
     <div id="data-stats" style="display:none;margin-bottom:16px;">
@@ -284,7 +307,8 @@ var connectorIcons = {
   file: 'fa-file-import',
   api: 'fa-code',
   pipeline: 'fa-project-diagram',
-  recipe: 'fa-flask'
+  recipe: 'fa-flask',
+  import: 'fa-cloud-arrow-up'
 };
 
 var connectorLabels = {
@@ -296,7 +320,8 @@ var connectorLabels = {
   file: 'File',
   api: 'API',
   pipeline: 'Pipeline',
-  recipe: 'Recipe'
+  recipe: 'Recipe',
+  import: 'Import'
 };
 
 var sinkLabels = {
@@ -642,11 +667,20 @@ function loadDetailPipelines(tagName, connectorType, connectorId) {
       '<div class="fw-600 fs-12" style="margin-bottom:6px;"><i class="fas fa-diagram-project"></i> ' + __t('page.catalog.linked_pipelines') + ' (' + pipes.length + __t('page.catalog.linked_pipelines_count') + ')</div>';
     pipes.forEach(function(p) {
       var statusCls = p.pipelineStatus === 'running' ? 'badge-running' : 'badge-stopped';
-      html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;">' +
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;flex-wrap:wrap;">' +
         '<span class="badge-status ' + statusCls + '" style="font-size:11px">' + escHtml(p.pipelineStatus) + '</span>' +
         '<a href="/pipeline/builder" class="fs-12">' + escHtml(p.pipelineName) + '</a>' +
         '<span class="mono text-muted fs-11">(' + __t('page.catalog.linked_pipeline_processed') + ' ' + fmt(p.processedCount || 0) + __t('page.catalog.pagination_count_unit') + ', ' + __t('page.catalog.linked_pipeline_steps') + ' ' + (p.stepCount || 0) + __t('page.catalog.linked_pipelines_count') + ')</span>' +
       '</div>';
+      // 파이프라인 sink 카탈로그 링크
+      if (p.sinkCatalogs && p.sinkCatalogs.length) {
+        p.sinkCatalogs.forEach(function(sc) {
+          html += '<div style="padding:2px 0 2px 24px;">' +
+            '<button class="btn btn-outline btn-sm" style="font-size:11px;" onclick="showDetail('+sc.id+')">' +
+            '<i class="fas fa-database"></i> ' + escHtml(sc.name) +
+            '</button></div>';
+        });
+      }
     });
     html += '</div>';
     $el.html(html);
@@ -685,6 +719,7 @@ function _catalogFormHtml() {
     '      <option value="api">API</option>' +
     '      <option value="pipeline">Pipeline</option>' +
     '      <option value="recipe">Recipe</option>' +
+    '      <option value="import">Import</option>' +
     '    </select>' +
     '  </div>' +
     '  <div class="form-group">' +
@@ -867,8 +902,11 @@ var _dataPage = 1;
 var _dataPageSize = 50;
 
 var _dataSinkType = '';
+var _rdbmsFilters = [];  // [{col, op, val}, ...]
+var _rdbmsColumns = [];  // 컬럼 목록 캐시
 
 function openDataPanel(catalogId, connectorType, sinkType) {
+  $('#rdbms-filter-panel').hide();
   _dataCatalogId = catalogId;
   _dataConnectorType = connectorType;
   _dataSinkType = sinkType || '';
@@ -885,10 +923,24 @@ function openDataPanel(catalogId, connectorType, sinkType) {
     $('#data-panel-title').html('<i class="fas fa-folder-open"></i> ' + __t('page.catalog.file_browser_title'));
     $('#btn-export-csv, #btn-export-json, #btn-show-api').hide();
     $('#data-search').attr('placeholder', __t('page.catalog.data_search_placeholder'));
+    $('#data-from, #data-to').closest('.form-group').show();
+    $('#data-from').closest('.form-group').find('.form-label').text(__t('page.catalog.file_date_from'));
+    $('#data-to').closest('.form-group').find('.form-label').text(__t('page.catalog.file_date_to'));
+  } else if (_dataSinkType === 'internal_rdbms_sink') {
+    $('#data-panel-title').html('<i class="fas fa-table"></i> ' + __t('page.catalog.rdbms_data_title'));
+    $('#btn-export-csv, #btn-export-json, #btn-show-api').show();
+    $('#data-search').attr('placeholder', '');
+    $('#data-from, #data-to').closest('.form-group').hide();
+    $('#data-from, #data-to').val('');
+    _rdbmsFilters = [];
+    $('#rdbms-filter-tags').empty();
+    $('#rdbms-filter-panel').show();
+    _loadRdbmsColumns(catalogId);
   } else {
     $('#data-panel-title').html('<i class="fas fa-database"></i> ' + __t('page.catalog.file_ts_data_title'));
     $('#btn-export-csv, #btn-export-json, #btn-show-api').show();
     $('#data-search').attr('placeholder', '');
+    $('#data-from, #data-to').closest('.form-group').show();
   }
 
   $('#data-panel').show();
@@ -906,11 +958,60 @@ function queryData(page) {
   }
 }
 
+/* ── RDBMS Filter Functions ── */
+function _loadRdbmsColumns(catalogId) {
+  // 첫 페이지 데이터를 조회해서 컬럼 목록 추출
+  $.getJSON(API + '/' + catalogId + '/data', {page:1, size:1}, function(r) {
+    if (!r.success) return;
+    var cols = r.data.columns || [];
+    _rdbmsColumns = cols;
+    var $sel = $('#rdbms-filter-col').empty().append('<option value="">' + __t('page.catalog.rdbms_filter_col') + '</option>');
+    cols.forEach(function(c) { $sel.append('<option value="'+escAttr(c)+'">'+escHtml(c)+'</option>'); });
+  });
+}
+
+function addRdbmsFilter() {
+  var col = $('#rdbms-filter-col').val();
+  var op = $('#rdbms-filter-op').val();
+  var val = $('#rdbms-filter-val').val().trim();
+  if (!col || !val) return;
+  _rdbmsFilters.push({col:col, op:op, val:val});
+  _renderRdbmsFilterTags();
+  $('#rdbms-filter-val').val('');
+  queryData(1);
+}
+
+function removeRdbmsFilter(idx) {
+  _rdbmsFilters.splice(idx, 1);
+  _renderRdbmsFilterTags();
+  queryData(1);
+}
+
+function clearRdbmsFilters() {
+  _rdbmsFilters = [];
+  _renderRdbmsFilterTags();
+  queryData(1);
+}
+
+function _renderRdbmsFilterTags() {
+  var $el = $('#rdbms-filter-tags').empty();
+  _rdbmsFilters.forEach(function(f, i) {
+    $el.append(
+      '<span class="tag tag-blue" style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;">' +
+        escHtml(f.col) + ' ' + escHtml(f.op) + ' <strong>' + escHtml(f.val) + '</strong>' +
+        ' <i class="fas fa-times" style="cursor:pointer;opacity:0.7;" onclick="removeRdbmsFilter('+i+')"></i>' +
+      '</span>'
+    );
+  });
+}
+
 function loadCatalogData(page) {
   var params = { page: page, size: _dataPageSize };
   var from = $('#data-from').val();
   var to = $('#data-to').val();
   if (from) params.from = from;
+  // RDBMS 필터 전달
+  if (_rdbmsFilters.length) params.filters = JSON.stringify(_rdbmsFilters);
   if (to) params.to = to;
 
   var $tb = $('#data-tbody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.data_querying') + '</td></tr>');
@@ -1041,18 +1142,23 @@ function loadCatalogData(page) {
   });
 }
 
+var _fileItems = []; // 현재 페이지 파일 목록 캐시
+
 function loadCatalogFiles(page) {
   var params = { page: page, size: _dataPageSize };
-  var date = $('#data-from').val();
-  if (date) params.date = date.replace(/-/g, '-');
+  var dateFrom = $('#data-from').val();
+  var dateTo = $('#data-to').val();
+  if (dateFrom) params.date_from = dateFrom;
+  if (dateTo) params.date_to = dateTo;
   var search = ($('#data-search').val() || '').trim();
   if (search) params.search = search;
 
-  var $tb = $('#data-tbody').html('<tr><td colspan="6" class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.data_querying') + '</td></tr>');
+  var $tb = $('#data-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.data_querying') + '</td></tr>');
 
-  // Header for files
+  // Header with checkbox
   $('#data-thead').html(
     '<tr>' +
+      '<th style="width:32px;"><input type="checkbox" id="file-select-all" onchange="toggleFileSelectAll(this.checked)" title="' + __t('page.catalog.file_select_all') + '"></th>' +
       '<th>' + __t('page.catalog.file_header_name') + '</th>' +
       '<th>' + __t('page.catalog.file_header_type') + '</th>' +
       '<th>' + __t('page.catalog.file_header_size') + '</th>' +
@@ -1061,30 +1167,43 @@ function loadCatalogFiles(page) {
       '<th>' + __t('page.catalog.file_header_download') + '</th>' +
     '</tr>'
   );
-  $('#data-stats').hide();
+
+  // Stats bar with download button
+  $('#data-stats').show().find('.stat-grid').html(
+    '<div class="stat-card" style="padding:8px 12px;">' +
+      '<div style="display:flex;align-items:center;gap:12px;">' +
+        '<span class="fs-12" id="file-select-count">0 ' + __t('page.catalog.file_selected') + '</span>' +
+        '<button class="btn btn-primary btn-sm" id="btn-download-zip" onclick="downloadSelectedZip()" disabled>' +
+          '<i class="fas fa-file-zipper"></i> ' + __t('page.catalog.file_download_zip') +
+        '</button>' +
+      '</div>' +
+    '</div>'
+  );
 
   $.getJSON(API + '/' + _dataCatalogId + '/files', params, function(r) {
     if (!r.success) {
-      $tb.html('<tr><td colspan="6" class="text-center text-danger" style="padding:30px">' + escHtml((r.error && r.error.message) || __t('page.catalog.data_query_fail')) + '</td></tr>');
+      $tb.html('<tr><td colspan="7" class="text-center text-danger" style="padding:30px">' + escHtml((r.error && r.error.message) || __t('page.catalog.data_query_fail')) + '</td></tr>');
       return;
     }
     var data = r.data;
-    var items = data.items || [];
+    _fileItems = data.items || [];
     var total = data.total || 0;
 
     $tb = $('#data-tbody').empty();
-    if (!items.length) {
-      $tb.html('<tr><td colspan="6" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.file_no_files') + '</td></tr>');
+    if (!_fileItems.length) {
+      $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.catalog.file_no_files') + '</td></tr>');
       $('#data-pagination-info').text('0' + __t('page.catalog.pagination_count_unit'));
       $('#data-pagination-controls').empty();
+      $('#data-stats').hide();
       return;
     }
 
     var fileIcons = { image: 'fa-file-image', csv: 'fa-file-csv', data: 'fa-file-code', doc: 'fa-file-alt', excel: 'fa-file-excel', archive: 'fa-file-archive', log: 'fa-file-alt' };
-    items.forEach(function(f) {
+    _fileItems.forEach(function(f, idx) {
       var ficon = fileIcons[f.type] || 'fa-file';
       $tb.append(
         '<tr>' +
+          '<td><input type="checkbox" class="file-check" data-idx="'+idx+'" onchange="updateFileSelectCount()"></td>' +
           '<td><i class="fas ' + ficon + ' text-muted" style="margin-right:6px;"></i><span class="fw-600">' + escHtml(f.name) + '</span></td>' +
           '<td><span class="badge-sm badge-primary">' + escHtml(f.type || 'other') + '</span></td>' +
           '<td class="mono fs-12">' + escHtml(f.sizeDisplay || '-') + '</td>' +
@@ -1097,8 +1216,59 @@ function loadCatalogFiles(page) {
 
     renderDataPagination(total, page);
   }).fail(function() {
-    $tb.html('<tr><td colspan="6" class="text-center text-danger" style="padding:30px">' + __t('page.catalog.file_load_fail') + '</td></tr>');
+    $tb.html('<tr><td colspan="7" class="text-center text-danger" style="padding:30px">' + __t('page.catalog.file_load_fail') + '</td></tr>');
   });
+}
+
+function toggleFileSelectAll(checked) {
+  $('.file-check').prop('checked', checked);
+  updateFileSelectCount();
+}
+
+function updateFileSelectCount() {
+  var count = $('.file-check:checked').length;
+  var total = $('.file-check').length;
+  $('#file-select-count').text(count + '/' + total + ' ' + __t('page.catalog.file_selected'));
+  $('#btn-download-zip').prop('disabled', count === 0);
+  $('#file-select-all').prop('checked', count === total && total > 0);
+}
+
+function downloadSelectedZip() {
+  var selected = [];
+  $('.file-check:checked').each(function() {
+    var idx = $(this).data('idx');
+    var f = _fileItems[idx];
+    if (f) selected.push({ objectName: f.objectName, bucket: f.bucket });
+  });
+  if (!selected.length) return;
+
+  $('#btn-download-zip').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.file_zipping'));
+
+  // XHR로 ZIP 다운로드
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/' + _dataCatalogId + '/files/download-zip', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.responseType = 'blob';
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      var cd = xhr.getResponseHeader('Content-Disposition') || '';
+      var fn = cd.match(/filename="?([^"]+)"?/);
+      var filename = fn ? fn[1] : 'download.zip';
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(xhr.response);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } else {
+      alert(__t('page.catalog.file_zip_fail'));
+    }
+    $('#btn-download-zip').prop('disabled', false).html('<i class="fas fa-file-zipper"></i> ' + __t('page.catalog.file_download_zip'));
+  };
+  xhr.onerror = function() {
+    alert(__t('page.catalog.file_zip_fail'));
+    $('#btn-download-zip').prop('disabled', false).html('<i class="fas fa-file-zipper"></i> ' + __t('page.catalog.file_download_zip'));
+  };
+  xhr.send(JSON.stringify({ files: selected }));
 }
 
 function renderDataPagination(total, page) {

@@ -22,3 +22,4 @@ from backend.routes.alarm import alarm_bp  # noqa: F401
 from backend.routes.admin import admin_bp  # noqa: F401
 from backend.routes.backup import backup_bp  # noqa: F401
 from backend.routes.gateway import gateway_bp  # noqa: F401
+from backend.routes.collector_import import import_bp  # noqa: F401

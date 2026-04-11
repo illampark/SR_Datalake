@@ -80,6 +80,7 @@
           <option value="api">REST API</option>
           <option value="file">{{ t('page.metadata.connector_file') }}</option>
           <option value="db">DB</option>
+          <option value="import">Import</option>
         </select>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
           <input type="checkbox" id="filterActiveOnly" onchange="loadTags(1)"> {{ t('page.metadata.filter_active_only') }}
@@ -135,6 +136,7 @@
           <option value="api">REST API</option>
           <option value="file">{{ t('page.metadata.connector_file') }}</option>
           <option value="db">DB</option>
+          <option value="import">Import</option>
         </select>
         <button class="btn btn-outline btn-sm" onclick="loadLineage(1)"><i class="fas fa-search"></i> {{ t('page.metadata.btn_query') }}</button>
       </div>
@@ -187,7 +189,8 @@ var connectorNames = {
   'mqtt': 'MQTT',
   'api': 'REST API',
   'file': __t('page.metadata.connector_file'),
-  'db': 'DB'
+  'db': 'DB',
+  'import': 'Import'
 };
 
 function getConnectorIcon(type) {

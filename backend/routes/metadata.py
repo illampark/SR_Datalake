@@ -414,6 +414,12 @@ def tag_pipelines():
                 if b.pipeline_id not in seen:
                     seen.add(b.pipeline_id)
                     p = b.pipeline
+                    # 이 파이프라인의 sink 카탈로그 조회
+                    from backend.models.catalog import DataCatalog
+                    sink_cats = db.query(DataCatalog).filter_by(
+                        connector_type="pipeline", pipeline_id=p.id
+                    ).all()
+
                     matched_pipelines.append({
                         "pipelineId": p.id,
                         "pipelineName": p.name,
@@ -426,6 +432,7 @@ def tag_pipelines():
                         "bindingConnectorType": b.connector_type,
                         "bindingConnectorId": b.connector_id,
                         "tagFilter": b.tag_filter,
+                        "sinkCatalogs": [{"id": sc.id, "name": sc.name, "sinkType": sc.sink_type} for sc in sink_cats],
                     })
 
         # DataLineage에서 추가 이력 조회

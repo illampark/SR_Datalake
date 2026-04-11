@@ -11,6 +11,7 @@ from backend.models.pipeline import (
 from backend.models.collector import (
     OpcuaConnector, OpcdaConnector, ModbusConnector,
     MqttConnector, ApiConnector, FileCollector, DbConnector, DbTag,
+    ImportCollector,
 )
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
@@ -39,6 +40,7 @@ _CONNECTOR_MODELS = {
     "api": ApiConnector,
     "file": FileCollector,
     "db": DbConnector,
+    "import": ImportCollector,
 }
 
 

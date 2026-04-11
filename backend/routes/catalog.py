@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 import os
 from datetime import datetime, timedelta
 
@@ -380,15 +381,38 @@ def _get_pipeline_sink_config(db, pipeline_id, sink_type):
     return step.config if step else {}
 
 
-def _query_pipeline_rdbms(db, c, page, size, date_from, date_to):
+def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None):
     """RDBMS 싱크 — 외부 DB에서 직접 조회"""
     from backend.models.storage import RdbmsConfig
     import logging
     _log = logging.getLogger(__name__)
 
-    cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_rdbms_sink")
-    rdbms_id = cfg.get("rdbmsId", 0)
-    table_name = cfg.get("tableName", "")
+    rdbms_id = 0
+    table_name = ""
+
+    # Import 카탈로그 → access_url 또는 그룹 카탈로그에서 RDBMS 정보 추출
+    if c.connector_type == "import":
+        # 자신의 access_url이 rdbms:// 형식이면 직접 추출
+        access = c.access_url or ""
+        if not access.startswith("rdbms://") and c.connector_id:
+            # 태그별 카탈로그 → 그룹 카탈로그(tag_name="")에서 access_url 가져오기
+            group_cat = db.query(DataCatalog).filter_by(
+                connector_type="import", connector_id=c.connector_id, tag_name=""
+            ).first()
+            if group_cat and group_cat.access_url:
+                access = group_cat.access_url
+        if access.startswith("rdbms://"):
+            parts = access.replace("rdbms://", "").split("/", 1)
+            try:
+                rdbms_id = int(parts[0])
+            except (ValueError, IndexError):
+                pass
+            table_name = parts[1] if len(parts) > 1 else ""
+    elif c.connector_type != "import":
+        # Pipeline 카탈로그 → 싱크 설정에서 추출
+        cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_rdbms_sink")
+        rdbms_id = cfg.get("rdbmsId", 0)
+        table_name = cfg.get("tableName", "")
 
     if not rdbms_id or not table_name:
         return _err("RDBMS 싱크 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
@@ -403,13 +427,13 @@ def _query_pipeline_rdbms(db, c, page, size, date_from, date_to):
             columns, items, total = _rdbms_read_mysql(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
-                table_name, page, size, date_from, date_to)
+                table_name, page, size, date_from, date_to, filters)
         else:
             columns, items, total = _rdbms_read_pg(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
                 rdbms.schema_name or "public",
-                table_name, page, size, date_from, date_to)
+                table_name, page, size, date_from, date_to, filters)
     except Exception as e:
         _log.error("RDBMS 싱크 조회 실패 (rdbms=%d, table=%s): %s", rdbms_id, table_name, e)
         return _err("외부 DB 연결/조회에 실패했습니다.", "RDBMS_ERROR")
@@ -485,7 +509,7 @@ def _rdbms_read_mysql(host, port, database, username, password,
 
 
 def _rdbms_read_pg(host, port, database, username, password,
-                    schema, table_name, page, size, date_from, date_to):
+                    schema, table_name, page, size, date_from, date_to, filters=None):
     import psycopg2
     import psycopg2.extras
     conn = psycopg2.connect(
@@ -497,26 +521,75 @@ def _rdbms_read_pg(host, port, database, username, password,
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         full_table = f'"{schema}"."{table_name}"' if schema else f'"{table_name}"'
 
-        # 날짜 필터
-        where = ""
+        conditions = []
         params = []
+
+        # 날짜 필터 — 날짜 컬럼 자동 감지
         if date_from or date_to:
-            conditions = []
-            if date_from:
-                conditions.append("collected_at >= %s")
-                params.append(date_from)
-            if date_to:
-                dt_to = date_to
-                try:
-                    dt = datetime.fromisoformat(date_to)
-                    if dt.hour == 0 and dt.minute == 0:
-                        dt += timedelta(days=1)
-                    dt_to = dt.isoformat()
-                except ValueError:
-                    pass
-                conditions.append("collected_at < %s")
-                params.append(dt_to)
-            where = " WHERE " + " AND ".join(conditions)
+            date_col = None
+            try:
+                cur.execute(f"""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                    AND column_name IN ('collected_at', 'imported_at', 'created_at', 'timestamp')
+                    ORDER BY CASE column_name
+                        WHEN 'collected_at' THEN 1 WHEN 'imported_at' THEN 2
+                        WHEN 'timestamp' THEN 3 WHEN 'created_at' THEN 4
+                    END LIMIT 1
+                """, [schema or "public", table_name])
+                row = cur.fetchone()
+                if row:
+                    date_col = row["column_name"]
+            except Exception:
+                pass
+
+            if date_col:
+                if date_from:
+                    conditions.append(f'"{date_col}" >= %s')
+                    params.append(date_from)
+                if date_to:
+                    dt_to = date_to
+                    try:
+                        dt = datetime.fromisoformat(date_to)
+                        if dt.hour == 0 and dt.minute == 0:
+                            dt += timedelta(days=1)
+                        dt_to = dt.isoformat()
+                    except ValueError:
+                        pass
+                    conditions.append(f'"{date_col}" < %s')
+                    params.append(dt_to)
+
+        # 컬럼 필터 (RDBMS 고급 필터)
+        _ALLOWED_OPS = {"=", "!=", ">", "<", ">=", "<=", "LIKE", "IN"}
+        if filters and isinstance(filters, list):
+            # 테이블 컬럼 목록 조회 (SQL injection 방지)
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+            """, [schema or "public", table_name])
+            valid_cols = {r["column_name"] for r in cur.fetchall()}
+
+            for f in filters:
+                col = f.get("col", "")
+                op = f.get("op", "=")
+                val = f.get("val", "")
+                if col not in valid_cols or op not in _ALLOWED_OPS or not val:
+                    continue
+                if op == "IN":
+                    # IN (val1, val2, ...) 처리
+                    in_vals = [v.strip() for v in val.split(",") if v.strip()]
+                    if in_vals:
+                        placeholders = ", ".join(["%s"] * len(in_vals))
+                        conditions.append(f'"{col}"::text IN ({placeholders})')
+                        params.extend(in_vals)
+                elif op == "LIKE":
+                    conditions.append(f'"{col}"::text LIKE %s')
+                    params.append(f"%{val}%")
+                else:
+                    conditions.append(f'"{col}"::text {op} %s')
+                    params.append(val)
+
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
         # 총 건수
         cur.execute(f"SELECT COUNT(*) as cnt FROM {full_table}{where}", params)
@@ -568,13 +641,20 @@ def query_catalog_data(cid):
         date_from = request.args.get("from", "")
         date_to = request.args.get("to", "")
         quality_min = request.args.get("quality_min", 0, type=int)
+        filters_raw = request.args.get("filters", "")
+        rdbms_filters = None
+        if filters_raw:
+            try:
+                rdbms_filters = json.loads(filters_raw)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-        # 파이프라인 싱크 카탈로그 → 싱크 타입별 라우팅
-        if c.connector_type == "pipeline" and c.sink_type:
+        # 싱크 타입별 라우팅 (pipeline, import 공통)
+        if c.sink_type and c.connector_type in ("pipeline", "import"):
             if c.sink_type == "internal_tsdb_sink":
                 return _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min)
             elif c.sink_type == "internal_rdbms_sink":
-                return _query_pipeline_rdbms(db, c, page, size, date_from, date_to)
+                return _query_pipeline_rdbms(db, c, page, size, date_from, date_to, rdbms_filters)
             elif c.sink_type == "internal_file_sink":
                 return _query_pipeline_files(c)
 
@@ -929,6 +1009,8 @@ def list_catalog_files(cid):
         size = request.args.get("size", 50, type=int)
         search = request.args.get("search", "").lower()
         date_filter = request.args.get("date", "")
+        date_from = request.args.get("date_from", "")
+        date_to = request.args.get("date_to", "")
 
         from minio.error import S3Error
         from backend.config import MINIO_BUCKETS
@@ -957,12 +1039,35 @@ def list_catalog_files(cid):
             bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
         items = []
         try:
+            # 수정일 필터 파싱
+            dt_from = None
+            dt_to = None
+            if date_from:
+                try:
+                    dt_from = datetime.fromisoformat(date_from)
+                except ValueError:
+                    pass
+            if date_to:
+                try:
+                    dt_to = datetime.fromisoformat(date_to)
+                    if dt_to.hour == 0 and dt_to.minute == 0:
+                        dt_to += timedelta(days=1)
+                except ValueError:
+                    pass
+
             for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
                 filename = os.path.basename(obj.object_name)
                 if not filename:
                     continue
                 if search and search not in filename.lower():
                     continue
+                # 수정일 필터
+                if obj.last_modified:
+                    mod_naive = obj.last_modified.replace(tzinfo=None)
+                    if dt_from and mod_naive < dt_from:
+                        continue
+                    if dt_to and mod_naive >= dt_to:
+                        continue
 
                 ext = os.path.splitext(filename)[1].lower()
                 ftype = _file_type(ext)
@@ -1070,6 +1175,58 @@ def download_catalog_file(cid):
         )
     except Exception as e:
         return _err(f"다운로드 실패: {e}", "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────
+# CAT-013: POST /api/catalog/<id>/files/download-zip — 선택 파일 ZIP 다운로드
+# ──────────────────────────────────────────────
+@catalog_bp.route("/<int:cid>/files/download-zip", methods=["POST"])
+def download_catalog_files_zip(cid):
+    db = _db()
+    try:
+        c = db.query(DataCatalog).get(cid)
+        if not c:
+            return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        body = request.get_json(silent=True) or {}
+        files = body.get("files", [])  # [{"objectName": "...", "bucket": "..."}]
+        if not files:
+            return _err("다운로드할 파일을 선택하세요.", "VALIDATION")
+
+        import zipfile
+        from backend.services.minio_client import get_minio_client
+        from backend.config import MINIO_BUCKETS
+        client = get_minio_client(db)
+        default_bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in files:
+                obj_name = f.get("objectName", "")
+                bucket = f.get("bucket", "") or default_bucket
+                if not obj_name:
+                    continue
+                try:
+                    resp = client.get_object(bucket, obj_name)
+                    data = resp.read()
+                    resp.close()
+                    resp.release_conn()
+                    zf.writestr(os.path.basename(obj_name), data)
+                except Exception as e:
+                    logger.warning(f"ZIP: skip {obj_name}: {e}")
+
+        zip_buffer.seek(0)
+        catalog_name = c.name.replace("/", "_").replace(" ", "_")[:30]
+        return send_file(
+            zip_buffer,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"{catalog_name}_{len(files)}files.zip",
+        )
+    except Exception as e:
+        return _err(f"ZIP 생성 실패: {e}", "SERVER_ERROR", 500)
     finally:
         db.close()
 

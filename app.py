@@ -19,6 +19,7 @@ from backend.routes import alarm_bp
 from backend.routes import admin_bp
 from backend.routes import backup_bp
 from backend.routes import gateway_bp
+from backend.routes import import_bp
 from backend.routes.notice import notice_bp
 
 app.register_blueprint(tsdb_bp)
@@ -45,6 +46,7 @@ app.register_blueprint(alarm_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(backup_bp)
 app.register_blueprint(gateway_bp)
+app.register_blueprint(import_bp)
 app.register_blueprint(notice_bp)
 
 with app.app_context():
@@ -166,6 +168,10 @@ def connector_file():
 @app.route("/collection/connectors/db")
 def connector_db():
     return render_template("collection/db_connector.html", active="conn-db")
+
+@app.route("/collection/connectors/import")
+def connector_import():
+    return render_template("collection/import_collector.html", active="conn-import")
 
 
 # ── Data Collection: Engine ──
