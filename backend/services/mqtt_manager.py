@@ -238,8 +238,31 @@ def build_raw_message(connector_type, connector_id, tag_name, value, data_type="
     }
 
 
+_seen_tags = set()  # (connector_type, connector_id, tag_name) — 세션 내 중복 방지
+
+
 def publish_raw(connector_type, connector_id, tag_name, value, **kwargs):
-    """Raw 데이터를 표준 토픽에 발행"""
+    """Raw 데이터를 표준 토픽에 발행 + 메타데이터 자동 추적"""
     topic = build_raw_topic(connector_type, connector_id, tag_name)
     msg = build_raw_message(connector_type, connector_id, tag_name, value, **kwargs)
-    return publish(topic, msg)
+    result = publish(topic, msg)
+
+    # 새 태그 감지 시 메타데이터 자동 등록 (세션 내 1회만)
+    tag_key = (connector_type, connector_id, tag_name)
+    if tag_key not in _seen_tags:
+        _seen_tags.add(tag_key)
+        try:
+            from backend.services.metadata_tracker import upsert_tag_metadata
+            upsert_tag_metadata(
+                connector_type=connector_type,
+                connector_id=connector_id,
+                connector_name="",
+                tag_name=tag_name,
+                value=value,
+                data_type=kwargs.get("data_type", "float"),
+                unit=kwargs.get("unit", ""),
+            )
+        except Exception:
+            pass  # 메타데이터 실패가 데이터 발행을 차단하면 안 됨
+
+    return result

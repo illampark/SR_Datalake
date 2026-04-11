@@ -27,6 +27,15 @@ def _migrate_add_columns():
         ("import_collector", "local_path", "VARCHAR(1000)", "''"),
         ("import_collector", "file_patterns", "JSON", "'[\"*\"]'"),
         ("import_collector", "recursive", "BOOLEAN", "true"),
+        # TagMetadata 거버넌스 필드
+        ("tag_metadata", "description", "TEXT", "''"),
+        ("tag_metadata", "owner", "VARCHAR(100)", "''"),
+        ("tag_metadata", "category", "VARCHAR(100)", "''"),
+        ("tag_metadata", "data_level", "VARCHAR(20)", "'raw'"),
+        ("tag_metadata", "sensitivity", "VARCHAR(20)", "'internal'"),
+        ("tag_metadata", "retention_policy", "VARCHAR(100)", "''"),
+        ("tag_metadata", "is_published", "BOOLEAN", "true"),
+        ("tag_metadata", "is_deprecated", "BOOLEAN", "false"),
     ]
     with engine.begin() as conn:
         for table, col, col_type, default in _additions:

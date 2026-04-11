@@ -486,6 +486,8 @@ def message_callback():
                 c.message_count = (c.message_count or 0) + 1
                 c.last_message_at = datetime.utcnow()
                 db.commit()
+                from backend.services.metadata_tracker import ensure_connector_catalog
+                ensure_connector_catalog("mqtt", connector_id, c.name)
 
         return "", 200
     except Exception:

@@ -568,6 +568,9 @@ def file_callback():
         if collector_id:
             c = db.query(FileCollector).get(collector_id)
             if c:
+                from backend.services.metadata_tracker import ensure_connector_catalog
+                ensure_connector_catalog("file", collector_id, c.name)
+
                 if body.get("error"):
                     c.error_count = (c.error_count or 0) + 1
                     c.last_error = body.get("message", "")

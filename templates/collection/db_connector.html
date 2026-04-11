@@ -279,7 +279,7 @@ function testConnector(id) {
   });
 }
 function deleteConnector(id, name) {
-  confirmAction(name +  + __t('page.opcua.confirm_delete'), function() {
+  confirmAction(name + ' ' + __t('page.opcua.confirm_delete'), function() {
     $.ajax({ url: API + '/' + id, type: 'DELETE', success: function(r) {
       showToast(r.success ? __t('page.opcua.toast_deleted') : __t('page.opcua.toast_delete_fail'), r.success ? 'success' : 'error');
       refreshAll();

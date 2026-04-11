@@ -514,6 +514,9 @@ def message_callback():
         if not c:
             return "", 200
 
+        from backend.services.metadata_tracker import ensure_connector_catalog
+        ensure_connector_catalog("db", connector_id, c.name)
+
         cfg = deepcopy(c.config or {})
         tables = _normalize_tables_cfg(cfg)
         if not tables:

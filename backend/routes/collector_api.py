@@ -540,6 +540,9 @@ def message_callback():
         if not c:
             return "", 200
 
+        from backend.services.metadata_tracker import ensure_connector_catalog
+        ensure_connector_catalog("api", connector_id, c.name)
+
         # 통계 업데이트
         c.request_count = (c.request_count or 0) + 1
         c.success_count = (c.success_count or 0) + 1

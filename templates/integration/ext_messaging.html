@@ -1,0 +1,468 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t('page.ext_messaging.title') }}{% endblock %}
+
+{% block page_title %}{{ t('page.ext_messaging.page_title') }}{% endblock %}
+
+{% block breadcrumb %}
+<li><a href="/">{{ t('nav.dashboard') }}</a></li>
+<li><a href="#">{{ t('page.ext_messaging.breadcrumb_integration') }}</a></li>
+<li>{{ t('page.ext_messaging.breadcrumb_current') }}</li>
+{% endblock %}
+
+{% block page_actions %}
+<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.ext_messaging.btn_add_connection') }}</button>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_messaging.stat_total_connections') }}</h4>
+      <div class="stat-value" id="stat-total">-</div>
+    </div>
+    <div class="stat-icon blue"><i class="fas fa-stream"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_messaging.stat_active') }}</h4>
+      <div class="stat-value" id="stat-active">-</div>
+    </div>
+    <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_messaging.stat_connected') }}</h4>
+      <div class="stat-value" id="stat-connected">-</div>
+    </div>
+    <div class="stat-icon cyan"><i class="fas fa-plug-circle-check"></i></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-info">
+      <h4>{{ t('page.ext_messaging.stat_error') }}</h4>
+      <div class="stat-value" id="stat-error">-</div>
+    </div>
+    <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
+  </div>
+</div>
+
+<!-- Connection List Table -->
+<div class="card">
+  <div class="card-header">
+    <h3>{{ t('page.ext_messaging.table_title') }}</h3>
+    <div class="toolbar-right">
+      <div class="filter-group">
+        <input type="text" class="form-control" id="filter-search" placeholder="{{ t('page.ext_messaging.placeholder_search') }}" style="width:180px;padding:4px 10px;" oninput="loadList(1)">
+      </div>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.ext_messaging.th_name') }}</th>
+            <th>{{ t('page.ext_messaging.th_type') }}</th>
+            <th>{{ t('page.ext_messaging.th_connection') }}</th>
+            <th>{{ t('page.ext_messaging.th_status') }}</th>
+            <th>{{ t('page.ext_messaging.th_enabled') }}</th>
+            <th>{{ t('page.ext_messaging.th_last_tested') }}</th>
+            <th>{{ t('common.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody id="connTbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">{{ t('page.ext_messaging.td_loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div id="pagination" style="padding:12px 16px;display:flex;justify-content:center;gap:4px;"></div>
+</div>
+
+<!-- Detail Panel -->
+<div class="card" id="detailPanel" style="display:none;margin-top:16px;">
+  <div class="card-header">
+    <h3 id="detailTitle">{{ t('page.ext_messaging.detail_title') }}</h3>
+    <button class="btn btn-outline btn-sm" onclick="$('#detailPanel').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
+  </div>
+  <div class="card-body" id="detailBody"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var API = '/api/integration';
+var CONN_TYPES = ['kafka', 'mqtt_broker'];
+var _currentPage = 1;
+var _pageSize = 20;
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '-'; }
+
+function statusBadge(s) {
+  var map = {connected:'badge-running', error:'badge-error', unknown:'badge-stopped'};
+  var label = {connected: __t('common.connected'), error: __t('common.error'), unknown: 'Unknown'};
+  return '<span class="badge-status '+(map[s]||'badge-stopped')+'">'+(label[s]||s)+'</span>';
+}
+
+var typeBadge = {
+  kafka: '<span class="badge-sm" style="background:#7c3aed;color:#fff;">Kafka</span>',
+  mqtt_broker: '<span class="badge-sm" style="background:#0891b2;color:#fff;">MQTT</span>'
+};
+
+function loadStats() {
+  // kafka + mqtt_broker 합산
+  var total=0, active=0, connected=0, errCnt=0;
+  var done = 0;
+  CONN_TYPES.forEach(function(ct) {
+    $.getJSON(API, {type: ct, page: 1, size: 1}, function(r) {
+      if (r.success) {
+        total += r.data.total || 0;
+        active += r.data.activeCount || 0;
+        connected += r.data.connectedCount || 0;
+        errCnt += r.data.errorCount || 0;
+      }
+      done++;
+      if (done === CONN_TYPES.length) {
+        $('#stat-total').text(fmt(total));
+        $('#stat-active').text(fmt(active));
+        $('#stat-connected').text(fmt(connected));
+        $('#stat-error').text(fmt(errCnt));
+      }
+    });
+  });
+}
+
+/* ── List (Kafka + MQTT 통합) ── */
+function loadList(page) {
+  page = page || _currentPage;
+  _currentPage = page;
+  var search = ($('#filter-search').val() || '').trim();
+  var allItems = [];
+  var done = 0;
+  var $tb = $('#connTbody');
+
+  CONN_TYPES.forEach(function(ct) {
+    var params = {type: ct, page: 1, size: 999};
+    if (search) params.search = search;
+    $.getJSON(API, params, function(r) {
+      if (r.success) {
+        (r.data.items || []).forEach(function(item) { item._msgType = ct; allItems.push(item); });
+      }
+      done++;
+      if (done === CONN_TYPES.length) _renderList(allItems);
+    });
+  });
+}
+
+function _renderList(items) {
+  var $tb = $('#connTbody').empty();
+  if (!items.length) {
+    $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.ext_messaging.td_no_data') + '</td></tr>');
+    return;
+  }
+  items.forEach(function(item) {
+    var cfg = item.config || {};
+    var connInfo = '';
+    if (item._msgType === 'kafka') {
+      connInfo = escHtml(cfg.bootstrap_servers || (item.host + ':' + (item.port || 9092)));
+    } else {
+      connInfo = escHtml(item.host + ':' + (item.port || 1883));
+      if (cfg.topic_prefix) connInfo += '<div class="fs-11 text-muted">topic: ' + escHtml(cfg.topic_prefix) + '</div>';
+    }
+    var enabledHtml = item.enabled
+      ? '<span class="badge-sm badge-success">' + __t('common.active') + '</span>'
+      : '<span class="badge-sm badge-secondary">' + __t('common.inactive') + '</span>';
+    var lastTested = item.lastTestedAt
+      ? '<span class="mono fs-12">' + item.lastTestedAt.replace('T',' ').slice(0,19) + '</span>'
+      : '<span class="text-muted">-</span>';
+    var actions =
+      '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.detail') + '" onclick="showDetail('+item.id+')"><i class="fas fa-eye"></i></button>' +
+      '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.test') + '" onclick="testConn('+item.id+')"><i class="fas fa-plug"></i></button>' +
+      '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal('+item.id+')"><i class="fas fa-pen"></i></button>' +
+      '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteConn('+item.id+')"><i class="fas fa-trash text-danger"></i></button>';
+    $tb.append(
+      '<tr>' +
+      '<td><div class="fw-600">' + escHtml(item.name) + '</div>' +
+        (item.description ? '<div class="fs-11 text-muted">' + escHtml(item.description) + '</div>' : '') + '</td>' +
+      '<td>' + (typeBadge[item._msgType] || item._msgType) + '</td>' +
+      '<td class="mono fs-12">' + connInfo + '</td>' +
+      '<td>' + statusBadge(item.status) + '</td>' +
+      '<td>' + enabledHtml + '</td>' +
+      '<td>' + lastTested + '</td>' +
+      '<td><div class="d-flex gap-8">' + actions + '</div></td>' +
+      '</tr>'
+    );
+  });
+}
+
+function renderPagination(total, current) {
+  var pages = Math.ceil(total / _pageSize);
+  var $pg = $('#pagination').empty();
+  if (pages <= 1) return;
+  for (var i = 1; i <= pages; i++) {
+    $pg.append('<button class="btn btn-sm ' + (i === current ? 'btn-primary' : 'btn-outline') + '" onclick="loadList(' + i + ')">' + i + '</button>');
+  }
+}
+
+/* ── Detail ── */
+function showDetail(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) { showToast(__t('page.ext_messaging.toast_detail_failed'), 'error'); return; }
+    var item = r.data;
+    var cfg = item.config || {};
+
+    var html =
+      '<div class="kv-list">' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_messaging.label_name') + '</span><span class="kv-value fw-600">' + escHtml(item.name) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Bootstrap Servers</span><span class="kv-value mono">' + escHtml(cfg.bootstrap_servers || (item.host + ':' + (item.port || 9092))) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Security Protocol</span><span class="kv-value">' + escHtml(cfg.security_protocol || 'PLAINTEXT') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Consumer Group ID</span><span class="kv-value mono">' + escHtml(cfg.group_id || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">Schema Registry URL</span><span class="kv-value mono">' + escHtml(cfg.schema_registry_url || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">SASL Username</span><span class="kv-value">' + escHtml(item.username || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_messaging.label_status') + '</span><span class="kv-value">' + statusBadge(item.status) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_messaging.label_enabled') + '</span><span class="kv-value">' + (item.enabled ? __t('common.yes') : __t('common.no')) + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_messaging.label_description') + '</span><span class="kv-value">' + escHtml(item.description || '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_messaging.label_last_tested') + '</span><span class="kv-value mono">' + (item.lastTestedAt ? item.lastTestedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_messaging.label_created_at') + '</span><span class="kv-value mono">' + (item.createdAt ? item.createdAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '<div class="kv-item"><span class="kv-label">' + __t('page.ext_messaging.label_updated_at') + '</span><span class="kv-value mono">' + (item.updatedAt ? item.updatedAt.replace('T',' ').slice(0,19) : '-') + '</span></div>' +
+      '</div>';
+
+    $('#detailTitle').text(__t('page.ext_messaging.detail_title') + ' - ' + item.name);
+    $('#detailBody').html(html);
+    $('#detailPanel').show();
+    $('html, body').animate({scrollTop: $('#detailPanel').offset().top - 80}, 300);
+  });
+}
+
+/* ── Add Modal ── */
+function openAddModal() {
+  var body =
+    '<form id="msg-form">' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.ext_messaging.th_name') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-name" placeholder="EXT-KAFKA-01">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('page.ext_messaging.th_type') + ' <span class="text-danger">*</span></label>' +
+    '    <select class="form-select" id="f-msg-type" onchange="onMsgTypeChange()">' +
+    '      <option value="kafka">Kafka</option>' +
+    '      <option value="mqtt_broker">MQTT</option>' +
+    '    </select>' +
+    '  </div>' +
+    '</div>' +
+    '<!-- Kafka fields -->' +
+    '<div id="fields-kafka">' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Bootstrap Servers <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-host" placeholder="broker1:9092,broker2:9092">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('common.port') + '</label>' +
+    '    <input type="number" class="form-control" id="f-port" value="9092">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Security Protocol</label>' +
+    '    <select class="form-select" id="f-security-protocol">' +
+    '      <option value="PLAINTEXT">PLAINTEXT</option>' +
+    '      <option value="SSL">SSL</option>' +
+    '      <option value="SASL_PLAINTEXT">SASL_PLAINTEXT</option>' +
+    '      <option value="SASL_SSL">SASL_SSL</option>' +
+    '    </select>' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Consumer Group ID</label>' +
+    '    <input type="text" class="form-control" id="f-group-id" placeholder="sdl-consumer-group-01">' +
+    '  </div>' +
+    '</div>' +
+    '</div>' +
+    '<!-- MQTT fields -->' +
+    '<div id="fields-mqtt" style="display:none">' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('common.host') + ' <span class="text-danger">*</span></label>' +
+    '    <input type="text" class="form-control" id="f-mqtt-host" placeholder="mqtt-broker.example.com">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">' + __t('common.port') + '</label>' +
+    '    <input type="number" class="form-control" id="f-mqtt-port" value="1883">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">Topic Prefix</label>' +
+    '  <input type="text" class="form-control" id="f-mqtt-topic" placeholder="sdl/export/">' +
+    '</div>' +
+    '</div>' +
+    '<!-- Common fields -->' +
+    '<div class="form-row">' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Username</label>' +
+    '    <input type="text" class="form-control" id="f-username">' +
+    '  </div>' +
+    '  <div class="form-group">' +
+    '    <label class="form-label">Password</label>' +
+    '    <input type="password" class="form-control" id="f-password">' +
+    '  </div>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('common.description') + '</label>' +
+    '  <textarea class="form-control" id="f-description" rows="2"></textarea>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="f-enabled" checked> ' + __t('common.enabled') + '</label>' +
+    '</div>' +
+    '</form>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" onclick="saveConnection()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
+
+  openModal(__t('page.ext_messaging.modal_add_title'), body, footer, 'modal-lg');
+  window._editId = null;
+}
+
+function onMsgTypeChange() {
+  var t = $('#f-msg-type').val();
+  if (t === 'mqtt_broker') {
+    $('#fields-kafka').hide();
+    $('#fields-mqtt').show();
+  } else {
+    $('#fields-kafka').show();
+    $('#fields-mqtt').hide();
+  }
+}
+
+/* ── Edit Modal ── */
+function openEditModal(id) {
+  $.getJSON(API + '/' + id, function(r) {
+    if (!r.success) return;
+    var item = r.data;
+    var cfg = item.config || {};
+
+    openAddModal();
+    setTimeout(function() {
+      var msgType = item.connectionType === 'mqtt_broker' ? 'mqtt_broker' : 'kafka';
+      $('#f-name').val(item.name).prop('readonly', true).css('background', '#f1f5f9');
+      $('#f-msg-type').val(msgType);
+      onMsgTypeChange();
+
+      if (msgType === 'kafka') {
+        $('#f-host').val(cfg.bootstrap_servers || item.host || '');
+        $('#f-port').val(item.port || 9092);
+        $('#f-security-protocol').val(cfg.security_protocol || 'PLAINTEXT');
+        $('#f-group-id').val(cfg.group_id || '');
+      } else {
+        $('#f-mqtt-host').val(item.host || '');
+        $('#f-mqtt-port').val(item.port || 1883);
+        $('#f-mqtt-topic').val(cfg.topic_prefix || '');
+      }
+      $('#f-username').val(item.username || '');
+      $('#f-description').val(item.description || '');
+      $('#f-enabled').prop('checked', item.enabled !== false);
+
+      window._editId = id;
+    }, 100);
+  });
+}
+
+/* ── Save / Update ── */
+function saveConnection() {
+  var name = $('#f-name').val().trim();
+  if (!name) { showToast(__t('page.ext_messaging.toast_name_required'), 'error'); return; }
+
+  var msgType = $('#f-msg-type').val();
+  var data = {
+    name: name,
+    connection_type: msgType,
+    username: $('#f-username').val().trim(),
+    password: $('#f-password').val(),
+    description: $('#f-description').val().trim(),
+    enabled: $('#f-enabled').is(':checked'),
+  };
+
+  if (msgType === 'kafka') {
+    data.host = $('#f-host').val().trim();
+    data.port = parseInt($('#f-port').val()) || 9092;
+    if (!data.host) { showToast('Bootstrap Servers is required', 'error'); return; }
+    data.config = {
+      bootstrap_servers: data.host,
+      security_protocol: $('#f-security-protocol').val(),
+      group_id: $('#f-group-id').val().trim(),
+    };
+  } else {
+    data.host = $('#f-mqtt-host').val().trim();
+    data.port = parseInt($('#f-mqtt-port').val()) || 1883;
+    if (!data.host) { showToast('MQTT Host is required', 'error'); return; }
+    data.config = {
+      topic_prefix: $('#f-mqtt-topic').val().trim(),
+    };
+  }
+
+  var url = window._editId ? API + '/' + window._editId : API;
+  var method = window._editId ? 'PUT' : 'POST';
+  if (window._editId && !data.password) delete data.password;
+
+  $.ajax({
+    url: url, type: method,
+    contentType: 'application/json', data: JSON.stringify(data),
+    success: function(r) {
+      if (r.success) { closeModal(); showToast(__t('common.success'), 'success'); refreshAll(); }
+      else { showToast((r.error && r.error.message) || __t('common.error'), 'error'); }
+    },
+    error: function(xhr) {
+      var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('common.error'), 'error');
+    }
+  });
+}
+
+/* ── Delete ── */
+function deleteConn(id) {
+  confirmAction(__t('page.ext_messaging.confirm_delete'), function() {
+    $.ajax({
+      url: API + '/' + id, type: 'DELETE',
+      success: function(r) {
+        showToast(r.success ? __t('page.ext_messaging.toast_connection_deleted') : __t('page.ext_messaging.toast_delete_failed'), r.success ? 'success' : 'error');
+        refreshAll();
+      },
+      error: function(xhr) {
+        var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_messaging.toast_delete_failed'), 'error');
+      }
+    });
+  });
+}
+
+/* ── Test ── */
+function testConn(id) {
+  showToast(__t('page.ext_messaging.toast_testing_connection'), 'info');
+  $.post(API + '/' + id + '/test', function(r) {
+    if (r.success && r.data) {
+      var d = r.data;
+      var msg = d.message || (d.connected ? __t('page.ext_messaging.toast_connection_success') : __t('page.ext_messaging.toast_connection_failed'));
+      if (d.latency_ms) msg += ' (' + d.latency_ms + 'ms)';
+      showToast(msg, d.connected ? 'success' : 'error');
+      refreshAll();
+    } else {
+      showToast((r.error && r.error.message) || __t('page.ext_messaging.toast_test_failed'), 'error');
+    }
+  }).fail(function(xhr) {
+    var e = xhr.responseJSON; showToast((e && e.error && e.error.message) || __t('page.ext_messaging.toast_connection_test_failed'), 'error');
+  });
+}
+
+/* ── Refresh ── */
+function refreshAll() {
+  loadStats();
+  loadList(_currentPage);
+}
+
+$(document).ready(function() {
+  refreshAll();
+});
+</script>
+{% endblock %}

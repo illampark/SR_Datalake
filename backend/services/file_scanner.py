@@ -44,14 +44,19 @@ def _get_sftp_client(host, port, username, password="", key_path="", auth_type="
     }
 
     if auth_type == "key" and key_path:
-        pkey = paramiko.AutoAddPolicy  # placeholder
+        import os
+        resolved_key = os.path.expanduser(key_path)
+        pkey = None
         for key_cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
             try:
-                pkey = key_cls.from_private_key_file(key_path)
+                pkey = key_cls.from_private_key_file(resolved_key)
                 break
             except Exception:
                 continue
-        connect_kwargs["pkey"] = pkey
+        if pkey:
+            connect_kwargs["pkey"] = pkey
+        else:
+            raise ValueError(f"SSH 키를 로드할 수 없습니다: {resolved_key}")
     else:
         connect_kwargs["password"] = password
 
@@ -520,6 +525,15 @@ def _process_file_direct(sftp, collector_id, finfo, target_bucket,
 
     logger.info("Scanner %d: direct upload %s → %s/%s (%d bytes)",
                 collector_id, fname, target_bucket, object_name, fsize)
+
+    # 그룹 카탈로그 자동 생성 (커넥터당 1회)
+    try:
+        from backend.services.metadata_tracker import _auto_create_connector_catalog
+        db2 = SessionLocal()
+        _auto_create_connector_catalog(db2, "file", collector_id, "")
+        db2.close()
+    except Exception:
+        pass
 
     # 메타데이터 콜백 (파일 내용 없이 위치 정보만)
     payload = {

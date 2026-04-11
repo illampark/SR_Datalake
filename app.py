@@ -267,7 +267,11 @@ def integration_rdbms():
 
 @app.route("/integration/kafka")
 def integration_kafka():
-    return render_template("integration/ext_kafka.html", active="int-kafka")
+    return redirect("/integration/messaging")
+
+@app.route("/integration/messaging")
+def integration_messaging():
+    return render_template("integration/ext_messaging.html", active="int-messaging")
 
 @app.route("/integration/file")
 def integration_file():

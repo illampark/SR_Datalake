@@ -87,6 +87,17 @@ def upsert_tag_metadata(connector_type, connector_id, connector_name, tag_name,
         db.close()
 
 
+def ensure_connector_catalog(connector_type, connector_id, connector_name=""):
+    """커넥터 그룹 카탈로그가 없으면 생성 (callback에서 호출)"""
+    db = SessionLocal()
+    try:
+        _auto_create_connector_catalog(db, connector_type, connector_id, connector_name)
+    except Exception as e:
+        logger.warning("커넥터 카탈로그 확인 실패: %s", e)
+    finally:
+        db.close()
+
+
 def update_quality_score(connector_type, connector_id, tag_name,
                          null_count=0, anomaly_count=0, total_count=1):
     """품질 점수 갱신"""
@@ -251,80 +262,33 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
 
 def _auto_create_catalog(db, connector_type, connector_id,
                          connector_name, tag_name, data_type, unit):
-    """새 태그 최초 수집 시 DataCatalog 자동 생성"""
+    """새 태그 최초 수집 시: 커넥터 그룹 카탈로그 + TagMetadata 거버넌스 기본값 설정
+
+    태그별 카탈로그는 생성하지 않음 — TagMetadata에서 통합 관리.
+    """
     try:
-        # 커넥터 레벨 카탈로그가 없으면 함께 생성
+        # 커넥터 레벨 카탈로그가 없으면 생성
         _auto_create_connector_catalog(db, connector_type, connector_id,
                                        connector_name)
 
-        # Import + RDBMS → 태그별 카탈로그 생성 안 함 (테이블 단위 관리)
-        if connector_type == "import":
-            try:
-                from backend.models.collector import ImportCollector
-                _imp_check = db.query(ImportCollector).get(connector_id)
-                if _imp_check and _imp_check.target_type == "rdbms":
-                    return
-            except Exception:
-                pass
-
-        # 이미 동일 커넥터+태그의 카탈로그가 있으면 스킵
-        existing = db.query(DataCatalog).filter_by(
+        # TagMetadata에 거버넌스 기본값 설정
+        meta = db.query(TagMetadata).filter_by(
             connector_type=connector_type,
             connector_id=connector_id,
             tag_name=tag_name,
         ).first()
-        if existing:
-            return
-
-        label = _CONNECTOR_LABELS.get(connector_type, connector_type)
-        conn_label = connector_name or f"#{connector_id}"
-        category = _guess_category(tag_name)
-
-        # Import 커넥터인 경우 sink_type 자동 설정
-        _sink_type = ""
-        if connector_type == "import":
-            try:
-                from backend.models.collector import ImportCollector
-                imp = db.query(ImportCollector).get(connector_id)
-                if imp:
-                    _SINK_MAP = {"tsdb": "internal_tsdb_sink", "rdbms": "internal_rdbms_sink", "file": "internal_file_sink"}
-                    _sink_type = _SINK_MAP.get(imp.target_type, "")
-            except Exception:
-                pass
-
-        catalog = DataCatalog(
-            name=f"{tag_name} ({label} {conn_label})",
-            description=f"{label} 커넥터 {conn_label}에서 자동 수집된 태그 데이터",
-            connector_type=connector_type,
-            connector_id=connector_id,
-            tag_name=tag_name,
-            owner="시스템 자동",
-            category=category,
-            data_level="raw",
-            sensitivity="internal",
-            access_url=f"sdl/raw/{connector_type}/{connector_id}/{tag_name}",
-            format=data_type or "float",
-            sink_type=_sink_type,
-            is_published=True,
-        )
-        db.add(catalog)
-        db.flush()
-
-        # 검색 태그 자동 추가
-        search_tags = [connector_type, label, tag_name]
-        if unit:
-            search_tags.append(unit)
-        if category != "기타":
-            search_tags.append(category)
-        for st in search_tags:
-            db.add(CatalogSearchTag(catalog_id=catalog.id, tag=st))
-
-        db.commit()
-        logger.info("카탈로그 자동 생성: %s (connector=%s#%s, tag=%s)",
-                     catalog.name, connector_type, connector_id, tag_name)
+        if meta and not meta.category:
+            meta.category = _guess_category(tag_name)
+            meta.owner = "시스템 자동"
+            meta.data_level = "raw"
+            meta.sensitivity = "internal"
+            meta.is_published = True
+            db.commit()
+            logger.info("태그 거버넌스 설정: %s (connector=%s#%s)",
+                         tag_name, connector_type, connector_id)
     except Exception as e:
         db.rollback()
-        logger.warning("카탈로그 자동 생성 실패: %s", e)
+        logger.warning("태그 거버넌스 설정 실패: %s", e)
 
 
 def backfill_connector_catalogs():

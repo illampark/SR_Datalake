@@ -237,14 +237,14 @@ function testConnector(id) {
     if (r.success && r.data) {
       var d = r.data;
       var msg = d.message;
-      if (d.info && d.info.serverState) msg += ' (' + __t('page.opcda.test_status_prefix') + ' + d.info.serverState + ')';
-      if (d.info && d.info.groups && d.info.groups.length) msg += ' | ' + __t('page.opcda.test_group_prefix') + ' + d.info.groups.join(', ');
+      if (d.info && d.info.serverState) msg += ' (' + __t('page.opcda.test_status_prefix') + d.info.serverState + ')';
+      if (d.info && d.info.groups && d.info.groups.length) msg += ' | ' + __t('page.opcda.test_group_prefix') + d.info.groups.join(', ');
       showToast(msg, d.success ? 'success' : 'error');
     }
   });
 }
 function deleteConnector(id, name) {
-  confirmAction(name +  + __t('page.opcua.confirm_delete'), function() {
+  confirmAction(name + ' ' + __t('page.opcua.confirm_delete'), function() {
     $.ajax({ url: API + '/' + id, type: 'DELETE', success: function(r) {
       showToast(r.success ? __t('page.opcua.toast_deleted') : __t('page.opcua.toast_delete_fail'), r.success ? 'success' : 'error');
       refreshAll();
@@ -430,8 +430,8 @@ function testConnectionDirect() {
       if (r.success && r.data) {
         var info = r.data;
         var msg = info.message;
-        if (info.info && info.info.serverState) msg += ' (' + __t('page.opcda.test_status_prefix') + ' + info.info.serverState + ')';
-        if (info.info && info.info.groups && info.info.groups.length) msg += ' | ' + __t('page.opcda.test_group_prefix') + ' + info.info.groups.join(', ');
+        if (info.info && info.info.serverState) msg += ' (' + __t('page.opcda.test_status_prefix') + info.info.serverState + ')';
+        if (info.info && info.info.groups && info.info.groups.length) msg += ' | ' + __t('page.opcda.test_group_prefix') + info.info.groups.join(', ');
         showToast(msg, info.success ? 'success' : 'error');
       }
     },

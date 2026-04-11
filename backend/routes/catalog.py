@@ -1035,7 +1035,16 @@ def list_catalog_files(cid):
             base_prefix = f"import/{c.connector_id}/"
         elif c.connector_type == "file":
             bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
-            base_prefix = f"raw/{c.connector_id}/"
+            # FileCollector의 targetPathPrefix 사용
+            from backend.models.collector import FileCollector as FC
+            fc = db.query(FC).get(c.connector_id)
+            if fc and fc.target_path_prefix:
+                base_prefix = fc.target_path_prefix.replace("{collector_id}", str(c.connector_id)).replace("{date}/", "")
+                if not base_prefix.endswith("/"):
+                    base_prefix += "/"
+                bucket = fc.target_bucket or bucket
+            else:
+                base_prefix = f"raw/{c.connector_id}/"
         else:
             bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
             base_prefix = f"raw/{c.connector_id}/"

@@ -109,7 +109,7 @@ def create_connection():
         if not body.get("connection_type"):
             return _err("connection_type은 필수 항목입니다.", "VALIDATION")
 
-        valid_types = ["tsdb", "rdbms", "kafka", "file_storage"]
+        valid_types = ["tsdb", "rdbms", "kafka", "file_storage", "mqtt_broker"]
         if body["connection_type"] not in valid_types:
             return _err(f"connection_type은 {valid_types} 중 하나여야 합니다.", "VALIDATION")
 
@@ -212,6 +212,8 @@ def test_connection(conn_id):
                 connected, message = _test_rdbms(row)
             elif row.connection_type == "kafka":
                 connected, message = _test_kafka(row)
+            elif row.connection_type == "mqtt_broker":
+                connected, message = _test_mqtt_broker(row)
             elif row.connection_type == "file_storage":
                 connected, message = _test_file_storage(row)
             else:
@@ -272,8 +274,69 @@ def _test_tsdb(row):
 
 
 def _test_rdbms(row):
-    """관계형DB 연결 테스트"""
-    return _test_pg(row.host, row.port or 5432, row.database_name, row.username, row.password)
+    """관계형DB 연결 테스트 — db_type에 따라 분기"""
+    cfg = row.config or {}
+    db_type = cfg.get("db_type", "").lower()
+
+    if "mysql" in db_type or "maria" in db_type:
+        try:
+            import pymysql
+            conn = pymysql.connect(
+                host=row.host, port=row.port or 3306,
+                user=row.username, password=row.password,
+                database=row.database_name or "",
+                connect_timeout=5,
+            )
+            cur = conn.cursor()
+            cur.execute("SELECT VERSION()")
+            ver = cur.fetchone()[0]
+            conn.close()
+            return True, f"MariaDB/MySQL 연결 성공 (v{ver})"
+        except Exception as e:
+            return False, f"MariaDB/MySQL 연결 실패: {e}"
+
+    elif "oracle" in db_type:
+        try:
+            import oracledb
+            dsn = f"{row.host}:{row.port or 1521}/{row.database_name}"
+            conn = oracledb.connect(user=row.username, password=row.password, dsn=dsn)
+            conn.close()
+            return True, f"Oracle 연결 성공 ({dsn})"
+        except ImportError:
+            return False, "oracledb 패키지가 설치되지 않았습니다"
+        except Exception as e:
+            return False, f"Oracle 연결 실패: {e}"
+
+    elif "mssql" in db_type or "sqlserver" in db_type:
+        try:
+            import pymssql
+            conn = pymssql.connect(
+                server=row.host, port=row.port or 1433,
+                user=row.username, password=row.password,
+                database=row.database_name or "master",
+            )
+            conn.close()
+            return True, f"MSSQL 연결 성공 ({row.host}:{row.port})"
+        except ImportError:
+            return False, "pymssql 패키지가 설치되지 않았습니다"
+        except Exception as e:
+            return False, f"MSSQL 연결 실패: {e}"
+
+    else:
+        return _test_pg(row.host, row.port or 5432, row.database_name, row.username, row.password)
+
+
+def _test_mqtt_broker(row):
+    """외부 MQTT 브로커 연결 테스트"""
+    import socket
+    host = row.host or "localhost"
+    port = row.port or 1883
+    try:
+        s = socket.create_connection((host, port), timeout=5)
+        s.close()
+        return True, f"MQTT 브로커 연결 성공 ({host}:{port})"
+    except Exception as e:
+        return False, f"MQTT 연결 실패: {e}"
 
 
 def _test_kafka(row):

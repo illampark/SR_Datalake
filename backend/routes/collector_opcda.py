@@ -488,6 +488,8 @@ def message_callback():
                 c.group_count = db.query(OpcdaTag.group_name).filter_by(connector_id=connector_id).distinct().count()
                 c.last_collected_at = datetime.utcnow()
                 db.commit()
+                from backend.services.metadata_tracker import ensure_connector_catalog
+                ensure_connector_catalog("opcda", connector_id, c.name)
 
         return "", 200
     except Exception:

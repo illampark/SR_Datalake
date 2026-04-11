@@ -520,6 +520,8 @@ def message_callback():
                 c.point_count = (c.point_count or 0) + 1
                 c.last_collected_at = datetime.utcnow()
                 db.commit()
+                from backend.services.metadata_tracker import ensure_connector_catalog
+                ensure_connector_catalog("modbus", connector_id, c.name)
 
         return "", 200
     except Exception:

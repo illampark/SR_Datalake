@@ -107,7 +107,7 @@
       <div class="palette-body">
         <div class="palette-item" draggable="true" data-module="external_tsdb_sink"><i class="fas fa-clock-rotate-left text-success"></i> {{ t('page.builder.node_external_tsdb') }}</div>
         <div class="palette-item" draggable="true" data-module="external_rdbms_sink"><i class="fas fa-table text-success"></i> {{ t('page.builder.node_external_rdbms') }}</div>
-        <div class="palette-item" draggable="true" data-module="external_kafka_sink"><i class="fas fa-rotate text-success"></i> {{ t('page.builder.node_external_kafka') }}</div>
+        <div class="palette-item" draggable="true" data-module="external_messaging_sink"><i class="fas fa-stream text-success"></i> {{ t('page.builder.node_external_messaging') }}</div>
         <div class="palette-item" draggable="true" data-module="external_file_sink"><i class="fas fa-folder-open text-success"></i> {{ t('page.builder.node_external_file') }}</div>
       </div>
     </div>
@@ -274,7 +274,8 @@ var moduleLabels = {
   'normalize': __t('page.builder.node_normalize'), 'unit_convert': __t('page.builder.node_unit_convert'), 'filter': __t('page.builder.node_filter'),
   'anomaly': __t('page.builder.node_anomaly'), 'aggregate': __t('page.builder.node_aggregate'), 'enrich': __t('page.builder.node_enrich'), 'script': __t('page.builder.node_script'),
   'internal_tsdb_sink': __t('page.builder.node_internal_tsdb'), 'internal_rdbms_sink': __t('page.builder.node_internal_rdbms'), 'internal_file_sink': __t('page.builder.node_internal_file'),
-  'external_tsdb_sink': __t('page.builder.node_external_tsdb'), 'external_rdbms_sink': __t('page.builder.node_external_rdbms'), 'external_kafka_sink': __t('page.builder.node_external_kafka'), 'external_file_sink': __t('page.builder.node_external_file')
+  'external_tsdb_sink': __t('page.builder.node_external_tsdb'), 'external_rdbms_sink': __t('page.builder.node_external_rdbms'), 'external_messaging_sink': __t('page.builder.node_external_messaging'), 'external_file_sink': __t('page.builder.node_external_file'),
+  'external_kafka_sink': __t('page.builder.node_external_messaging'), 'external_mqtt_sink': __t('page.builder.node_external_messaging')
 };
 
 var moduleIcons = {
@@ -284,7 +285,8 @@ var moduleIcons = {
   'normalize': 'fa-right-left', 'unit_convert': 'fa-ruler-combined', 'filter': 'fa-filter',
   'anomaly': 'fa-triangle-exclamation', 'aggregate': 'fa-chart-bar', 'enrich': 'fa-puzzle-piece', 'script': 'fa-terminal',
   'internal_tsdb_sink': 'fa-clock-rotate-left', 'internal_rdbms_sink': 'fa-table', 'internal_file_sink': 'fa-folder',
-  'external_tsdb_sink': 'fa-clock-rotate-left', 'external_rdbms_sink': 'fa-table', 'external_kafka_sink': 'fa-rotate', 'external_file_sink': 'fa-folder-open'
+  'external_tsdb_sink': 'fa-clock-rotate-left', 'external_rdbms_sink': 'fa-table', 'external_messaging_sink': 'fa-stream', 'external_file_sink': 'fa-folder-open',
+  'external_kafka_sink': 'fa-stream', 'external_mqtt_sink': 'fa-stream'
 };
 
 function getModuleColor(type) {
@@ -478,9 +480,7 @@ function renderSteps() {
             : _procConfigSummary(moduleType, step.config)) +
         '</span>' +
         enabledBadge +
-        (!sourceToConnectorType[moduleType] && (moduleType.indexOf('_sink') === -1 || moduleType === 'internal_tsdb_sink')
-          ? '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.builder.btn_settings') + '" onclick="editStepConfig(' + idx + ')"><i class="fas fa-gear"></i></button>'
-          : '') +
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.builder.btn_settings') + '" onclick="editStepConfig(' + idx + ')"><i class="fas fa-gear"></i></button>' +
         '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="removeStep(' + idx + ')"><i class="fas fa-times text-danger"></i></button>' +
       '</div>'
     );
@@ -564,7 +564,9 @@ function addStep(moduleType) {
 }
 
 // ── Source Connector Selection Modal ──
-function openSourceConnectorModal(moduleType) {
+function openSourceConnectorModal(moduleType, editIdx) {
+  var isEdit = typeof editIdx === 'number' && editIdx >= 0;
+  var existingCfg = isEdit ? (currentSteps[editIdx].config || {}) : {};
   var connType = sourceToConnectorType[moduleType];
   var label = connectorTypeLabels[connType] || connType;
   var connUrl = '/collection/connectors/' + (connType === 'file' ? 'file' : connType === 'api' ? 'api' : connType);
@@ -600,12 +602,13 @@ function openSourceConnectorModal(moduleType) {
         '</div>'
     );
 
+  var _editIdxStr = isEdit ? editIdx : -1;
   var footer =
     '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
-    '<button class="btn btn-primary" id="btn-src-confirm" onclick="confirmSourceConnector(\'' + moduleType + '\',\'' + connType + '\')" disabled>' +
-    '<i class="fas fa-plus"></i> ' + __t('common.add') + '</button>';
+    '<button class="btn btn-primary" id="btn-src-confirm" onclick="confirmSourceConnector(\'' + moduleType + '\',\'' + connType + '\',' + _editIdxStr + ')" disabled>' +
+    '<i class="fas ' + (isEdit ? 'fa-save' : 'fa-plus') + '"></i> ' + (isEdit ? __t('common.save') : __t('common.add')) + '</button>';
 
-  openModal(label + ' ' + __t('page.builder.modal_node_add'), body, footer);
+  openModal(label + ' ' + (isEdit ? __t('page.builder.step_config_saved') : __t('page.builder.modal_node_add')), body, footer);
 
   // Load available connectors
   $.getJSON(API + '/connectors/' + connType, function(res) {
@@ -618,6 +621,14 @@ function openSourceConnectorModal(moduleType) {
         $sel.append('<option value="' + c.id + '" data-name="' + escAttr(c.name) + '">' +
           escHtml(c.name) + st + '</option>');
       });
+      // 편집 모드: 기존 선택값 복원
+      if (isEdit && existingCfg.connectorId) {
+        $sel.val(existingCfg.connectorId);
+        $('#btn-src-confirm').prop('disabled', false);
+      }
+      if (isEdit && existingCfg.tagFilter && connType !== 'db') {
+        $('#f-src-tagfilter').val(existingCfg.tagFilter);
+      }
       $sel.on('change', function() {
         var v = $(this).val();
         $('#btn-src-confirm').prop('disabled', !v);
@@ -633,14 +644,16 @@ function openSourceConnectorModal(moduleType) {
   });
 }
 
-function confirmSourceConnector(moduleType, connType) {
+function confirmSourceConnector(moduleType, connType, editIdx) {
+  var isEdit = typeof editIdx === 'number' && editIdx >= 0;
   var $sel = $('#f-src-connector');
   var connId = parseInt($sel.val());
   if (!connId) { showToast(__t('page.builder.connector_select_warning'), 'warning'); return; }
   var connName = $sel.find('option:selected').data('name') || $sel.find('option:selected').text().replace(/ \[.+\]$/, '');
 
-  // Duplicate check (same connector type + id)
-  var dup = currentBindings.some(function(b) {
+  // Duplicate check (편집 모드에서는 자기 자신 제외)
+  var dup = currentBindings.some(function(b, i) {
+    if (isEdit && i === editIdx) return false;
     return b.connectorType === connType && b.connectorId === connId;
   });
   if (dup) { showToast(__t('page.builder.duplicate_connector'), 'warning'); return; }
@@ -692,22 +705,37 @@ function confirmSourceConnector(moduleType, connType) {
   } else {
     // Non-DB types: use tag filter text input
     var tagFilter = ($('#f-src-tagfilter').val() || '*').trim() || '*';
+    var stepCfg = { connectorType: connType, connectorId: connId, connectorName: connName, tagFilter: tagFilter };
 
-    currentSteps.push({
-      moduleType: moduleType, enabled: true,
-      config: { connectorType: connType, connectorId: connId, connectorName: connName, tagFilter: tagFilter }
-    });
-    currentBindings.push({
-      connectorType: connType, connectorId: connId, connectorName: connName,
-      tagFilter: tagFilter, enabled: true
-    });
+    if (isEdit) {
+      // 편집: 기존 스텝 + 바인딩 업데이트
+      currentSteps[editIdx].config = stepCfg;
+      // 동일 커넥터 타입의 기존 바인딩 찾아서 업데이트
+      var oldCfg = currentSteps[editIdx].config || {};
+      for (var bi = 0; bi < currentBindings.length; bi++) {
+        var b = currentBindings[bi];
+        if (b.connectorType === connType) {
+          currentBindings[bi] = {
+            connectorType: connType, connectorId: connId, connectorName: connName,
+            tagFilter: tagFilter, enabled: true
+          };
+          break;
+        }
+      }
+    } else {
+      currentSteps.push({ moduleType: moduleType, enabled: true, config: stepCfg });
+      currentBindings.push({
+        connectorType: connType, connectorId: connId, connectorName: connName,
+        tagFilter: tagFilter, enabled: true
+      });
+    }
 
     closeModal();
     $('#canvasHint').hide();
     $('#stepList').show();
     renderSteps();
     renderBindings();
-    showToast(connName + ' ' + __t('page.builder.source_added'), 'success');
+    showToast(connName + ' ' + (isEdit ? __t('page.builder.step_config_saved') : __t('page.builder.source_added')), 'success');
   }
 }
 
@@ -938,6 +966,10 @@ function editStepConfig(idx) {
   var mt = step.moduleType || step.module_type;
   if (mt.indexOf('_sink') !== -1) {
     openSinkConfigModal(mt, idx);
+    return;
+  }
+  if (mt.indexOf('_source') !== -1) {
+    openSourceConnectorModal(mt, idx);
     return;
   }
   openProcessingConfigModal(mt, idx);
@@ -1252,6 +1284,7 @@ function _procConfigSummary(moduleType, cfg) {
     case 'external_tsdb_sink':
     case 'external_rdbms_sink':
     case 'external_kafka_sink':
+    case 'external_messaging_sink':
     case 'external_file_sink':
       if (cfg.connection_name) p.push(cfg.connection_name);
       else if (cfg.connection_id) p.push('ID:' + cfg.connection_id);
@@ -1305,6 +1338,8 @@ function openSinkConfigModal(moduleType, editIdx) {
     _loadExtConnections('rdbms', cfg.connection_id);
   } else if (moduleType === 'external_kafka_sink') {
     _loadExtConnections('kafka', cfg.connection_id);
+  } else if (moduleType === 'external_messaging_sink') {
+    _loadExtConnectionsMulti(['kafka', 'mqtt_broker'], cfg.connection_id);
   } else if (moduleType === 'external_file_sink') {
     _loadExtConnections('file_storage', cfg.connection_id);
   }
@@ -1403,15 +1438,18 @@ function _sinkFormHtml(moduleType, cfg) {
     case 'external_tsdb_sink':
     case 'external_rdbms_sink':
     case 'external_kafka_sink':
+    case 'external_messaging_sink':
     case 'external_file_sink':
       var extLabel = moduleLabels[moduleType] || moduleType;
       var extTypeMap = {
         'external_tsdb_sink': __t('page.builder.sink_ext_tsdb'), 'external_rdbms_sink': __t('page.builder.sink_ext_rdbms'),
-        'external_kafka_sink': 'Kafka', 'external_file_sink': __t('page.builder.sink_ext_file_storage')
+        'external_kafka_sink': __t('page.builder.node_external_messaging'), 'external_messaging_sink': __t('page.builder.node_external_messaging'),
+        'external_file_sink': __t('page.builder.sink_ext_file_storage')
       };
       var extManageUrl = {
         'external_tsdb_sink': '/integration/tsdb', 'external_rdbms_sink': '/integration/rdbms',
-        'external_kafka_sink': '/integration/kafka', 'external_file_sink': '/integration/file'
+        'external_kafka_sink': '/integration/messaging', 'external_messaging_sink': '/integration/messaging',
+        'external_file_sink': '/integration/file'
       };
       return '<div class="form-group">' +
         '<label class="form-label">' + __t('page.builder.sink_external_connection') + ' ' + extTypeMap[moduleType] + ' <span class="text-danger">*</span></label>' +
@@ -1446,6 +1484,34 @@ function _loadExtConnections(connType, selectedId) {
     }
   }).fail(function() {
     $('#f-sink-extConnId').html('<option value="">' + __t('page.builder.connector_load_fail') + '</option>');
+  });
+}
+
+function _loadExtConnectionsMulti(connTypes, selectedId) {
+  var $sel = $('#f-sink-extConnId').empty();
+  var allItems = [];
+  var done = 0;
+  var typeLabels = {kafka: 'Kafka', mqtt_broker: 'MQTT'};
+  connTypes.forEach(function(ct) {
+    $.getJSON('/api/integration', {type: ct, size: 100}, function(r) {
+      var items = (r.success && r.data) ? (r.data.items || []) : [];
+      items.forEach(function(c) { c._msgType = ct; allItems.push(c); });
+      done++;
+      if (done === connTypes.length) {
+        if (allItems.length) {
+          $sel.append('<option value="">' + __t('page.builder.sink_ext_select_prompt') + '</option>');
+          allItems.forEach(function(c) {
+            var sel = (selectedId && c.id == selectedId) ? ' selected' : '';
+            var tl = typeLabels[c._msgType] || c._msgType;
+            var desc = c.host ? c.host + (c.port ? ':' + c.port : '') : '';
+            $sel.append('<option value="' + c.id + '" data-name="' + escAttr(c.name) + '"' + sel + '>' +
+              '[' + tl + '] ' + escHtml(c.name) + (desc ? ' (' + escHtml(desc) + ')' : '') + '</option>');
+          });
+        } else {
+          $sel.html('<option value="">' + __t('page.builder.sink_ext_no_connections') + '</option>');
+        }
+      }
+    });
   });
 }
 
@@ -1542,6 +1608,7 @@ function _collectSinkConfig(moduleType) {
     case 'external_tsdb_sink':
     case 'external_rdbms_sink':
     case 'external_kafka_sink':
+    case 'external_messaging_sink':
     case 'external_file_sink':
       var $extSel = $('#f-sink-extConnId');
       return {

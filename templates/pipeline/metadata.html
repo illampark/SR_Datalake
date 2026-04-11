@@ -82,6 +82,24 @@
           <option value="db">DB</option>
           <option value="import">Import</option>
         </select>
+        <select class="form-select" id="filterCategory" style="width:auto;min-width:100px;padding:5px 10px;" onchange="loadTags(1)">
+          <option value="">{{ t('page.metadata.filter_all_categories') }}</option>
+          <option value="온도">{{ t('page.metadata.cat_temperature') }}</option>
+          <option value="습도">{{ t('page.metadata.cat_humidity') }}</option>
+          <option value="압력">{{ t('page.metadata.cat_pressure') }}</option>
+          <option value="진동">{{ t('page.metadata.cat_vibration') }}</option>
+          <option value="유량">{{ t('page.metadata.cat_flow') }}</option>
+          <option value="회전">{{ t('page.metadata.cat_rpm') }}</option>
+          <option value="센서">{{ t('page.metadata.cat_sensor') }}</option>
+          <option value="기타">{{ t('page.metadata.cat_other') }}</option>
+        </select>
+        <select class="form-select" id="filterSensitivity" style="width:auto;min-width:100px;padding:5px 10px;" onchange="loadTags(1)">
+          <option value="">{{ t('page.metadata.filter_all_sensitivity') }}</option>
+          <option value="public">Public</option>
+          <option value="internal">Internal</option>
+          <option value="confidential">Confidential</option>
+          <option value="restricted">Restricted</option>
+        </select>
         <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;">
           <input type="checkbox" id="filterActiveOnly" onchange="loadTags(1)"> {{ t('page.metadata.filter_active_only') }}
         </label>
@@ -98,10 +116,9 @@
           <tr>
             <th>{{ t('page.metadata.th_tag_name') }}</th>
             <th>{{ t('page.metadata.th_connector') }}</th>
+            <th>{{ t('page.metadata.th_category') }}</th>
+            <th>{{ t('page.metadata.th_owner') }}</th>
             <th>{{ t('page.metadata.th_data_type') }}</th>
-            <th>{{ t('common.min') }}</th>
-            <th>{{ t('common.max') }}</th>
-            <th>{{ t('common.avg') }}</th>
             <th>{{ t('page.metadata.th_sample_count') }}</th>
             <th>{{ t('page.metadata.th_quality_score') }}</th>
             <th>{{ t('page.metadata.th_last_collected') }}</th>
@@ -109,7 +126,7 @@
           </tr>
         </thead>
         <tbody id="tagsTableBody">
-          <tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
+          <tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -310,13 +327,15 @@ function loadTags(page) {
     page: currentTagPage,
     size: PAGE_SIZE,
     connector_type: $('#filterConnectorType').val(),
-    search: $('#filterSearch').val()
+    search: $('#filterSearch').val(),
+    category: $('#filterCategory').val(),
+    sensitivity: $('#filterSensitivity').val()
   };
   if ($('#filterActiveOnly').is(':checked')) {
     params.active = true;
   }
 
-  $('#tagsTableBody').html('<tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</td></tr>');
+  $('#tagsTableBody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</td></tr>');
 
   $.ajax({
     url: '/api/metadata/tags',
@@ -335,7 +354,7 @@ function loadTags(page) {
       if (data.lineageCount != null) $('#statLineageCount').text(fmtNum(data.lineageCount));
 
       if (!items.length) {
-        $('#tagsTableBody').html('<tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.no_data') + '</td></tr>');
+        $('#tagsTableBody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.no_data') + '</td></tr>');
         $('#tagsPagination').empty();
         return;
       }
@@ -351,10 +370,9 @@ function loadTags(page) {
           html += ' <span class="fs-12 text-muted">' + tag.connectorName + '</span>';
         }
         html += '</td>';
+        html += '<td>' + (tag.category ? '<span class="tag tag-purple">' + tag.category + '</span>' : '<span class="text-muted">-</span>') + '</td>';
+        html += '<td class="fs-12">' + (tag.owner || '-') + '</td>';
         html += '<td class="mono fs-12">' + (tag.dataType || '-') + '</td>';
-        html += '<td class="mono">' + (tag.minObserved != null ? tag.minObserved.toFixed(2) : '-') + '</td>';
-        html += '<td class="mono">' + (tag.maxObserved != null ? tag.maxObserved.toFixed(2) : '-') + '</td>';
-        html += '<td class="mono">' + (tag.avgObserved != null ? tag.avgObserved.toFixed(2) : '-') + '</td>';
         html += '<td class="mono">' + (tag.sampleCount != null ? fmtNum(tag.sampleCount) : '-') + '</td>';
         html += '<td><span class="badge-sm ' + qualityBadge(q) + '">' + q.toFixed(1) + '%</span></td>';
         html += '<td class="fs-12">' + fmtTime(tag.lastSeenAt) + '</td>';
@@ -371,7 +389,7 @@ function loadTags(page) {
       renderPagination('tagsPagination', currentTagPage, totalPages, 'loadTags');
     },
     error: function() {
-      $('#tagsTableBody').html('<tr><td colspan="10" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.tags_load_fail') + '</td></tr>');
+      $('#tagsTableBody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:32px 0;">' + __t('page.metadata.tags_load_fail') + '</td></tr>');
       $('#tagsPagination').empty();
     }
   });

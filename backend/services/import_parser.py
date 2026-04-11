@@ -710,6 +710,9 @@ def _execute_import_direct(collector, file_content, db_session):
             collector.imported_rows = imported
             collector.error_rows = errors
 
+            # TagMetadata 일괄 생성 (직접 저장 모드용)
+            _ensure_tag_metadata(db_session, "import", cid, collector.name, records, ts_col, col_map, value_cols)
+
         elif target_type == "rdbms":
             # RDBMS 직접 저장 — 외부 DB에 INSERT (테이블 자동 생성)
             cfg = db_session.query(RdbmsConfig).get(collector.target_id)
@@ -935,40 +938,57 @@ def _register_catalog(db, collector):
             tags.append(collector.target_table)
         _add_search_tags(db, cat.id, tags)
 
-    # 태그별 카탈로그 (TSDB만 — RDBMS는 테이블 단위로 관리)
-    if target_type == "rdbms":
-        db.commit()
+    # 태그별 카탈로그는 생성하지 않음 — TagMetadata에서 거버넌스 통합 관리
+    db.commit()
+
+
+def _ensure_tag_metadata(db_session, connector_type, connector_id, connector_name,
+                         records, ts_col, col_map, value_cols):
+    """Import 직접 저장 후 TagMetadata 일괄 생성"""
+    from backend.models.metadata import TagMetadata
+
+    # 수집된 컬럼 목록 파악
+    if value_cols:
+        cols = value_cols
+    elif records:
+        cols = [k for k in records[0].keys() if k != ts_col]
+    else:
         return
 
-    value_cols = collector.value_columns or []
-    col_map = collector.column_mapping or {}
-    for vc in value_cols:
-        tag_name = col_map.get(vc, vc)
-        tag_existing = db.query(DataCatalog).filter_by(
-            connector_type="import", connector_id=collector.id, tag_name=tag_name
+    for vc in cols:
+        tag_name = col_map.get(vc, vc) if col_map else vc
+        if not tag_name or not tag_name.strip():
+            continue
+
+        existing = db_session.query(TagMetadata).filter_by(
+            connector_type=connector_type,
+            connector_id=connector_id,
+            tag_name=tag_name,
         ).first()
-        if not tag_existing:
-            tag_cat = DataCatalog(
-                name=f"{tag_name} (Import {collector.name})",
+
+        if not existing:
+            from backend.services.metadata_tracker import _guess_category
+            meta = TagMetadata(
                 tag_name=tag_name,
-                connector_type="import",
-                connector_id=collector.id,
-                connector_description=collector.description or "",
-                description=f"데이터 가져오기 '{collector.name}'에서 자동 수집된 태그 데이터",
+                connector_type=connector_type,
+                connector_id=connector_id,
+                connector_name=connector_name or "",
+                data_type="float",
+                sample_count=len(records),
+                first_seen_at=datetime.utcnow(),
+                last_seen_at=datetime.utcnow(),
+                is_active=False,
+                mqtt_topic=f"sdl/raw/{connector_type}/{connector_id}/{tag_name}",
                 owner="시스템 자동",
-                category=category_val,
+                category=_guess_category(tag_name),
                 data_level="user_created",
                 sensitivity="internal",
-                access_url=f"sdl/raw/import/{collector.id}/{tag_name}",
-                format="float",
-                sink_type=sink_type,
                 is_published=True,
             )
-            db.add(tag_cat)
-            db.flush()
-            _add_search_tags(db, tag_cat.id, ["import", collector.name, tag_name])
+            db_session.add(meta)
 
-    db.commit()
+    db_session.commit()
+    logger.info(f"TagMetadata ensured for {connector_type}#{connector_id}: {len(cols)} tags")
 
 
 def _add_search_tags(db_session, catalog_id, tags):

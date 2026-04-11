@@ -35,6 +35,15 @@ class TagMetadata(Base):
     is_active = Column(Boolean, default=True)                # 현재 수집 활성 여부
     # 메시지 경로
     mqtt_topic = Column(String(500), default="")             # sdl/raw/{type}/{id}/{tag}
+    # 거버넌스 (사용자 관리)
+    description = Column(Text, default="")                   # 사용자 설명
+    owner = Column(String(100), default="")                  # 데이터 소유자
+    category = Column(String(100), default="")               # 분류 (온도, 습도, 압력 등)
+    data_level = Column(String(20), default="raw")           # raw / processed / user_created
+    sensitivity = Column(String(20), default="internal")     # public / internal / confidential / restricted
+    retention_policy = Column(String(100), default="")       # 보관 정책
+    is_published = Column(Boolean, default=True)             # 카탈로그 공개 여부
+    is_deprecated = Column(Boolean, default=False)           # 폐기 여부
     # 시간
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -60,6 +69,14 @@ class TagMetadata(Base):
             "lastValue": self.last_value,
             "isActive": self.is_active,
             "mqttTopic": self.mqtt_topic,
+            "description": self.description or "",
+            "owner": self.owner or "",
+            "category": self.category or "",
+            "dataLevel": self.data_level or "raw",
+            "sensitivity": self.sensitivity or "internal",
+            "retentionPolicy": self.retention_policy or "",
+            "isPublished": self.is_published if self.is_published is not None else True,
+            "isDeprecated": self.is_deprecated or False,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }

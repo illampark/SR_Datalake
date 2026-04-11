@@ -42,6 +42,9 @@ def list_tag_metadata():
         connector_id = request.args.get("connector_id", 0, type=int)
         active_only = request.args.get("active", "").lower() == "true"
         search = request.args.get("search", "")
+        category_filter = request.args.get("category", "")
+        sensitivity_filter = request.args.get("sensitivity", "")
+        data_level_filter = request.args.get("data_level", "")
 
         q = db.query(TagMetadata)
         if connector_type:
@@ -52,6 +55,12 @@ def list_tag_metadata():
             q = q.filter(TagMetadata.is_active == True)  # noqa: E712
         if search:
             q = q.filter(TagMetadata.tag_name.ilike(f"%{search}%"))
+        if category_filter:
+            q = q.filter(TagMetadata.category == category_filter)
+        if sensitivity_filter:
+            q = q.filter(TagMetadata.sensitivity == sensitivity_filter)
+        if data_level_filter:
+            q = q.filter(TagMetadata.data_level == data_level_filter)
 
         total = q.count()
         rows = q.order_by(TagMetadata.id).offset((page - 1) * size).limit(size).all()
@@ -91,26 +100,40 @@ def get_tag_metadata(tid):
         if not m:
             return _err("메타데이터를 찾을 수 없습니다.", "NOT_FOUND", 404)
         d = m.to_dict()
-
-        # 카탈로그 연결 조회 (동일 connector_type/id/tag_name)
-        from backend.models.catalog import DataCatalog
-        catalog = db.query(DataCatalog).filter_by(
-            connector_type=m.connector_type,
-            connector_id=m.connector_id,
-            tag_name=m.tag_name,
-        ).first()
-        if catalog:
-            d["catalog"] = {
-                "id": catalog.id,
-                "name": catalog.name,
-                "category": catalog.category,
-                "owner": catalog.owner,
-                "dataLevel": catalog.data_level,
-                "sensitivity": catalog.sensitivity,
-                "isPublished": catalog.is_published,
-            }
-
         return _ok(d)
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────
+# META-002b: PUT /api/metadata/tags/<id> — 거버넌스 편집
+# ──────────────────────────────────────────────
+@metadata_bp.route("/tags/<int:tid>", methods=["PUT"])
+def update_tag_metadata(tid):
+    db = _db()
+    try:
+        m = db.query(TagMetadata).get(tid)
+        if not m:
+            return _err("메타데이터를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        body = request.get_json(silent=True) or {}
+        gov_fields = {
+            "description": "description", "owner": "owner",
+            "category": "category", "dataLevel": "data_level",
+            "sensitivity": "sensitivity", "retentionPolicy": "retention_policy",
+            "isPublished": "is_published", "isDeprecated": "is_deprecated",
+            "unit": "unit",
+        }
+        for api_key, db_key in gov_fields.items():
+            if api_key in body:
+                setattr(m, db_key, body[api_key])
+
+        db.commit()
+        db.refresh(m)
+        return _ok(m.to_dict())
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
     finally:
         db.close()
 
