@@ -1,11 +1,17 @@
+import logging
 from datetime import timedelta
 from flask import Flask, render_template, request, redirect, session, jsonify
 from backend.config import SECRET_KEY
+
+_auth_diag = logging.getLogger("sdl.authdiag")
+_auth_diag.setLevel(logging.INFO)
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
 app.secret_key = SECRET_KEY
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=480)
+# 기본 이름 'session'은 타 Flask 앱의 스테일 쿠키와 충돌하므로 SDL 전용 이름 사용
+app.config['SESSION_COOKIE_NAME'] = 'sdl_session'
 
 # ── Backend API Setup ──
 from backend.database import init_db
@@ -120,6 +126,23 @@ def require_login():
     # 세션 인증
     if "user_id" in session:
         return None
+    # ── [DIAG] 세션이 비어 있을 때 상태를 기록 ──
+    try:
+        raw_session = request.cookies.get("session")
+        _auth_diag.warning(
+            "[AUTH-MISS] path=%s method=%s ip=%s ua=%s cookies=%s "
+            "session_cookie_len=%s session_cookie_head=%s "
+            "session_keys=%s referer=%s",
+            request.path, request.method, request.remote_addr,
+            (request.user_agent.string or "")[:80],
+            list(request.cookies.keys()),
+            len(raw_session) if raw_session else 0,
+            (raw_session[:25] + "...") if raw_session else None,
+            list(session.keys()),
+            request.headers.get("Referer", ""),
+        )
+    except Exception:
+        _auth_diag.exception("[AUTH-MISS] logging failed")
     # API 경로: X-API-Key 검증
     if request.path.startswith("/api/"):
         from backend.services.api_auth import authenticate_api_key

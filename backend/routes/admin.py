@@ -748,11 +748,19 @@ def auth_login():
 
         log_audit("login", "auth.login", "", "", username=username)
         logger.info("로그인 성공: %s (%s) from %s", username, user.role, ip)
-        return _ok({
+        resp = _ok({
             "username": user.username,
             "displayName": user.display_name,
             "role": user.role,
         })
+        # 타 Flask 앱의 스테일 쿠키(Flask-Login 'session', 'remember_token') 만료
+        for legacy_name in ("session", "remember_token"):
+            for path in ("/", "/api", "/admin", "/login"):
+                resp.headers.add(
+                    "Set-Cookie",
+                    f"{legacy_name}=; Path={path}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+                )
+        return resp
     except Exception as e:
         db.rollback()
         logger.error("로그인 처리 오류: %s", e)
