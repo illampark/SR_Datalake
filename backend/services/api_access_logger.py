@@ -52,6 +52,7 @@ def setup_access_logging(app):
                     user_agent=(request.user_agent.string or "")[:500],
                     request_size=request.content_length or 0,
                     response_size=response.content_length or 0,
+                    api_key_id=getattr(g, "api_key_id", None),
                 )
                 db.add(entry)
                 db.commit()

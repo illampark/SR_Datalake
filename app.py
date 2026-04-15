@@ -104,20 +104,37 @@ setup_access_logging(app)
 # ── Authentication Middleware ──
 @app.before_request
 def require_login():
-    """세션 기반 인증 미들웨어 — 미인증 시 /login 리다이렉트 또는 401"""
+    """세션 또는 X-API-Key 인증 미들웨어.
+
+    우선순위: 화이트리스트 경로 → 세션 → API 키 → 실패 시 401/리다이렉트.
+    """
     allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/")
     if any(request.path == p or request.path.startswith(p) for p in allowed_paths):
         return None
     # 외부 커넥터 콜백은 인증 없이 허용
     if "/callback" in request.path:
         return None
-    if "user_id" not in session:
-        if request.path.startswith("/api/"):
+    # CORS preflight
+    if request.method == "OPTIONS":
+        return None
+    # 세션 인증
+    if "user_id" in session:
+        return None
+    # API 경로: X-API-Key 검증
+    if request.path.startswith("/api/"):
+        from backend.services.api_auth import authenticate_api_key
+        ok, err = authenticate_api_key()
+        if ok is True:
+            return None
+        if ok is False:
+            code, msg, status = err
             return jsonify({"success": False, "data": None,
-                            "error": {"code": "UNAUTHORIZED",
-                                      "message": "로그인이 필요합니다."}}), 401
-        return redirect("/login")
-    return None
+                            "error": {"code": code, "message": msg}}), status
+        # 헤더 없음 → 세션도 없음 → 인증 실패
+        return jsonify({"success": False, "data": None,
+                        "error": {"code": "UNAUTHORIZED",
+                                  "message": "로그인 또는 API 키가 필요합니다."}}), 401
+    return redirect("/login")
 
 
 # ── Login Page ──
