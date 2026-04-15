@@ -46,14 +46,14 @@
 </div>
 
 <!-- Tabs -->
-<div class="tab-nav mb-24">
-  <button class="tab-btn active" data-tab="tab-routes">{{ t('page.gateway.tab_api_status') }}</button>
-  <button class="tab-btn" data-tab="tab-log">{{ t('page.gateway.tab_access_log') }}</button>
-  <button class="tab-btn" data-tab="tab-keys">{{ t('page.gateway.tab_api_keys') }}</button>
+<div class="tabs mb-24">
+  <div class="tab-item active" data-tab="tab-routes">{{ t('page.gateway.tab_api_status') }}</div>
+  <div class="tab-item" data-tab="tab-log">{{ t('page.gateway.tab_access_log') }}</div>
+  <div class="tab-item" data-tab="tab-keys">{{ t('page.gateway.tab_api_keys') }}</div>
 </div>
 
 <!-- ════════════════ TAB 1: API 현황 ════════════════ -->
-<div class="tab-pane active" id="tab-routes">
+<div class="tab-content active" id="tab-routes">
 
   <div class="card">
     <div class="card-header">
@@ -87,7 +87,7 @@
 </div>
 
 <!-- ════════════════ TAB 2: 접근 로그 ════════════════ -->
-<div class="tab-pane" id="tab-log">
+<div class="tab-content" id="tab-log">
 
   <!-- Traffic Chart -->
   <div class="card mb-24">
@@ -153,7 +153,7 @@
 </div>
 
 <!-- ════════════════ TAB 3: API 키 관리 ════════════════ -->
-<div class="tab-pane" id="tab-keys">
+<div class="tab-content" id="tab-keys">
 
   <!-- API Keys -->
   <div class="card mb-24">
@@ -217,11 +217,11 @@ var _trafficChart = null;
 
 $(function() {
   // Tab switching
-  $('.tab-btn').on('click', function() {
+  $('.tab-item').on('click', function() {
     var target = $(this).data('tab');
-    $('.tab-btn').removeClass('active');
+    $('.tab-item').removeClass('active');
     $(this).addClass('active');
-    $('.tab-pane').removeClass('active');
+    $('.tab-content').removeClass('active');
     $('#' + target).addClass('active');
 
     if (target === 'tab-log' && !_trafficChart) loadStats();
