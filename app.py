@@ -1,6 +1,8 @@
 import logging
+import os
 from datetime import timedelta
 from flask import Flask, render_template, request, redirect, session, jsonify
+from werkzeug.middleware.proxy_fix import ProxyFix
 from backend.config import SECRET_KEY
 
 _auth_diag = logging.getLogger("sdl.authdiag")
@@ -12,6 +14,13 @@ app.secret_key = SECRET_KEY
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=480)
 # 기본 이름 'session'은 타 Flask 앱의 스테일 쿠키와 충돌하므로 SDL 전용 이름 사용
 app.config['SESSION_COOKIE_NAME'] = 'sdl_session'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# HTTPS 환경에서만 True. 역방향 프록시(nginx) 뒤에서도 환경변수로 제어
+app.config['SESSION_COOKIE_SECURE'] = (
+    os.getenv('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
+)
+# Nginx 등 역방향 프록시 뒤에서 X-Forwarded-Proto/Host 신뢰
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # ── Backend API Setup ──
 from backend.database import init_db
