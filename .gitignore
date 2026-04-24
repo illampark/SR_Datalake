@@ -11,3 +11,4 @@ data/
 sessions/
 .claude/
 .pytest_cache/
+docs/github.txt
