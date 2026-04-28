@@ -19,6 +19,19 @@ def _err(msg, code="ERROR", status=400):
     return jsonify({"success": False, "data": None, "error": {"code": code, "message": msg}}), status
 
 
+def _pg_connect(config):
+    """TsdbConfig로부터 psycopg2 연결 생성"""
+    import psycopg2
+    return psycopg2.connect(
+        host=config.host,
+        port=config.port,
+        dbname=config.database_name or "postgres",
+        user=config.username or "sdl_user",
+        password=config.password or "",
+        connect_timeout=5,
+    )
+
+
 def _db():
     return SessionLocal()
 
@@ -82,6 +95,8 @@ def create_instance():
             organization=body.get("organization", ""),
             bucket=body.get("bucket", ""),
             database_name=body.get("database_name", ""),
+            username=body.get("username", ""),
+            password=body.get("password", ""),
             api_token=body.get("api_token", ""),
             tls_enabled=body.get("tls_enabled", False),
             retention_days=body.get("retention_days", 30),
@@ -113,7 +128,8 @@ def update_instance(tsdb_id):
         body = request.get_json(force=True)
         for field in [
             "name", "db_type", "host", "port", "organization", "bucket",
-            "database_name", "api_token", "tls_enabled", "retention_days", "description",
+            "database_name", "username", "password", "api_token",
+            "tls_enabled", "retention_days", "description",
         ]:
             if field in body:
                 setattr(row, field, body[field])
@@ -166,17 +182,9 @@ def test_connection(tsdb_id):
         latency_ms = 0
 
         try:
-            import psycopg2
             import time
             t0 = time.time()
-            test_conn = psycopg2.connect(
-                host=row.host,
-                port=row.port,
-                dbname=row.database_name or "postgres",
-                user="sdl_user",
-                password="sdl_password_2025",
-                connect_timeout=5,
-            )
+            test_conn = _pg_connect(row)
             latency_ms = round((time.time() - t0) * 1000, 1)
             test_conn.close()
             connected = True
@@ -231,15 +239,7 @@ def _query_pg_usage(config):
     total_rows = 0
 
     try:
-        import psycopg2
-        conn = psycopg2.connect(
-            host=config.host,
-            port=config.port,
-            dbname=config.database_name or "postgres",
-            user="sdl_user",
-            password="sdl_password_2025",
-            connect_timeout=5,
-        )
+        conn = _pg_connect(config)
         cur = conn.cursor()
 
         # DB 전체 크기
@@ -460,17 +460,9 @@ def execute_query(tsdb_id):
             return _err("SELECT 쿼리만 실행 가능합니다.", "VALIDATION")
 
         try:
-            import psycopg2
             import time
             t0 = time.time()
-            conn = psycopg2.connect(
-                host=row.host,
-                port=row.port,
-                dbname=row.database_name or "postgres",
-                user="sdl_user",
-                password="sdl_password_2025",
-                connect_timeout=5,
-            )
+            conn = _pg_connect(row)
             conn.set_session(readonly=True, autocommit=True)
             cur = conn.cursor()
             cur.execute(query_text)

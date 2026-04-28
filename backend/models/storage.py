@@ -18,6 +18,8 @@ class TsdbConfig(Base):
     organization = Column(String(100), default="")
     bucket = Column(String(100), default="")
     database_name = Column(String(100), default="")
+    username = Column(String(100), default="")
+    password = Column(String(500), default="")
     api_token = Column(String(500), default="")
     tls_enabled = Column(Boolean, default=False)
     retention_days = Column(Integer, default=30)
@@ -41,6 +43,7 @@ class TsdbConfig(Base):
             "organization": self.organization,
             "bucket": self.bucket,
             "database_name": self.database_name,
+            "username": self.username,
             "tls_enabled": self.tls_enabled,
             "retention_days": self.retention_days,
             "status": self.status,
