@@ -429,7 +429,7 @@ def start_import_from_path(collector_id):
                     try:
                         with open(f["fullPath"], "rb") as fh:
                             content = fh.read()
-                        _execute_import_direct(c, content, db)
+                        _execute_import_direct(c, content, db, source_filename=f["name"])
                     except Exception as e:
                         logger.warning(f"Import file {f['name']} error: {e}")
                         c.error_rows = (c.error_rows or 0) + 1
@@ -626,8 +626,13 @@ def _execute_files_mqtt_publish(collector, file_data_list, db_session):
     logger.info(f"Import #{cid} file metadata MQTT published: {published} files")
 
 
-def _execute_import_direct(collector, file_content, db_session):
-    """직접 저장 모드 — DB INSERT 또는 MinIO 업로드"""
+def _execute_import_direct(collector, file_content, db_session, source_filename=None):
+    """직접 저장 모드 — DB INSERT 또는 MinIO 업로드.
+
+    source_filename: 다중 파일 반복 처리(예: 서버 경로 모드) 시 각 파일의 원본 이름을 전달.
+    target_type='file' 일 때 MinIO 객체 키에 그대로 사용되어 파일별 객체로 분리 저장됨.
+    None이면 collector.file_name → 최후 fallback 'import_{cid}.dat' 순으로 결정.
+    """
     from backend.models.storage import TsdbConfig, RdbmsConfig
     from sqlalchemy import create_engine, text
 
@@ -781,7 +786,8 @@ def _execute_import_direct(collector, file_content, db_session):
             client = get_minio_client(db_session)
             bucket = collector.target_bucket or "sdl-files"
             prefix = f"import/{cid}/{datetime.utcnow().strftime('%Y%m%d')}/"
-            obj_name = prefix + (collector.file_name or f"import_{cid}.dat")
+            # 다중 파일(서버 경로 모드) 처리 시 source_filename으로 파일별 고유 키 사용
+            obj_name = prefix + (source_filename or collector.file_name or f"import_{cid}.dat")
 
             if isinstance(file_content, str):
                 file_content = file_content.encode(encoding)
