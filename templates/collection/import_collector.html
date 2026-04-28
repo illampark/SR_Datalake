@@ -309,7 +309,8 @@ var _pollTimer = null;
 
 function escHtml(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function fmt(n){return n!=null?Number(n).toLocaleString():'-';}
-function fmtSize(b){if(!b)return'-';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
+function fmtSize(b){if(!b)return'-';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';if(b<1073741824)return(b/1048576).toFixed(1)+'MB';return(b/1073741824).toFixed(2)+'GB';}
+var UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2GB — 서버 한도와 일치
 
 var statusBadge = {
   ready:     '<span class="badge-status badge-stopped">Ready</span>',
@@ -616,6 +617,16 @@ function doUpload(){
   for(var i=0;i<fileInput.files.length;i++){
     fd.append('file', fileInput.files[i]);
     totalBytes += fileInput.files[i].size;
+  }
+
+  // 사전 검증: 총 크기가 한도 초과 시 서버 경로 옵션으로 유도
+  if(totalBytes > UPLOAD_MAX_BYTES){
+    alert(
+      __t('page.import_collector.err_total_too_large')
+        .replace('{total}', fmtSize(totalBytes))
+        .replace('{limit}', fmtSize(UPLOAD_MAX_BYTES))
+    );
+    return;
   }
 
   // 진행률 UI 초기화

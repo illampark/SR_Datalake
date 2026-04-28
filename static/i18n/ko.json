@@ -622,7 +622,8 @@
       "upload_failed": "업로드 실패",
       "upload_network_error": "네트워크 오류로 업로드 실패",
       "multi_files_label": "{count}개 파일",
-      "preview_first_file_note": "미리보기는 첫 파일 기준입니다"
+      "preview_first_file_note": "미리보기는 첫 파일 기준입니다",
+      "err_total_too_large": "선택한 파일들의 총 크기({total})가 업로드 한도({limit})를 초과합니다.\n\n큰 데이터셋은 [서버 경로 지정] 옵션을 사용하세요:\n1. 가져오기 [편집]에서 \"서버 로컬 경로\"에 파일 위치를 입력\n2. 저장 후 다시 업로드 아이콘을 클릭하면 서버 경로 모드로 열림\n3. [스캔] → [실행]으로 진행"
     },
     "db_connector": {
       "title": "DB 커넥터",
