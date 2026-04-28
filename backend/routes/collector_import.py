@@ -346,7 +346,27 @@ def upload_file(cid):
                 fname = f.filename or ""
                 content = f.read()
                 if fname.lower().endswith(".zip"):
-                    extracted = extract_zip(content)
+                    try:
+                        extracted = extract_zip(content)
+                    except Exception as zip_err:
+                        # deflate64 등 미지원 압축, 손상/암호화 ZIP, 메모리 초과 등
+                        return _err(
+                            (
+                                f"ZIP 파일 '{fname}'을(를) 풀 수 없습니다: {zip_err}\n\n"
+                                "[가능한 원인]\n"
+                                "  - 표준 deflate가 아닌 압축 방식 (deflate64 / zstd / xz / ppmd 등)\n"
+                                "  - 파일이 손상되었거나 비밀번호로 보호됨\n"
+                                "  - 압축 풀린 총 크기가 너무 커서 처리 불가\n\n"
+                                "[해결 방법]\n"
+                                "  1) ZIP을 로컬에서 풀어 CSV/JSON 파일을 직접 업로드 (각 2GB 이내)\n"
+                                "  2) 표준 deflate 방식으로 재압축 후 재시도\n"
+                                "  3) 대용량 데이터셋은 [서버 경로 지정] 옵션 사용:\n"
+                                "     - 가져오기 [편집]에서 \"서버 로컬 경로\"에 적재 위치 입력\n"
+                                "     - 저장 후 업로드 아이콘 → [스캔] → [실행]"
+                            ),
+                            "ZIP_UNSUPPORTED",
+                            status=400,
+                        )
                     for e in extracted:
                         if e["name"].lower().endswith(valid_exts):
                             csv_files.append(e)
