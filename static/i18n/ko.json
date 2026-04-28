@@ -616,7 +616,11 @@
       "th_file_icon": "",
       "th_file_name": "파일명",
       "th_file_size": "크기",
-      "th_file_category": "유형"
+      "th_file_category": "유형",
+      "uploading": "업로드 중...",
+      "upload_processing": "서버에서 파일 처리 중...",
+      "upload_failed": "업로드 실패",
+      "upload_network_error": "네트워크 오류로 업로드 실패"
     },
     "db_connector": {
       "title": "DB 커넥터",
@@ -1769,7 +1773,7 @@
       "rdbms_filter_val": "값 입력",
       "rdbms_filter_add": "추가",
       "rdbms_filter_clear": "초기화",
-      "rdbms_data_title": "테이블 데이터",
+      "rdbms_data_title": "테이블 데이터 조회",
       "use_files_api": "파일 탭에서 조회하세요",
       "data_stat_count": "데이터 건수",
       "data_stat_min": "최소",
@@ -1781,7 +1785,6 @@
       "data_querying": "조회 중...",
       "file_browser_title": "파일 브라우저",
       "file_ts_data_title": "시계열 데이터 조회",
-      "rdbms_data_title": "테이블 데이터 조회",
       "file_header_name": "파일명",
       "file_header_type": "유형",
       "file_header_size": "크기",

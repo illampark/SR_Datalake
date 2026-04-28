@@ -616,7 +616,11 @@
       "th_file_icon": "",
       "th_file_name": "File Name",
       "th_file_size": "Size",
-      "th_file_category": "Category"
+      "th_file_category": "Category",
+      "uploading": "Uploading...",
+      "upload_processing": "Processing on server...",
+      "upload_failed": "Upload failed",
+      "upload_network_error": "Upload failed due to network error"
     },
     "db_connector": {
       "title": "DB Connector",
@@ -1769,7 +1773,7 @@
       "rdbms_filter_val": "Enter value",
       "rdbms_filter_add": "Add",
       "rdbms_filter_clear": "Clear",
-      "rdbms_data_title": "Table Data",
+      "rdbms_data_title": "Table Data Query",
       "use_files_api": "View in Files tab",
       "data_stat_count": "Data Count",
       "data_stat_min": "Min",
@@ -1781,7 +1785,6 @@
       "data_querying": "Querying...",
       "file_browser_title": "File Browser",
       "file_ts_data_title": "Time-series Data Query",
-      "rdbms_data_title": "Table Data Query",
       "file_header_name": "Filename",
       "file_header_type": "Type",
       "file_header_size": "Size",

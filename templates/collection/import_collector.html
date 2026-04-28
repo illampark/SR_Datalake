@@ -230,7 +230,17 @@
             <label>{{ t('page.import_collector.lbl_select_file') }}</label>
             <input type="file" class="form-control" id="upload-file" accept=".csv,.json,.txt,.tsv,.zip,.png,.jpg,.jpeg,.gif,.bmp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.mp4,.avi,.mov,.mp3,.wav,.hwp">
           </div>
-          <button class="btn btn-primary" onclick="doUpload()"><i class="fas fa-upload"></i> {{ t('page.import_collector.btn_upload') }}</button>
+          <button class="btn btn-primary" id="btn-do-upload" onclick="doUpload()"><i class="fas fa-upload"></i> {{ t('page.import_collector.btn_upload') }}</button>
+          <div id="upload-progress-area" style="display:none;margin-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span id="upload-progress-label">{{ t('page.import_collector.uploading') }}</span>
+              <span id="upload-progress-pct" style="font-weight:bold;">0%</span>
+            </div>
+            <div style="height:8px;background:#e9ecef;border-radius:4px;overflow:hidden;">
+              <div id="upload-progress-bar" style="height:100%;width:0%;background:var(--primary);transition:width 0.2s;"></div>
+            </div>
+            <div class="text-muted" id="upload-progress-detail" style="margin-top:6px;font-size:13px;">0 / 0 KB</div>
+          </div>
         </div>
         <!-- Server path mode -->
         <div id="upload-mode-path" style="display:none">
@@ -609,13 +619,50 @@ function doUpload(){
   var fileInput=$('#upload-file')[0];
   if(!fileInput.files.length) return alert(__t('page.import_collector.err_no_file'));
   var fd=new FormData();
+  var totalBytes=0;
   for(var i=0;i<fileInput.files.length;i++){
     fd.append('file', fileInput.files[i]);
+    totalBytes += fileInput.files[i].size;
   }
-  $.ajax({url:API+'/'+cid+'/upload', method:'POST', data:fd, processData:false, contentType:false, success:function(r){
-    if(!r.success) return alert(r.error.message);
-    // Preview
+
+  // 진행률 UI 초기화
+  var $btn=$('#btn-do-upload').prop('disabled', true);
+  var $file=$('#upload-file').prop('disabled', true);
+  var $area=$('#upload-progress-area').show();
+  $('#upload-progress-label').text(__t('page.import_collector.uploading'));
+  $('#upload-progress-pct').text('0%');
+  $('#upload-progress-bar').css('width','0%');
+  $('#upload-progress-detail').text('0 / ' + fmtSize(totalBytes));
+
+  function resetUploadUI(){ $btn.prop('disabled', false); $file.prop('disabled', false); $area.hide(); }
+
+  var xhr = new XMLHttpRequest();
+  xhr.upload.onprogress = function(e){
+    if(!e.lengthComputable) return;
+    var pct = Math.round(e.loaded * 100 / e.total);
+    $('#upload-progress-pct').text(pct + '%');
+    $('#upload-progress-bar').css('width', pct + '%');
+    $('#upload-progress-detail').text(fmtSize(e.loaded) + ' / ' + fmtSize(e.total));
+  };
+  xhr.upload.onload = function(){
+    // 클라→서버 전송 완료, 서버 처리 대기
+    $('#upload-progress-pct').text('100%');
+    $('#upload-progress-bar').css('width','100%');
+    $('#upload-progress-label').text(__t('page.import_collector.upload_processing'));
+  };
+  xhr.onload = function(){
+    if(xhr.status < 200 || xhr.status >= 300){
+      resetUploadUI();
+      return alert(__t('page.import_collector.upload_failed') + ': HTTP ' + xhr.status);
+    }
+    var r;
+    try { r = JSON.parse(xhr.responseText); }
+    catch(e){ resetUploadUI(); return alert(__t('page.import_collector.upload_failed')); }
+    if(!r.success){ resetUploadUI(); return alert(r.error.message); }
+
+    // 미리보기 단계 (기존 흐름)
     $.ajax({url:API+'/'+cid+'/preview', method:'POST', success:function(pr){
+      resetUploadUI();
       if(!pr.success) return alert(pr.error.message);
       var d=pr.data;
       $('#preview-filename').text(r.data.fileName);
@@ -640,10 +687,15 @@ function doUpload(){
       }
       $('#upload-step1').hide();
       $('#upload-step2').show();
-    }});
-  }});
+    }, error:function(){ resetUploadUI(); alert(__t('page.import_collector.upload_failed')); }});
+  };
+  xhr.onerror = function(){
+    resetUploadUI();
+    alert(__t('page.import_collector.upload_network_error'));
+  };
+  xhr.open('POST', API + '/' + cid + '/upload');
+  xhr.send(fd);
 }
-
 function doExecute(){
   var cid=$('#upload-cid').val();
   $.ajax({url:API+'/'+cid+'/execute', method:'POST', success:function(r){
