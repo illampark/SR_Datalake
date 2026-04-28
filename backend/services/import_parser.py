@@ -429,7 +429,7 @@ def start_import_from_path(collector_id):
                     try:
                         with open(f["fullPath"], "rb") as fh:
                             content = fh.read()
-                        _execute_import_direct(c, content, db, source_filename=f["name"])
+                        _execute_import_direct(c, content, db, source_filename=f["name"], accumulate=True)
                     except Exception as e:
                         logger.warning(f"Import file {f['name']} error: {e}")
                         c.error_rows = (c.error_rows or 0) + 1
@@ -626,12 +626,16 @@ def _execute_files_mqtt_publish(collector, file_data_list, db_session):
     logger.info(f"Import #{cid} file metadata MQTT published: {published} files")
 
 
-def _execute_import_direct(collector, file_content, db_session, source_filename=None):
+def _execute_import_direct(collector, file_content, db_session, source_filename=None, accumulate=False):
     """직접 저장 모드 — DB INSERT 또는 MinIO 업로드.
 
     source_filename: 다중 파일 반복 처리(예: 서버 경로 모드) 시 각 파일의 원본 이름을 전달.
     target_type='file' 일 때 MinIO 객체 키에 그대로 사용되어 파일별 객체로 분리 저장됨.
     None이면 collector.file_name → 최후 fallback 'import_{cid}.dat' 순으로 결정.
+
+    accumulate: True 이면 imported_rows/total_rows/error_rows 를 덮어쓰지 않고 누적,
+    상태(status)/진행률(progress)/last_imported_at 도 호출자가 설정하도록 위임한다.
+    서버 경로 모드처럼 N개 파일을 순차로 호출할 때 사용.
     """
     from backend.models.storage import TsdbConfig, RdbmsConfig
     from sqlalchemy import create_engine, text
@@ -652,8 +656,9 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
             raise ValueError(f"Unsupported import type: {import_type}")
 
         total = len(records)
-        collector.total_rows = total
-        collector.status = "running"
+        if not accumulate:
+            collector.total_rows = total
+            collector.status = "running"
         db_session.commit()
 
         col_map = collector.column_mapping or {}
@@ -712,8 +717,13 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
                     db_session.commit()
 
             db_session.commit()
-            collector.imported_rows = imported
-            collector.error_rows = errors
+            if accumulate:
+                collector.imported_rows = (collector.imported_rows or 0) + imported
+                collector.error_rows = (collector.error_rows or 0) + errors
+                collector.total_rows = (collector.total_rows or 0) + total
+            else:
+                collector.imported_rows = imported
+                collector.error_rows = errors
 
             # TagMetadata 일괄 생성 (직접 저장 모드용)
             _ensure_tag_metadata(db_session, "import", cid, collector.name, records, ts_col, col_map, value_cols)
@@ -777,8 +787,13 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
 
                 conn.commit()
             engine.dispose()
-            collector.imported_rows = imported
-            collector.error_rows = errors
+            if accumulate:
+                collector.imported_rows = (collector.imported_rows or 0) + imported
+                collector.error_rows = (collector.error_rows or 0) + errors
+                collector.total_rows = (collector.total_rows or 0) + total
+            else:
+                collector.imported_rows = imported
+                collector.error_rows = errors
 
         elif target_type == "file":
             # MinIO 직접 업로드
@@ -794,16 +809,21 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
 
             from io import BytesIO
             client.put_object(bucket, obj_name, BytesIO(file_content), len(file_content))
-            collector.imported_rows = 1
-            collector.total_rows = 1
-            collector.error_rows = 0
+            if accumulate:
+                collector.imported_rows = (collector.imported_rows or 0) + 1
+                collector.total_rows = (collector.total_rows or 0) + 1
+            else:
+                collector.imported_rows = 1
+                collector.total_rows = 1
+                collector.error_rows = 0
             logger.info(f"Import #{cid} file uploaded: {bucket}/{obj_name}")
 
-        collector.status = "completed"
-        collector.progress = 100
-        collector.last_imported_at = datetime.utcnow()
+        if not accumulate:
+            collector.status = "completed"
+            collector.progress = 100
+            collector.last_imported_at = datetime.utcnow()
         db_session.commit()
-        logger.info(f"Import #{cid} direct completed: {collector.imported_rows}/{total} rows")
+        logger.info(f"Import #{cid} direct file done: {collector.imported_rows}/{collector.total_rows} rows")
 
     except Exception as e:
         logger.error(f"Import #{cid} direct failed: {e}")
