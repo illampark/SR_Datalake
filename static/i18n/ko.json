@@ -620,7 +620,9 @@
       "uploading": "업로드 중...",
       "upload_processing": "서버에서 파일 처리 중...",
       "upload_failed": "업로드 실패",
-      "upload_network_error": "네트워크 오류로 업로드 실패"
+      "upload_network_error": "네트워크 오류로 업로드 실패",
+      "multi_files_label": "{count}개 파일",
+      "preview_first_file_note": "미리보기는 첫 파일 기준입니다"
     },
     "db_connector": {
       "title": "DB 커넥터",

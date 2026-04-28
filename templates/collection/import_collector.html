@@ -336,12 +336,8 @@ function onImportTypeChange(){
     $('#f-targetType').prop('disabled', false);
     $('.data-only-field').show();
   }
-  // 파일 업로드 input 설정
-  if(isFile){
-    $('#upload-file').attr('multiple','multiple');
-  } else {
-    $('#upload-file').removeAttr('multiple');
-  }
+  // 파일 업로드 input 설정 — csv/json 모드도 멀티 + ZIP 지원하므로 항상 multiple 허용
+  $('#upload-file').attr('multiple','multiple');
 }
 
 /* ── Load targets ── */
@@ -599,11 +595,8 @@ function openUpload(id){
       $('#upload-mode-upload').show();
       $('#upload-mode-path').hide();
       $('#upload-title').text(__t('page.import_collector.upload_title'));
-      if(c.importType==='files'){
-        $('#upload-file').attr('multiple','multiple');
-      } else {
-        $('#upload-file').removeAttr('multiple');
-      }
+      // 모든 모드에서 멀티 + ZIP 자동 해제 지원
+      $('#upload-file').attr('multiple','multiple');
     }
   });
   $('#upload-overlay').show();
@@ -667,6 +660,11 @@ function doUpload(){
       var d=pr.data;
       $('#preview-filename').text(r.data.fileName);
       $('#preview-rows').text(d.isFileMode ? fmt(d.totalRows)+' files' : fmt(d.totalRows)+' rows');
+      // 멀티 파일(csv/json) 표시 + 첫 파일 미리보기 안내
+      if(d.fileCount && d.fileCount > 1){
+        $('#preview-filename').after(' <span class="tag tag-blue" title="'+escHtml((d.fileNames||[]).join(', '))+'">'+__t('page.import_collector.multi_files_label').replace('{count}', d.fileCount)+'</span>');
+        $('#preview-rows').after(' <span class="text-muted" style="font-size:12px;margin-left:8px;">('+__t('page.import_collector.preview_first_file_note')+')</span>');
+      }
       if(d.detectedEncoding) $('#preview-filename').after(' <span class="tag tag-green">'+d.detectedEncoding+'</span>');
       var $th=$('#preview-thead').empty();
       if(d.isFileMode){

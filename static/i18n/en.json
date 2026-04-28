@@ -620,7 +620,9 @@
       "uploading": "Uploading...",
       "upload_processing": "Processing on server...",
       "upload_failed": "Upload failed",
-      "upload_network_error": "Upload failed due to network error"
+      "upload_network_error": "Upload failed due to network error",
+      "multi_files_label": "{count} files",
+      "preview_first_file_note": "Preview shown from first file"
     },
     "db_connector": {
       "title": "DB Connector",

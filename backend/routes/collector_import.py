@@ -338,20 +338,51 @@ def upload_file(cid):
                 "connectorId": cid,
             })
         else:
-            # 단일 파일 모드 (CSV/JSON)
-            f = files[0]
-            content = f.read()
-            c.file_name = f.filename
-            c.file_size = len(content)
-            db.commit()
+            # CSV/JSON 모드 — 단일/다중 파일 + ZIP 자동 해제 지원
+            from backend.services.import_parser import extract_zip
+            valid_exts = (".csv", ".json", ".txt", ".tsv")
+            csv_files = []
+            for f in files:
+                fname = f.filename or ""
+                content = f.read()
+                if fname.lower().endswith(".zip"):
+                    extracted = extract_zip(content)
+                    for e in extracted:
+                        if e["name"].lower().endswith(valid_exts):
+                            csv_files.append(e)
+                elif fname.lower().endswith(valid_exts):
+                    csv_files.append({"name": fname, "content": content, "size": len(content)})
+                else:
+                    # 알 수 없는 확장자도 일단 단일 파일로 받음 (기존 호환)
+                    csv_files.append({"name": fname, "content": content, "size": len(content)})
 
-            _store_set_single(cid, content, filename=f.filename)
+            if not csv_files:
+                return _err("처리 가능한 CSV/JSON/TXT/TSV 파일이 없습니다.", "VALIDATION")
 
-            return _ok({
-                "fileName": f.filename,
-                "fileSize": len(content),
-                "connectorId": cid,
-            })
+            if len(csv_files) == 1:
+                only = csv_files[0]
+                c.file_name = only["name"]
+                c.file_size = only["size"]
+                db.commit()
+                _store_set_single(cid, only["content"], filename=only["name"])
+                return _ok({
+                    "fileName": only["name"],
+                    "fileSize": only["size"],
+                    "connectorId": cid,
+                })
+            else:
+                total_size = sum(f["size"] for f in csv_files)
+                c.file_name = f"{len(csv_files)} files"
+                c.file_size = total_size
+                db.commit()
+                _store_set_files(cid, csv_files)
+                return _ok({
+                    "fileName": c.file_name,
+                    "fileSize": total_size,
+                    "fileCount": len(csv_files),
+                    "fileNames": [f["name"] for f in csv_files],
+                    "connectorId": cid,
+                })
     except Exception as e:
         db.rollback()
         logger.error(f"IMP-006 error: {e}")
@@ -380,23 +411,38 @@ def preview_import(cid):
             result = preview_files([{"name": f["name"], "size": f["size"]} for f in file_list])
             return _ok(result)
         else:
-            # 데이터 모드 — CSV/JSON 내용 미리보기
+            # 데이터 모드 — CSV/JSON 내용 미리보기 (단일/다중 모두 지원)
             content = _store_get_single(cid)
-            if not content:
+            file_list = _store_get_files(cid)
+
+            preview_source = None
+            multi_meta = None
+            if content is not None:
+                preview_source = content
+            elif file_list:
+                preview_source = file_list[0]["content"]
+                multi_meta = {
+                    "fileCount": len(file_list),
+                    "fileNames": [f["name"] for f in file_list],
+                    "totalSize": sum(f["size"] for f in file_list),
+                }
+            else:
                 f = request.files.get("file")
                 if f:
-                    content = f.read()
+                    preview_source = f.read()
                 else:
                     return _err("업로드된 파일이 없습니다.", "VALIDATION")
 
             from backend.services.import_parser import preview_file
             result = preview_file(
-                content,
+                preview_source,
                 import_type=c.import_type,
                 encoding=c.encoding or "utf-8",
                 delimiter=c.delimiter or ",",
                 skip_header=c.skip_header,
             )
+            if multi_meta:
+                result.update(multi_meta)
             return _ok(result)
     except Exception as e:
         logger.error(f"IMP-007 error: {e}")

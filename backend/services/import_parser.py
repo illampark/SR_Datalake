@@ -807,6 +807,43 @@ def _execute_import_direct(collector, file_content, db_session):
         db_session.commit()
 
 
+def _concat_text_files(files, drop_header_after_first=True):
+    """CSV/TSV/TXT 다중 파일을 바이트 단위로 연결.
+
+    drop_header_after_first=True 인 경우, 두번째 파일부터 첫 줄(헤더 추정) 제거.
+    """
+    if not files:
+        return b""
+    parts = [files[0]["content"]]
+    if not drop_header_after_first:
+        parts.extend(f["content"] for f in files[1:])
+    else:
+        for f in files[1:]:
+            c = f["content"]
+            nl = c.find(b"\n")
+            if nl >= 0:
+                parts.append(c[nl+1:])
+            else:
+                continue
+    return b"\n".join(parts)
+
+
+def _concat_json_files(files):
+    """JSON 다중 파일: 각 파일을 파싱해 배열을 누적."""
+    items = []
+    for f in files:
+        try:
+            txt = f["content"].decode("utf-8", errors="replace")
+            data = json.loads(txt)
+            if isinstance(data, list):
+                items.extend(data)
+            elif isinstance(data, dict):
+                items.append(data)
+        except Exception as e:
+            logger.warning(f"JSON parse skipped for {f.get('name','?')}: {e}")
+    return json.dumps(items, ensure_ascii=False).encode("utf-8")
+
+
 def start_import(collector_id, file_content, file_data_list=None):
     """비동기 Import 실행 — 백그라운드 스레드에서 처리
 
@@ -842,12 +879,20 @@ def start_import(collector_id, file_content, file_data_list=None):
                     _execute_files_mqtt_publish(c, files, db)
             else:
                 # 정형 데이터 (CSV/JSON) 가져오기
+                # 다중 파일이면 먼저 병합 (CSV: 헤더 1회, JSON: 배열 누적)
+                if file_data_list and len(file_data_list) > 0:
+                    if (c.import_type or "csv").lower() == "json":
+                        merged_content = _concat_json_files(file_data_list)
+                    else:
+                        merged_content = _concat_text_files(file_data_list, drop_header_after_first=not c.skip_header)
+                else:
+                    merged_content = file_content
                 # ① 항상 직접 저장 (원본 보장)
-                _execute_import_direct(c, file_content, db)
+                _execute_import_direct(c, merged_content, db)
                 _register_catalog(db, c)
                 # ② 파이프라인 연계 시 MQTT 추가 발행
                 if c.publish_mqtt:
-                    _execute_import_mqtt(c, file_content, db)
+                    _execute_import_mqtt(c, merged_content, db)
         except Exception as e:
             logger.error(f"Import thread #{collector_id} error: {e}")
         finally:
