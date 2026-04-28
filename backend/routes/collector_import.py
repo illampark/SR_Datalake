@@ -24,8 +24,76 @@ from backend.models.collector import ImportCollector
 logger = logging.getLogger(__name__)
 import_bp = Blueprint("collector_import", __name__, url_prefix="/api/connectors/import")
 
-_upload_store = {}      # collector_id → file bytes (CSV/JSON 단일 파일)
-_upload_files = {}      # collector_id → [{"name":..., "content":..., "size":...}, ...] (다중 파일)
+# 업로드 임시 저장: 디스크 기반 (gunicorn 멀티 워커 간 공유)
+# 인메모리 dict는 워커별로 분리되어 /upload → /preview /execute 시 데이터 유실됨
+import json
+import os
+import shutil
+
+_UPLOAD_TMP_ROOT = "/tmp/sdl_import"
+
+
+def _cid_dir(cid):
+    return f"{_UPLOAD_TMP_ROOT}/{cid}"
+
+
+def _store_clear(cid):
+    """해당 cid의 모든 임시 파일 정리"""
+    d = _cid_dir(cid)
+    if os.path.exists(d):
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _store_set_single(cid, content, filename=""):
+    """단일 파일(CSV/JSON) 저장"""
+    _store_clear(cid)
+    d = _cid_dir(cid)
+    os.makedirs(d, exist_ok=True)
+    with open(f"{d}/single.bin", "wb") as fp:
+        fp.write(content)
+    with open(f"{d}/meta.json", "w", encoding="utf-8") as fp:
+        json.dump({"mode": "single", "filename": filename, "size": len(content)}, fp)
+
+
+def _store_get_single(cid):
+    """단일 파일 bytes 반환 (없으면 None)"""
+    p = f"{_cid_dir(cid)}/single.bin"
+    if not os.path.exists(p):
+        return None
+    with open(p, "rb") as fp:
+        return fp.read()
+
+
+def _store_set_files(cid, file_list):
+    """다중 파일 저장: file_list = [{"name", "content", "size"}, ...]"""
+    _store_clear(cid)
+    d = _cid_dir(cid)
+    files_dir = f"{d}/files"
+    os.makedirs(files_dir, exist_ok=True)
+    meta = {"mode": "files", "files": []}
+    for i, f in enumerate(file_list):
+        with open(f"{files_dir}/{i:04d}.bin", "wb") as fp:
+            fp.write(f["content"])
+        meta["files"].append({"idx": i, "name": f["name"], "size": f["size"]})
+    with open(f"{d}/meta.json", "w", encoding="utf-8") as fp:
+        json.dump(meta, fp, ensure_ascii=False)
+
+
+def _store_get_files(cid):
+    """다중 파일 목록 반환 (없으면 빈 리스트)"""
+    d = _cid_dir(cid)
+    meta_path = f"{d}/meta.json"
+    if not os.path.exists(meta_path):
+        return []
+    with open(meta_path, encoding="utf-8") as fp:
+        meta = json.load(fp)
+    if meta.get("mode") != "files":
+        return []
+    out = []
+    for f in meta["files"]:
+        with open(f"{d}/files/{f['idx']:04d}.bin", "rb") as fp:
+            out.append({"name": f["name"], "size": f["size"], "content": fp.read()})
+    return out
 
 
 def _ok(data=None, meta=None):
@@ -206,7 +274,7 @@ def delete_import(cid):
 
         db.delete(c)
         db.commit()
-        _upload_store.pop(cid, None)
+        _store_clear(cid)
         return _ok({"deleted": cid})
     except Exception as e:
         db.rollback()
@@ -258,8 +326,7 @@ def upload_file(cid):
                     })
                     total_size += len(content)
 
-            _upload_files[cid] = file_list
-            _upload_store.pop(cid, None)
+            _store_set_files(cid, file_list)
             c.file_name = f"{len(file_list)} files"
             c.file_size = total_size
             db.commit()
@@ -278,8 +345,7 @@ def upload_file(cid):
             c.file_size = len(content)
             db.commit()
 
-            _upload_store[cid] = content
-            _upload_files.pop(cid, None)
+            _store_set_single(cid, content, filename=f.filename)
 
             return _ok({
                 "fileName": f.filename,
@@ -307,7 +373,7 @@ def preview_import(cid):
 
         if c.import_type == "files":
             # 파일 모드 — 파일 목록 미리보기
-            file_list = _upload_files.get(cid, [])
+            file_list = _store_get_files(cid)
             if not file_list:
                 return _err("업로드된 파일이 없습니다.", "VALIDATION")
             from backend.services.import_parser import preview_files
@@ -315,7 +381,7 @@ def preview_import(cid):
             return _ok(result)
         else:
             # 데이터 모드 — CSV/JSON 내용 미리보기
-            content = _upload_store.get(cid)
+            content = _store_get_single(cid)
             if not content:
                 f = request.files.get("file")
                 if f:
@@ -353,8 +419,8 @@ def execute_import(cid):
         if c.status == "running":
             return _err("이미 실행 중입니다.", "ALREADY_RUNNING")
 
-        content = _upload_store.get(cid)
-        file_list = _upload_files.get(cid)
+        content = _store_get_single(cid)
+        file_list = _store_get_files(cid) or None
 
         if not content and not file_list:
             return _err("업로드된 파일이 없습니다. 먼저 파일을 업로드하세요.", "VALIDATION")
