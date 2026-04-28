@@ -9,7 +9,7 @@ _auth_diag = logging.getLogger("sdl.authdiag")
 _auth_diag.setLevel(logging.INFO)
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2GB max upload
 app.secret_key = SECRET_KEY
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=480)
 # 기본 이름 'session'은 타 Flask 앱의 스테일 쿠키와 충돌하므로 SDL 전용 이름 사용
