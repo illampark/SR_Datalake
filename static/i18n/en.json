@@ -623,7 +623,16 @@
       "upload_network_error": "Upload failed due to network error",
       "multi_files_label": "{count} files",
       "preview_first_file_note": "Preview shown from first file",
-      "err_total_too_large": "Selected files total size ({total}) exceeds the upload limit ({limit}).\n\nFor large datasets, use the [Server Path] option:\n1. [Edit] the import collector and fill in \"Server Local Path\"\n2. Save and reopen the upload modal — it will open in Server Path mode\n3. Use [Scan] → [Execute]"
+      "err_total_too_large": "Selected files total size ({total}) exceeds the upload limit ({limit}).\n\nFor large datasets, use the [Server Path] option:\n1. [Edit] the import collector and fill in \"Server Local Path\"\n2. Save and reopen the upload modal — it will open in Server Path mode\n3. Use [Scan] → [Execute]",
+      "btn_browse": "Browse",
+      "browse_title": "Select Server Path",
+      "browse_current_path": "Current folder",
+      "browse_th_name": "Name",
+      "browse_th_meta": "Contents",
+      "browse_btn_select": "Select",
+      "browse_select_current": "Use current folder",
+      "browse_parent": "parent",
+      "browse_no_subdir": "No subdirectories"
     },
     "db_connector": {
       "title": "DB Connector",

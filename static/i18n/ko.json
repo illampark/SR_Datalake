@@ -623,7 +623,16 @@
       "upload_network_error": "네트워크 오류로 업로드 실패",
       "multi_files_label": "{count}개 파일",
       "preview_first_file_note": "미리보기는 첫 파일 기준입니다",
-      "err_total_too_large": "선택한 파일들의 총 크기({total})가 업로드 한도({limit})를 초과합니다.\n\n큰 데이터셋은 [서버 경로 지정] 옵션을 사용하세요:\n1. 가져오기 [편집]에서 \"서버 로컬 경로\"에 파일 위치를 입력\n2. 저장 후 다시 업로드 아이콘을 클릭하면 서버 경로 모드로 열림\n3. [스캔] → [실행]으로 진행"
+      "err_total_too_large": "선택한 파일들의 총 크기({total})가 업로드 한도({limit})를 초과합니다.\n\n큰 데이터셋은 [서버 경로 지정] 옵션을 사용하세요:\n1. 가져오기 [편집]에서 \"서버 로컬 경로\"에 파일 위치를 입력\n2. 저장 후 다시 업로드 아이콘을 클릭하면 서버 경로 모드로 열림\n3. [스캔] → [실행]으로 진행",
+      "btn_browse": "찾기",
+      "browse_title": "서버 경로 선택",
+      "browse_current_path": "현재 폴더",
+      "browse_th_name": "이름",
+      "browse_th_meta": "내용",
+      "browse_btn_select": "선택",
+      "browse_select_current": "현재 폴더 사용",
+      "browse_parent": "상위 폴더",
+      "browse_no_subdir": "하위 폴더가 없습니다"
     },
     "db_connector": {
       "title": "DB 커넥터",

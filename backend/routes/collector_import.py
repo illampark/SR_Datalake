@@ -676,6 +676,111 @@ def execute_from_path(cid):
 
 
 # ═══════════════════════════════════════════
+# IMP-015: 디렉토리 브라우저 — 서버 경로 지정 UI 보조
+# ═══════════════════════════════════════════
+# 화이트리스트 루트 안에서만 탐색 가능. realpath로 심볼릭 탈출 방지.
+_BROWSE_ROOTS = [
+    {"label": "기본 적재 폴더", "path": "/app/static/uploads",
+     "description": "scp로 호스트 sdl-uploads 볼륨에 올린 파일이 보입니다"},
+]
+
+
+def _is_under_root(abs_path):
+    """abs_path가 허용된 루트 중 하나의 하위인지 확인."""
+    import os
+    for r in _BROWSE_ROOTS:
+        rp = r["path"]
+        if abs_path == rp or abs_path.startswith(rp + os.sep):
+            return True
+    return False
+
+
+@import_bp.route("/browse", methods=["GET"])
+def browse_path_dir():
+    """서버 경로를 트리 형태로 탐색 (화이트리스트 루트 한정)."""
+    import os
+    from datetime import datetime
+    requested = (request.args.get("path") or "").strip() or _BROWSE_ROOTS[0]["path"]
+    try:
+        abs_path = os.path.realpath(requested)
+    except Exception:
+        return _err("잘못된 경로 형식입니다.", "VALIDATION")
+
+    if not _is_under_root(abs_path):
+        return _err(
+            f"허용되지 않은 경로입니다. 허용 루트: " +
+            ", ".join(r["path"] for r in _BROWSE_ROOTS),
+            "FORBIDDEN", 403,
+        )
+
+    if not os.path.isdir(abs_path):
+        return _err(f"디렉토리가 아닙니다: {abs_path}", "NOT_DIR", 404)
+
+    subdirs = []
+    files = []
+    try:
+        for entry in os.scandir(abs_path):
+            if entry.name.startswith("."):
+                continue
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    fc = 0
+                    sub_size = 0
+                    try:
+                        for sub in os.scandir(entry.path):
+                            if sub.is_file(follow_symlinks=False):
+                                fc += 1
+                                try:
+                                    sub_size += sub.stat().st_size
+                                except OSError:
+                                    pass
+                    except (OSError, PermissionError):
+                        pass
+                    subdirs.append({
+                        "name": entry.name,
+                        "path": entry.path,
+                        "fileCount": fc,
+                        "size": sub_size,
+                    })
+                elif entry.is_file(follow_symlinks=False):
+                    try:
+                        st = entry.stat()
+                        files.append({
+                            "name": entry.name,
+                            "size": st.st_size,
+                            "modifiedAt": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                        })
+                    except OSError:
+                        pass
+            except (OSError, PermissionError):
+                continue
+    except (OSError, PermissionError) as e:
+        return _err(f"접근 권한이 없습니다: {e}", "PERMISSION", 403)
+
+    subdirs.sort(key=lambda d: d["name"].lower())
+    files.sort(key=lambda f: f["name"].lower())
+
+    parent = None
+    for r in _BROWSE_ROOTS:
+        rp = r["path"]
+        if abs_path != rp and abs_path.startswith(rp + os.sep):
+            parent = os.path.dirname(abs_path)
+            break
+
+    is_root = any(abs_path == r["path"] for r in _BROWSE_ROOTS)
+
+    return _ok({
+        "currentPath": abs_path,
+        "parent": parent,
+        "isRoot": is_root,
+        "roots": _BROWSE_ROOTS,
+        "subdirs": subdirs,
+        "files": files[:50],
+        "fileCount": len(files),
+    })
+
+
+# ═══════════════════════════════════════════
 # IMP-011: 대상 스토리지 목록
 # ═══════════════════════════════════════════
 @import_bp.route("/targets", methods=["GET"])

@@ -189,7 +189,10 @@
           <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:12px;">
             <div class="form-group" style="grid-column:1/-1">
               <label>{{ t('page.import_collector.lbl_local_path') }}</label>
-              <input type="text" class="form-control" id="f-localPath" placeholder="{{ t('page.import_collector.ph_local_path') }}">
+              <div class="d-flex gap-8">
+                <input type="text" class="form-control" id="f-localPath" placeholder="{{ t('page.import_collector.ph_local_path') }}" style="flex:1">
+                <button class="btn btn-secondary btn-sm" type="button" onclick="openBrowse('f-localPath')"><i class="fas fa-folder-open"></i> {{ t('page.import_collector.btn_browse') }}</button>
+              </div>
             </div>
             <div class="form-group">
               <label>{{ t('page.import_collector.lbl_file_patterns') }}</label>
@@ -248,6 +251,7 @@
             <label>{{ t('page.import_collector.lbl_local_path') }}</label>
             <div class="d-flex gap-8">
               <input type="text" class="form-control" id="scan-path-input" style="flex:1">
+              <button class="btn btn-secondary btn-sm" type="button" onclick="openBrowse('scan-path-input')"><i class="fas fa-folder-open"></i> {{ t('page.import_collector.btn_browse') }}</button>
               <button class="btn btn-primary btn-sm" onclick="doScanPath()"><i class="fas fa-search"></i> {{ t('page.import_collector.btn_scan') }}</button>
             </div>
           </div>
@@ -299,6 +303,38 @@
     </div>
   </div>
 </div>
+<!-- Directory Browser Modal -->
+<div class="modal-overlay" id="browse-overlay" style="display:none" onclick="if(event.target===this)closeBrowse()">
+  <div class="modal" style="max-width:760px">
+    <div class="modal-header">
+      <h3>{{ t('page.import_collector.browse_title') }}</h3>
+      <button class="modal-close" onclick="closeBrowse()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:10px;">
+        <label class="text-muted" style="font-size:12px;">{{ t('page.import_collector.browse_current_path') }}</label>
+        <div id="browse-breadcrumb" style="font-family:monospace;background:#f8f9fa;padding:6px 10px;border-radius:4px;border:1px solid #dee2e6;word-break:break-all;">/</div>
+      </div>
+      <div id="browse-hint" class="text-muted" style="font-size:12px;margin-bottom:8px;"></div>
+      <div class="table-wrapper" style="max-height:420px;overflow:auto;">
+        <table>
+          <thead><tr>
+            <th style="width:30px"></th>
+            <th>{{ t('page.import_collector.browse_th_name') }}</th>
+            <th style="width:160px">{{ t('page.import_collector.browse_th_meta') }}</th>
+            <th style="width:90px"></th>
+          </tr></thead>
+          <tbody id="browse-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeBrowse()">{{ t('common.cancel') }}</button>
+      <button class="btn btn-primary" id="browse-select-current-btn" onclick="confirmBrowseCurrent()"><i class="fas fa-check"></i> {{ t('page.import_collector.browse_select_current') }}</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -606,6 +642,91 @@ function closeUpload(){
   $('#upload-overlay').hide();
   if(_pollTimer){clearInterval(_pollTimer);_pollTimer=null;}
   loadList();
+}
+
+/* ── Directory Browser ── */
+var _browseTargetField = null;
+var _browseCurrentPath = '';
+
+function openBrowse(targetFieldId){
+  _browseTargetField = targetFieldId;
+  var seed = ($('#'+targetFieldId).val() || '').trim();
+  loadBrowse(seed || '');
+  $('#browse-overlay').show();
+}
+
+function closeBrowse(){
+  $('#browse-overlay').hide();
+  _browseTargetField = null;
+}
+
+function loadBrowse(path){
+  $.ajax({
+    url: API + '/browse',
+    method: 'GET',
+    data: path ? {path: path} : {},
+    success: function(r){
+      if(!r.success){
+        $('#browse-tbody').html('<tr><td colspan="4" class="text-muted" style="text-align:center;padding:30px;">'+escHtml(r.error.message)+'</td></tr>');
+        return;
+      }
+      var d = r.data;
+      _browseCurrentPath = d.currentPath;
+      $('#browse-breadcrumb').text(d.currentPath);
+
+      var hint = '';
+      if(d.isRoot){
+        var root = (d.roots && d.roots[0]) || null;
+        if(root && root.description) hint = root.description;
+      }
+      $('#browse-hint').text(hint);
+
+      var $tb = $('#browse-tbody').empty();
+
+      if(d.parent){
+        $tb.append('<tr style="cursor:pointer" onclick="loadBrowse(\''+escHtml(d.parent).replace(/\x27/g,"\\x27")+'\')">'
+          +'<td><i class="fas fa-level-up-alt"></i></td>'
+          +'<td colspan="3">..  ('+__t("page.import_collector.browse_parent")+')</td></tr>');
+      }
+
+      (d.subdirs||[]).forEach(function(sd){
+        var safe = sd.path.replace(/\x27/g,"\\x27");
+        $tb.append('<tr style="cursor:pointer">'
+          +'<td onclick="loadBrowse(\''+escHtml(safe)+'\')"><i class="fas fa-folder" style="color:#f0ad4e"></i></td>'
+          +'<td onclick="loadBrowse(\''+escHtml(safe)+'\')">'+escHtml(sd.name)+'</td>'
+          +'<td onclick="loadBrowse(\''+escHtml(safe)+'\')">'+sd.fileCount+' files · '+fmtSize(sd.size||0)+'</td>'
+          +'<td><button class="btn btn-sm btn-success" onclick="event.stopPropagation();selectBrowsePath(\''+escHtml(safe)+'\')">'+__t("page.import_collector.browse_btn_select")+'</button></td></tr>');
+      });
+
+      if((d.subdirs||[]).length===0){
+        $tb.append('<tr><td colspan="4" class="text-muted" style="text-align:center;padding:16px;font-size:12px;">'+__t("page.import_collector.browse_no_subdir")+'</td></tr>');
+      }
+
+      (d.files||[]).slice(0,50).forEach(function(f){
+        $tb.append('<tr>'
+          +'<td><i class="fas fa-file" style="color:#888"></i></td>'
+          +'<td>'+escHtml(f.name)+'</td>'
+          +'<td>'+fmtSize(f.size)+'</td>'
+          +'<td></td></tr>');
+      });
+      if((d.fileCount||0) > 50){
+        $tb.append('<tr><td colspan="4" class="text-muted" style="text-align:center;font-size:12px;">… +'+(d.fileCount-50)+' more files</td></tr>');
+      }
+    },
+    error: function(){
+      $('#browse-tbody').html('<tr><td colspan="4" class="text-muted" style="text-align:center;padding:30px;">'+__t("common.error")+'</td></tr>');
+    }
+  });
+}
+
+function selectBrowsePath(path){
+  if(!_browseTargetField) return;
+  $('#'+_browseTargetField).val(path).trigger('change');
+  closeBrowse();
+}
+
+function confirmBrowseCurrent(){
+  if(_browseCurrentPath) selectBrowsePath(_browseCurrentPath);
 }
 
 function doUpload(){
