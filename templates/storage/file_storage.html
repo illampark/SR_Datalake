@@ -110,12 +110,16 @@
         <option value="">{{ t('page.file_storage.filter_all_types') }}</option>
         <option value="log">{{ t('page.file_storage.filter_log') }}</option>
         <option value="csv">{{ t('page.file_storage.filter_csv') }}</option>
+        <option value="json">{{ t('page.file_storage.filter_json') }}</option>
         <option value="image">{{ t('page.file_storage.filter_image') }}</option>
         <option value="doc">{{ t('page.file_storage.filter_doc') }}</option>
         <option value="excel">{{ t('page.file_storage.filter_excel') }}</option>
         <option value="backup">{{ t('page.file_storage.filter_backup') }}</option>
       </select>
       <input class="form-control" type="text" placeholder="{{ t('page.file_storage.placeholder_search') }}" style="width:160px;padding:4px 8px;" id="search-file">
+      <button class="btn btn-danger btn-sm" id="btn-delete-selected" disabled onclick="deleteSelectedFiles()" title="{{ t('page.file_storage.btn_delete_selected') }}">
+        <i class="fas fa-trash"></i> <span id="btn-delete-selected-label">{{ t('page.file_storage.btn_delete_selected') }}</span>
+      </button>
     </div>
   </div>
   <div class="card-body p-0">
@@ -123,6 +127,7 @@
       <table>
         <thead>
           <tr>
+            <th style="width:32px;text-align:center;"><input type="checkbox" id="select-all-files" onchange="toggleSelectAll(this.checked)"></th>
             <th>{{ t('page.file_storage.th_filename') }}</th>
             <th>{{ t('page.file_storage.th_type') }}</th>
             <th>{{ t('page.file_storage.th_size') }}</th>
@@ -132,7 +137,7 @@
           </tr>
         </thead>
         <tbody id="file-tbody">
-          <tr><td colspan="6" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
+          <tr><td colspan="7" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-spinner fa-spin"></i> {{ t('common.loading') }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -159,6 +164,7 @@ var fileTypeChart = null;
 var FILE_ICONS = {
   log: 'fa-file-lines text-muted',
   csv: 'fa-file-csv text-success',
+  json: 'fa-file-code text-info',
   image: 'fa-file-image text-primary',
   doc: 'fa-file-pdf text-danger',
   excel: 'fa-file-excel text-success',
@@ -167,12 +173,13 @@ var FILE_ICONS = {
 };
 
 var TAG_COLORS = {
-  log: '', csv: 'tag-green', image: 'tag-blue', doc: '',
+  log: '', csv: 'tag-green', json: 'tag-purple', image: 'tag-blue', doc: '',
   excel: 'tag-green', backup: 'tag-yellow', other: ''
 };
 
 var TYPE_LABELS = {
-  log: __t('page.file_storage.filter_log'), csv: __t('page.file_storage.filter_csv'), image: __t('page.file_storage.filter_image'), doc: __t('page.file_storage.filter_doc'),
+  log: __t('page.file_storage.filter_log'), csv: __t('page.file_storage.filter_csv'), json: __t('page.file_storage.filter_json'),
+  image: __t('page.file_storage.filter_image'), doc: __t('page.file_storage.filter_doc'),
   excel: 'Excel', backup: __t('page.file_storage.filter_backup'), other: '기타'
 };
 
@@ -287,7 +294,7 @@ function loadFiles() {
     totalFiles = res.meta.total;
 
     if (!files || files.length === 0) {
-      $('#file-tbody').html('<tr><td colspan="6" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-folder-open"></i> ' + __t('page.file_storage.no_files') + '</td></tr>');
+      $('#file-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-folder-open"></i> ' + __t('page.file_storage.no_files') + '</td></tr>');
       updatePagination();
       return;
     }
@@ -300,7 +307,10 @@ function loadFiles() {
       var label = (TYPE_LABELS[f.type] || f.extension).toUpperCase();
       var modified = f.modifiedAt ? f.modifiedAt.replace('T', ' ').substring(0, 19) : '-';
 
+      var selKey = f.bucket + ":" + f.objectName;
+      var checked = selectedFiles[selKey] ? ' checked' : '';
       html += '<tr>' +
+        '<td style="text-align:center;"><input type="checkbox" data-file-row data-sel-key="' + escAttr(selKey) + '" data-bucket="' + escAttr(f.bucket) + '" data-objname="' + escAttr(f.objectName) + '" data-name="' + escAttr(f.name) + '" onchange="toggleFileSelection(this)"' + checked + '></td>' +
         '<td><i class="fas ' + icon + '"></i> ' + escHtml(f.name) + '</td>' +
         '<td><span class="tag ' + tagCls + '">' + label + '</span></td>' +
         '<td class="mono">' + f.sizeDisplay + '</td>' +
@@ -312,9 +322,10 @@ function loadFiles() {
         '</td></tr>';
     }
     $('#file-tbody').html(html);
+    updateBulkDeleteUI();
     updatePagination();
   }).fail(function() {
-    $('#file-tbody').html('<tr><td colspan="6" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
+    $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
   });
 }
 
@@ -418,6 +429,81 @@ function doUpload() {
 /* ── 파일 다운로드 ── */
 function downloadFile(bucket, objectName) {
   window.location.href = API + '/download?bucket=' + encodeURIComponent(bucket) + '&objectName=' + encodeURIComponent(objectName);
+}
+
+/* ── 멀티 선택 + 일괄 삭제 ── */
+var selectedFiles = {}; // selKey -> {bucket, objectName, name}
+
+function toggleFileSelection(el) {
+  var key = el.getAttribute('data-sel-key');
+  if (el.checked) {
+    selectedFiles[key] = {
+      bucket: el.getAttribute('data-bucket'),
+      objectName: el.getAttribute('data-objname'),
+      name: el.getAttribute('data-name'),
+    };
+  } else {
+    delete selectedFiles[key];
+  }
+  updateBulkDeleteUI();
+}
+
+function toggleSelectAll(checked) {
+  $('#file-tbody input[data-file-row]').each(function() {
+    if (this.checked !== checked) {
+      this.checked = checked;
+      toggleFileSelection(this);
+    }
+  });
+}
+
+function updateBulkDeleteUI() {
+  var rows = $('#file-tbody input[data-file-row]');
+  var n = Object.keys(selectedFiles).length;
+  $('#btn-delete-selected').prop('disabled', n === 0);
+  if (n > 0) {
+    $('#btn-delete-selected-label').text(__t('page.file_storage.btn_delete_selected_n').replace('{n}', n));
+  } else {
+    $('#btn-delete-selected-label').text(__t('page.file_storage.btn_delete_selected'));
+  }
+  // 헤더 체크박스 상태
+  if (rows.length > 0) {
+    var allChecked = true;
+    rows.each(function() { if (!this.checked) allChecked = false; });
+    $('#select-all-files').prop('checked', allChecked);
+  } else {
+    $('#select-all-files').prop('checked', false);
+  }
+}
+
+function deleteSelectedFiles() {
+  var entries = Object.keys(selectedFiles).map(function(k) { return selectedFiles[k]; });
+  if (!entries.length) return;
+  var n = entries.length;
+  var msg = __t('page.file_storage.confirm_delete_n_files').replace('{n}', n);
+  confirmAction(msg, function() {
+    $.ajax({
+      url: API + '/delete-batch',
+      type: 'DELETE',
+      contentType: 'application/json',
+      data: JSON.stringify({
+        files: entries.map(function(e) { return {bucket: e.bucket, objectName: e.objectName}; }),
+      }),
+      success: function(res) {
+        if (res.success) {
+          var d = res.data || {};
+          var toastMsg = __t('page.file_storage.toast_n_files_deleted').replace('{n}', d.deleted || 0);
+          if (d.failed) toastMsg += ' (' + (d.failed) + ' ' + __t('common.error') + ')';
+          showToast(toastMsg, d.failed ? 'warning' : 'success');
+          selectedFiles = {};
+          refreshAll();
+        } else {
+          showToast((res.error && res.error.message) || __t('page.file_storage.toast_delete_error'), 'error');
+        }
+      },
+      error: function() { showToast(__t('page.file_storage.toast_delete_error'), 'error'); }
+    });
+  });
 }
 
 /* ── 파일 삭제 ── */

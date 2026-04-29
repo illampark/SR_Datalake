@@ -2130,7 +2130,12 @@
       "confirm_delete_file": " 파일을 삭제하시겠습니까?",
       "toast_file_deleted": " 파일이 삭제되었습니다.",
       "toast_delete_error": "삭제 중 오류가 발생했습니다.",
-      "toast_refreshing_storage": "스토리지 정보를 새로고침합니다."
+      "toast_refreshing_storage": "스토리지 정보를 새로고침합니다.",
+      "filter_json": "JSON / JSONL",
+      "btn_delete_selected": "선택 삭제",
+      "btn_delete_selected_n": "선택 삭제 ({n})",
+      "confirm_delete_n_files": "선택한 {n}개 파일을 삭제하시겠습니까?",
+      "toast_n_files_deleted": "{n}개 파일이 삭제되었습니다."
     },
     "rdbms": {
       "title": "관계형 DB 관리",

@@ -44,6 +44,7 @@ def _fmt_bytes(b):
 
 FILE_TYPE_MAP = {
     ".log": "log", ".csv": "csv", ".tsv": "csv",
+    ".json": "json", ".jsonl": "json", ".ndjson": "json",
     ".png": "image", ".jpg": "image", ".jpeg": "image",
     ".gif": "image", ".bmp": "image", ".svg": "image",
     ".pdf": "doc", ".doc": "doc", ".docx": "doc",
@@ -56,6 +57,7 @@ FILE_TYPE_MAP = {
 FILE_TYPE_LABELS = {
     "log": "로그 파일",
     "csv": "CSV 파일",
+    "json": "JSON / JSONL",
     "image": "이미지",
     "doc": "문서",
     "excel": "Excel",
@@ -338,6 +340,45 @@ def upload_file():
 # ──────────────────────────────────────────────
 # DELETE /api/storage/file/delete
 # ──────────────────────────────────────────────
+@file_bp.route("/delete-batch", methods=["DELETE"])
+def delete_files_batch():
+    """여러 파일을 한 번에 삭제 (멀티 선택용).
+
+    body: {files: [{bucket, objectName}, ...]}
+    """
+    try:
+        body = request.get_json(force=True) or {}
+        files = body.get("files") or []
+        if not isinstance(files, list) or not files:
+            return _err("삭제할 파일 목록이 비어있습니다.", "VALIDATION")
+
+        client = _get_minio()
+        deleted = 0
+        errors = []
+        for f in files:
+            bucket = f.get("bucket") or MINIO_BUCKETS[0]
+            object_name = f.get("objectName") or f.get("object_name")
+            if not object_name:
+                errors.append({"bucket": bucket, "objectName": "", "error": "objectName 누락"})
+                continue
+            try:
+                client.remove_object(bucket, object_name)
+                deleted += 1
+            except S3Error as se:
+                errors.append({"bucket": bucket, "objectName": object_name, "error": str(se)})
+            except Exception as e:
+                errors.append({"bucket": bucket, "objectName": object_name, "error": str(e)})
+
+        return _ok({
+            "requested": len(files),
+            "deleted": deleted,
+            "failed": len(errors),
+            "errors": errors[:20],
+        })
+    except Exception as e:
+        return _err(str(e), "SERVER_ERROR", 500)
+
+
 @file_bp.route("/delete", methods=["DELETE"])
 def delete_file():
     try:

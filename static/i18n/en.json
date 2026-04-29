@@ -2130,7 +2130,12 @@
       "confirm_delete_file": " - Delete this file?",
       "toast_file_deleted": " file has been deleted.",
       "toast_delete_error": "An error occurred while deleting.",
-      "toast_refreshing_storage": "Refreshing storage information."
+      "toast_refreshing_storage": "Refreshing storage information.",
+      "filter_json": "JSON / JSONL",
+      "btn_delete_selected": "Delete Selected",
+      "btn_delete_selected_n": "Delete Selected ({n})",
+      "confirm_delete_n_files": "Delete {n} selected files?",
+      "toast_n_files_deleted": "{n} files deleted."
     },
     "rdbms": {
       "title": "Relational DB Management",
