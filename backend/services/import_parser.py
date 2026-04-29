@@ -427,9 +427,14 @@ def start_import_from_path(collector_id):
                 total_files = len(all_files)
                 for fi, f in enumerate(all_files):
                     try:
-                        with open(f["fullPath"], "rb") as fh:
-                            content = fh.read()
-                        _execute_import_direct(c, content, db, source_filename=f["name"], accumulate=True)
+                        if c.target_type == "file":
+                            # target=file은 raw bytes를 그대로 MinIO에 저장하므로
+                            # 메모리 풀로드 없이 파일 경로만 넘겨 스트리밍 업로드
+                            _execute_import_direct(c, None, db, source_filename=f["name"], accumulate=True, file_path=f["fullPath"])
+                        else:
+                            with open(f["fullPath"], "rb") as fh:
+                                content = fh.read()
+                            _execute_import_direct(c, content, db, source_filename=f["name"], accumulate=True)
                     except Exception as e:
                         logger.warning(f"Import file {f['name']} error: {e}")
                         c.error_rows = (c.error_rows or 0) + 1
@@ -626,7 +631,7 @@ def _execute_files_mqtt_publish(collector, file_data_list, db_session):
     logger.info(f"Import #{cid} file metadata MQTT published: {published} files")
 
 
-def _execute_import_direct(collector, file_content, db_session, source_filename=None, accumulate=False):
+def _execute_import_direct(collector, file_content, db_session, source_filename=None, accumulate=False, file_path=None):
     """직접 저장 모드 — DB INSERT 또는 MinIO 업로드.
 
     source_filename: 다중 파일 반복 처리(예: 서버 경로 모드) 시 각 파일의 원본 이름을 전달.
@@ -636,6 +641,9 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
     accumulate: True 이면 imported_rows/total_rows/error_rows 를 덮어쓰지 않고 누적,
     상태(status)/진행률(progress)/last_imported_at 도 호출자가 설정하도록 위임한다.
     서버 경로 모드처럼 N개 파일을 순차로 호출할 때 사용.
+
+    file_path: target_type='file' 한정. 주어지면 file_content 대신 디스크에서 직접
+    스트리밍 업로드한다(메모리 풀로드·CSV 파싱 모두 생략). GB급 서버 경로 모드용.
     """
     from backend.models.storage import TsdbConfig, RdbmsConfig
     from sqlalchemy import create_engine, text
@@ -648,6 +656,40 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
     batch_size = collector.batch_size or 1000
 
     try:
+        # target=file은 raw 바이트를 그대로 MinIO에 저장 — CSV/JSON 파싱 불필요.
+        # 파싱은 GB급 파일에서 메모리 폭증 + 무의미한 CPU 사용의 주범이었음.
+        if target_type == "file":
+            from backend.services.minio_client import get_minio_client
+            client = get_minio_client(db_session)
+            bucket = collector.target_bucket or "sdl-files"
+            prefix = f"import/{cid}/{datetime.utcnow().strftime('%Y%m%d')}/"
+            obj_name = prefix + (source_filename or collector.file_name or f"import_{cid}.dat")
+
+            if file_path:
+                # 디스크에서 직접 스트리밍 업로드(multipart). 풀로드 없음.
+                size = os.path.getsize(file_path)
+                with open(file_path, "rb") as fh:
+                    client.put_object(bucket, obj_name, fh, size)
+            else:
+                if isinstance(file_content, str):
+                    file_content = file_content.encode(encoding)
+                from io import BytesIO
+                client.put_object(bucket, obj_name, BytesIO(file_content), len(file_content))
+
+            if accumulate:
+                collector.imported_rows = (collector.imported_rows or 0) + 1
+                collector.total_rows = (collector.total_rows or 0) + 1
+            else:
+                collector.imported_rows = 1
+                collector.total_rows = 1
+                collector.error_rows = 0
+                collector.status = "completed"
+                collector.progress = 100
+                collector.last_imported_at = datetime.utcnow()
+            db_session.commit()
+            logger.info(f"Import #{cid} file uploaded: {bucket}/{obj_name}")
+            return
+
         if import_type == "csv":
             records = _parse_csv(file_content, encoding, delimiter, collector.skip_header)
         elif import_type == "json":
@@ -794,29 +836,6 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
             else:
                 collector.imported_rows = imported
                 collector.error_rows = errors
-
-        elif target_type == "file":
-            # MinIO 직접 업로드
-            from backend.services.minio_client import get_minio_client
-            client = get_minio_client(db_session)
-            bucket = collector.target_bucket or "sdl-files"
-            prefix = f"import/{cid}/{datetime.utcnow().strftime('%Y%m%d')}/"
-            # 다중 파일(서버 경로 모드) 처리 시 source_filename으로 파일별 고유 키 사용
-            obj_name = prefix + (source_filename or collector.file_name or f"import_{cid}.dat")
-
-            if isinstance(file_content, str):
-                file_content = file_content.encode(encoding)
-
-            from io import BytesIO
-            client.put_object(bucket, obj_name, BytesIO(file_content), len(file_content))
-            if accumulate:
-                collector.imported_rows = (collector.imported_rows or 0) + 1
-                collector.total_rows = (collector.total_rows or 0) + 1
-            else:
-                collector.imported_rows = 1
-                collector.total_rows = 1
-                collector.error_rows = 0
-            logger.info(f"Import #{cid} file uploaded: {bucket}/{obj_name}")
 
         if not accumulate:
             collector.status = "completed"
