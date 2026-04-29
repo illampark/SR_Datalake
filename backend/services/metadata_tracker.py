@@ -176,6 +176,7 @@ def mark_tags_inactive(connector_type, connector_id):
 _CONNECTOR_LABELS = {
     "opcua": "OPC-UA", "opcda": "OPC-DA", "modbus": "Modbus",
     "mqtt": "MQTT", "db": "DB", "file": "File", "api": "API",
+    "import": "Import",
 }
 
 _CATEGORY_MAP = {
@@ -207,6 +208,21 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
         if existing:
             return
 
+        # Import 커넥터인 경우 sink_type 자동 설정 + 실제 이름 fallback
+        # (conn_label 계산보다 먼저 — 모델에서 가져온 name 이 fallback 으로 사용되도록)
+        _sink_type = ""
+        if connector_type == "import":
+            try:
+                from backend.models.collector import ImportCollector
+                imp = db.query(ImportCollector).get(connector_id)
+                if imp:
+                    _SINK_MAP = {"tsdb": "internal_tsdb_sink", "rdbms": "internal_rdbms_sink", "file": "internal_file_sink"}
+                    _sink_type = _SINK_MAP.get(imp.target_type, "")
+                    if not connector_name and imp.name:
+                        connector_name = imp.name
+            except Exception:
+                pass
+
         label = _CONNECTOR_LABELS.get(connector_type, connector_type)
         conn_label = connector_name or f"#{connector_id}"
 
@@ -216,18 +232,6 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
             conn_desc = get_connector_description(db, connector_type, connector_id)
         except Exception:
             conn_desc = ""
-
-        # Import 커넥터인 경우 sink_type 자동 설정
-        _sink_type = ""
-        if connector_type == "import":
-            try:
-                from backend.models.collector import ImportCollector
-                imp = db.query(ImportCollector).get(connector_id)
-                if imp:
-                    _SINK_MAP = {"tsdb": "internal_tsdb_sink", "rdbms": "internal_rdbms_sink", "file": "internal_file_sink"}
-                    _sink_type = _SINK_MAP.get(imp.target_type, "")
-            except Exception:
-                pass
 
         catalog = DataCatalog(
             name=f"{label} {conn_label} — 전체 데이터",
