@@ -680,8 +680,10 @@ def execute_from_path(cid):
 # ═══════════════════════════════════════════
 # 화이트리스트 루트 안에서만 탐색 가능. realpath로 심볼릭 탈출 방지.
 _BROWSE_ROOTS = [
-    {"label": "기본 적재 폴더", "path": "/app/static/uploads",
-     "description": "scp/rsync로 아래 호스트 경로에 올린 파일이 보입니다"},
+    {"label": "사용자 적재 폴더", "path": "/app/static/uploads/import",
+     "description": "scp/sftp/rsync로 아래 호스트 경로에 직접 올릴 수 있습니다 (sudo 불필요)"},
+    {"label": "기본 볼륨 (관리자용)", "path": "/app/static/uploads",
+     "description": "Docker 볼륨 영역. 호스트 측 쓰기는 sudo 권한 필요"},
 ]
 
 
@@ -698,22 +700,36 @@ def _is_under_root(abs_path):
 def _resolve_host_path(container_path):
     """컨테이너 마운트 타겟을 호스트 측 절대 경로로 변환.
 
-    /proc/self/mountinfo 의 root(field 3)가 underlying fs 기준 경로이므로,
-    Docker 데이터 루트가 별도 파티션에 있을 때(prefix 필요) DOCKER_HOST_DATA_PREFIX
-    환경변수 또는 기본값 '/data'를 앞에 붙인다.
-    /var/lib/docker (호스트 / 직속) 같으면 그대로 반환.
+    /proc/self/mountinfo 에서 가장 길게 매칭되는 mount point를 찾아
+    그 root(field 3) + 잔여 경로를 호스트 절대 경로로 만든다. 이렇게 하면
+    /app/static/uploads(named volume) 안에 /app/static/uploads/import (bind mount)
+    가 nested 된 경우에도 각각의 host path가 올바르게 반환된다.
+
+    Docker 데이터 루트가 별도 파티션에 있으면(/data/docker 등) DOCKER_HOST_DATA_PREFIX
+    환경변수 또는 기본값 '/data'를 앞에 붙인다. /var/lib/docker 는 그대로 반환.
     """
     import os
     try:
         with open("/proc/self/mountinfo") as f:
+            mounts = []
             for line in f:
                 parts = line.split()
-                if len(parts) >= 5 and parts[4] == container_path:
-                    fs_root = parts[3]
-                    if fs_root.startswith("/var/lib/docker"):
-                        return fs_root
-                    prefix = os.environ.get("DOCKER_HOST_DATA_PREFIX", "/data").rstrip("/")
-                    return prefix + fs_root if fs_root.startswith("/") else os.path.join(prefix, fs_root)
+                if len(parts) >= 5:
+                    mounts.append((parts[4], parts[3]))  # (mount_point, fs_root)
+        # 가장 긴 mount_point부터 매칭 시도
+        mounts.sort(key=lambda m: len(m[0]), reverse=True)
+        for mp, fs_root in mounts:
+            if container_path == mp:
+                rel = ""
+            elif container_path.startswith(mp.rstrip("/") + "/"):
+                rel = container_path[len(mp.rstrip("/")):]
+            else:
+                continue
+            if fs_root.startswith("/var/lib/docker"):
+                return fs_root + rel
+            prefix = os.environ.get("DOCKER_HOST_DATA_PREFIX", "/data").rstrip("/")
+            base = prefix + fs_root if fs_root.startswith("/") else os.path.join(prefix, fs_root)
+            return base + rel
     except (OSError, IOError):
         pass
     return None
@@ -794,8 +810,9 @@ def browse_path_dir():
     is_root = any(abs_path == r["path"] for r in _BROWSE_ROOTS)
 
     # 호스트 절대 경로 매핑 — 사용자가 scp/rsync 시 참조
+    # 다중 루트가 nested 일 수 있으므로 가장 긴 매칭을 사용
     roots_with_host = []
-    matched_root_host = None
+    matched_candidates = []
     for r in _BROWSE_ROOTS:
         rd = dict(r)
         host = _resolve_host_path(r["path"])
@@ -803,7 +820,9 @@ def browse_path_dir():
             rd["hostPath"] = host
         roots_with_host.append(rd)
         if abs_path == r["path"] or abs_path.startswith(r["path"] + os.sep):
-            matched_root_host = (r["path"], host)
+            matched_candidates.append((r["path"], host))
+    matched_candidates.sort(key=lambda c: len(c[0]), reverse=True)
+    matched_root_host = matched_candidates[0] if matched_candidates else None
 
     current_host_path = None
     if matched_root_host and matched_root_host[1]:

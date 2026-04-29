@@ -311,6 +311,9 @@
       <button class="modal-close" onclick="closeBrowse()">&times;</button>
     </div>
     <div class="modal-body">
+      <div id="browse-roots" style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <span class="text-muted" style="font-size:12px;">{{ t('page.import_collector.browse_roots_label') }}</span>
+      </div>
       <div style="margin-bottom:8px;">
         <label class="text-muted" style="font-size:12px;">{{ t('page.import_collector.browse_container_path') }}</label>
         <div id="browse-breadcrumb" style="font-family:monospace;background:#f8f9fa;padding:6px 10px;border-radius:4px;border:1px solid #dee2e6;word-break:break-all;">/</div>
@@ -685,10 +688,29 @@ function loadBrowse(path){
         $('#browse-host-path-area').hide();
       }
 
+      // 루트 chips 렌더링 + 활성 표시
+      var $rc = $('#browse-roots');
+      $rc.find('.btn').remove();
+      (d.roots||[]).forEach(function(rt){
+        var active = (d.currentPath === rt.path) || (d.currentPath || '').indexOf(rt.path.replace(/\/$/, '') + '/') === 0;
+        var safe = (rt.path||'').replace(/\x27/g, '\\x27');
+        var btn = $('<button type="button" class="btn btn-sm" style="font-size:12px;"></button>')
+          .addClass(active ? 'btn-primary' : 'btn-secondary')
+          .html('<i class="fas fa-folder"></i> ' + escHtml(rt.label))
+          .attr('title', rt.description || '')
+          .on('click', (function(p){ return function(){ loadBrowse(p); }; })(rt.path));
+        $rc.append(btn);
+      });
+
+      // 현재 루트의 description 을 hint 로
       var hint = '';
-      if(d.isRoot){
-        var root = (d.roots && d.roots[0]) || null;
-        if(root && root.description) hint = root.description;
+      var matched = (d.roots||[]).filter(function(rt){
+        return d.currentPath === rt.path || (d.currentPath || '').indexOf(rt.path.replace(/\/$/, '') + '/') === 0;
+      });
+      if(matched.length && matched[0].description){
+        // 가장 길게 매칭되는(즉 더 구체적인) 루트의 설명 사용
+        matched.sort(function(a, b){ return b.path.length - a.path.length; });
+        hint = matched[0].description;
       }
       $('#browse-hint').text(hint);
 

@@ -634,7 +634,8 @@
       "browse_parent": "parent",
       "browse_no_subdir": "No subdirectories",
       "browse_container_path": "Container path",
-      "browse_host_path": "Host path (for scp/rsync)"
+      "browse_host_path": "Host path (for scp/rsync)",
+      "browse_roots_label": "Roots:"
     },
     "db_connector": {
       "title": "DB Connector",
