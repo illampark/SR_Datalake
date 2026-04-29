@@ -878,6 +878,30 @@ def _get_minio():
         db.close()
 
 
+# 파일 sink 파티션 상태: (pipeline_id, base_object_name) → {part_index, record_count}
+_file_sink_part_state = {}
+
+
+def _file_sink_object_name(prefix_norm, file_name, ext, pipeline_id, max_records):
+    """maxRecordsPerFile 가 0 이상이면 .partNNNN 접미사를 붙여 파일을 회전.
+
+    base 는 prefix_norm + file_name (확장자 제외). state 는 record_count 가
+    max_records 에 도달할 때마다 part_index 를 증가시키고 record_count 를 reset.
+    """
+    base = f"{prefix_norm}{file_name}"
+    if not max_records or max_records <= 0:
+        return f"{base}.{ext}"
+
+    state_key = (pipeline_id, base)
+    state = _file_sink_part_state.setdefault(state_key, {"part_index": 0, "record_count": 0})
+    if state["record_count"] >= max_records:
+        state["part_index"] += 1
+        state["record_count"] = 0
+    state["record_count"] += 1
+    suffix = f".part{state['part_index']:04d}"
+    return f"{base}{suffix}.{ext}"
+
+
 def sink_internal_file(message, config):
     """내부 파일 스토리지 싱크 — MinIO에 파일(JSONL/CSV/JSON)로 데이터 기록
 
@@ -946,7 +970,9 @@ def sink_internal_file(message, config):
     file_name = file_name_pattern.replace("{pipeline_id}", str(pipeline_id)).replace("{date}", today)
     ext = {"jsonl": "jsonl", "csv": "csv", "json": "json"}.get(file_format, "jsonl")
     prefix_norm = (path_prefix.rstrip("/") + "/") if path_prefix else ""
-    object_name = f"{prefix_norm}{file_name}.{ext}"
+    # maxRecordsPerFile 설정되면 .partNNNN 으로 회전
+    max_records = int(config.get("maxRecordsPerFile") or 0)
+    object_name = _file_sink_object_name(prefix_norm, file_name, ext, pipeline_id, max_records)
 
     cache_key = f"file_sink:{pipeline_id}:{bucket}:{object_name}"
     cache_entry = {

@@ -24,6 +24,9 @@ class Pipeline(Base):
     error_count = Column(Integer, default=0)
     last_processed_at = Column(DateTime, nullable=True)
     last_error = Column(Text, default="")
+    # 파일 소스 run lock: 동시 실행 방지 + crash 시 24h TTL 후 자동 해제
+    current_run_id = Column(String(64), default="")
+    current_run_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

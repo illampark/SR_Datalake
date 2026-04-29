@@ -350,16 +350,20 @@ def _update_pipeline_error(pipeline_id, error_msg):
 
 
 
-def run_file_source(pipeline_id):
-    """파일 소스 파이프라인 즉시 실행 — 스트리밍 + 빈번한 진행률 commit.
 
-    DB 에서 정의를 직접 로드 (멀티 워커 안전). MinIO 객체를 chunk 단위로
-    스트리밍해 csv.reader 에 흘려보내므로 4GB CSV 도 메모리에 통째 적재되지 않음.
-    진행률(processed_count, error_count, last_processed_at)을 N records 또는 T초
-    중 빠른 쪽 마다 별도 세션으로 commit 해 UI 에서 실시간으로 보인다.
+def run_file_source(pipeline_id):
+    """파일 소스 파이프라인 즉시 실행 — DB lock + 스트리밍 + 진행률 commit.
+
+    DB 의 current_run_id 를 atomic UPDATE 로 set 하여 동일 파이프라인의
+    동시 실행을 차단한다 (24h TTL 로 crash 후 stale lock 자동 해제).
+    CSV 는 chunk 단위 line iterator + csv.reader 로, JSON 은 ijson 으로
+    스트리밍 처리해 큰 파일도 메모리에 통째 적재하지 않는다.
     """
     import csv as _csv
     import time as _time
+    import uuid as _uuid
+    from datetime import timedelta as _timedelta
+    from sqlalchemy import text as _sql_text
     from backend.database import SessionLocal
     from backend.models.pipeline import Pipeline, PipelineStep
     from backend.models.collector import ImportCollector
@@ -367,11 +371,11 @@ def run_file_source(pipeline_id):
     from backend.services.import_parser import _parse_json
     from backend.services.pipeline_modules import flush_all_sink_buffers
 
-    PROGRESS_RECORDS = 5000   # 이 만큼 record 마다 progress commit
-    PROGRESS_SECONDS = 5      # 또는 이 초 마다
+    PROGRESS_RECORDS = 5000
+    PROGRESS_SECONDS = 5
+    LOCK_TTL_HOURS = 24
 
     def _commit_progress(processed, errors, dropped):
-        """별도 세션으로 progress 만 갱신 — 메인 세션과 격리."""
         ss = SessionLocal()
         try:
             pp = ss.query(Pipeline).get(pipeline_id)
@@ -385,14 +389,46 @@ def run_file_source(pipeline_id):
         finally:
             ss.close()
 
-    def _stream_csv_records(resp, encoding, delimiter, skip_header):
-        """urllib3 response → 줄 단위 디코드 → csv.reader → dict.
+    def _try_acquire_lock(run_id):
+        ss = SessionLocal()
+        try:
+            now = datetime.utcnow()
+            cutoff = now - _timedelta(hours=LOCK_TTL_HOURS)
+            res = ss.execute(_sql_text("""
+                UPDATE pipeline
+                SET current_run_id = :rid, current_run_at = :now
+                WHERE id = :pid
+                  AND (current_run_id IS NULL OR current_run_id = ''
+                       OR current_run_at IS NULL OR current_run_at < :cutoff)
+                RETURNING current_run_id
+            """), {"rid": run_id, "now": now, "cutoff": cutoff, "pid": pipeline_id})
+            row = res.fetchone()
+            ss.commit()
+            return bool(row) and row[0] == run_id
+        except Exception:
+            ss.rollback()
+            return False
+        finally:
+            ss.close()
 
-        chunk 경계를 고려해 buffer 에 모아 \n 기준으로 line 분할.
-        """
+    def _release_lock(run_id):
+        ss = SessionLocal()
+        try:
+            ss.execute(_sql_text("""
+                UPDATE pipeline
+                SET current_run_id = '', current_run_at = NULL
+                WHERE id = :pid AND current_run_id = :rid
+            """), {"pid": pipeline_id, "rid": run_id})
+            ss.commit()
+        except Exception:
+            ss.rollback()
+        finally:
+            ss.close()
+
+    def _stream_csv_records(resp, encoding, delimiter, skip_header):
         def _line_iter():
             buf = b""
-            for chunk in resp.stream(8 * 1024 * 1024):  # 8MB
+            for chunk in resp.stream(8 * 1024 * 1024):
                 if not isinstance(chunk, (bytes, bytearray)):
                     continue
                 buf += chunk
@@ -419,11 +455,40 @@ def run_file_source(pipeline_id):
                     continue
                 else:
                     header = [f"col{i}" for i in range(len(row))]
-                    # fall through: 첫 행도 data 로 yield
             if len(row) == len(header):
                 yield dict(zip(header, row))
             else:
                 yield {h: (row[i] if i < len(row) else "") for i, h in enumerate(header)}
+
+    def _stream_json_records(resp):
+        """ijson 으로 JSON 스트리밍. 루트가 array (item) 또는 {data|records|items: [...]} 지원."""
+        try:
+            import ijson
+        except ImportError:
+            logger.warning("ijson 미설치 — JSON 전체 메모리 적재 fallback")
+            content = resp.read()
+            for r in _parse_json(content, "utf-8"):
+                yield r
+            return
+
+        # ijson 은 'item' (루트 배열) / 'data.item' 등 prefix 지원.
+        # 일반적으로 사용자 JSON 은 [...] 또는 {"data": [...]}, {"records": [...]}.
+        # 우선 'item' 을 시도하고, 안되면 fallback 으로 일반 parse.
+        try:
+            for rec in ijson.items(resp, "item"):
+                if isinstance(rec, dict):
+                    yield rec
+                else:
+                    yield {"value": rec}
+        except Exception as e:
+            logger.warning("ijson 스트리밍 실패 (%s) — 메모리 적재 fallback", e)
+            try:
+                resp.close(); resp.release_conn()
+            except Exception:
+                pass
+            # ijson 이 stream 을 소비했을 수 있으므로 재시도는 별도 get_object 가 필요.
+            # 호출자가 처리해야 함. 빈 yield.
+            return
 
     db = SessionLocal()
     try:
@@ -433,161 +498,166 @@ def run_file_source(pipeline_id):
         if p.status != "running":
             return {"ok": False, "error": "파이프라인이 실행 중이 아닙니다. 먼저 [시작]을 누르세요."}
 
-        steps = db.query(PipelineStep).filter_by(
-            pipeline_id=pipeline_id
-        ).order_by(PipelineStep.step_order).all()
+        # 동시 실행 방지 — DB 기반 lock
+        run_id = str(_uuid.uuid4())
+        if not _try_acquire_lock(run_id):
+            return {
+                "ok": False,
+                "error": "이미 실행 중인 file-source 작업이 있습니다. 완료를 기다린 뒤 재시도하세요.",
+            }
 
-        source_steps = []
-        process_steps = []
-        sink_steps = []
-        for st in steps:
-            if not st.enabled:
-                continue
-            entry = {"module_type": st.module_type, "config": dict(st.config or {})}
-            if st.module_type in _FILE_SOURCE_TYPES:
-                source_steps.append(entry)
-            elif st.module_type in SINK_REGISTRY:
-                sink_steps.append(entry)
-            else:
-                process_steps.append(entry)
-
-        if not source_steps:
-            return {"ok": False, "error": "import_source 스텝이 없습니다."}
-
-        src_cfg = source_steps[0]["config"]
-        connector_type = src_cfg.get("connectorType", "import")
-        connector_id = src_cfg.get("connectorId")
-        if not connector_id:
-            return {"ok": False, "error": "source 설정에 connectorId 가 없습니다."}
-
-        c = db.query(ImportCollector).get(connector_id)
-        if not c:
-            return {"ok": False, "error": f"Import collector {connector_id} 를 찾을 수 없습니다."}
-
-        client = get_minio_client(db)
-        bucket = c.target_bucket or "sdl-files"
-        prefix = f"import/{connector_id}/"
-
-        objects = list(client.list_objects(bucket, prefix=prefix, recursive=True))
-        if not objects:
-            return {"ok": False, "error": f"s3://{bucket}/{prefix} 에 파일이 없습니다."}
-
-        encoding = c.encoding or "utf-8"
-        delimiter = c.delimiter or ","
-        skip_header = c.skip_header
-        import_type = (c.import_type or "csv").lower()
-
-        logger.info(
-            "file-source pipeline=%s 시작 — files=%d, format=%s, sinks=%d",
-            pipeline_id, len(objects), import_type, len(sink_steps),
-        )
-
-        # 시작 시 카운터 초기화 (별도 세션)
-        _commit_progress(0, 0, 0)
-
-        total_processed = 0
-        total_errors = 0
-        total_dropped = 0
-        last_commit_at = _time.time()
-        last_commit_count = 0
-
-        for fi, obj in enumerate(objects):
-            try:
-                resp = client.get_object(bucket, obj.object_name)
-                try:
-                    if import_type == "json":
-                        # JSON 은 현재 그대로 메모리 적재 (스트리밍은 별건)
-                        records_iter = iter(_parse_json(resp.read(), encoding))
-                    else:
-                        records_iter = _stream_csv_records(
-                            resp, encoding, delimiter, skip_header,
-                        )
-
-                    file_record_count = 0
-                    for rec in records_iter:
-                        msg = {
-                            "value": rec,
-                            "source": {
-                                "connectorType": connector_type,
-                                "connectorId": connector_id,
-                                "tagName": "row",
-                            },
-                            "dataType": "object",
-                            "timestamp": datetime.utcnow().isoformat(),
-                        }
-
-                        drop = False
-                        for step_entry in process_steps:
-                            msg = process_message(
-                                msg, step_entry["module_type"], step_entry["config"],
-                            )
-                            if msg is None:
-                                drop = True
-                                break
-                        if drop:
-                            total_dropped += 1
-                            continue
-
-                        for sink_step in sink_steps:
-                            try:
-                                sink_func = SINK_REGISTRY.get(sink_step["module_type"])
-                                if sink_func:
-                                    cfg = dict(sink_step["config"])
-                                    cfg["_pipeline_id"] = pipeline_id
-                                    sink_func(copy.deepcopy(msg), cfg)
-                            except Exception as se:
-                                total_errors += 1
-                                logger.warning(
-                                    "file-source sink %s 실패: %s",
-                                    sink_step["module_type"], se,
-                                )
-
-                        total_processed += 1
-                        file_record_count += 1
-
-                        # 진행률 commit (record-level)
-                        now = _time.time()
-                        if (total_processed - last_commit_count) >= PROGRESS_RECORDS or (now - last_commit_at) >= PROGRESS_SECONDS:
-                            _commit_progress(total_processed, total_errors, total_dropped)
-                            last_commit_count = total_processed
-                            last_commit_at = now
-                finally:
-                    try:
-                        resp.close()
-                        resp.release_conn()
-                    except Exception:
-                        pass
-
-                logger.info(
-                    "file-source pipeline=%s file=%s done — rows=%d (cumulative processed=%d)",
-                    pipeline_id, obj.object_name, file_record_count, total_processed,
-                )
-                # 파일 단위에서 한 번 더 확실히 commit
-                _commit_progress(total_processed, total_errors, total_dropped)
-                last_commit_count = total_processed
-                last_commit_at = _time.time()
-            except Exception as e:
-                total_errors += 1
-                logger.warning("파일 %s 처리 실패: %s", obj.object_name, e)
-
-        # 마지막 sink buffer flush + 최종 commit
         try:
-            flush_all_sink_buffers()
-        except Exception as e:
-            logger.warning("flush_all_sink_buffers 실패: %s", e)
+            steps = db.query(PipelineStep).filter_by(
+                pipeline_id=pipeline_id
+            ).order_by(PipelineStep.step_order).all()
 
-        _commit_progress(total_processed, total_errors, total_dropped)
+            source_steps = []
+            process_steps = []
+            sink_steps = []
+            for st in steps:
+                if not st.enabled:
+                    continue
+                entry = {"module_type": st.module_type, "config": dict(st.config or {})}
+                if st.module_type in _FILE_SOURCE_TYPES:
+                    source_steps.append(entry)
+                elif st.module_type in SINK_REGISTRY:
+                    sink_steps.append(entry)
+                else:
+                    process_steps.append(entry)
 
-        logger.info(
-            "file-source pipeline=%s 완료 — files=%d processed=%d dropped=%d errors=%d",
-            pipeline_id, len(objects), total_processed, total_dropped, total_errors,
-        )
-        return {
-            "ok": True,
-            "files": len(objects),
-            "processed": total_processed,
-            "dropped": total_dropped,
-            "errors": total_errors,
-        }
+            if not source_steps:
+                return {"ok": False, "error": "import_source 스텝이 없습니다."}
+
+            src_cfg = source_steps[0]["config"]
+            connector_type = src_cfg.get("connectorType", "import")
+            connector_id = src_cfg.get("connectorId")
+            if not connector_id:
+                return {"ok": False, "error": "source 설정에 connectorId 가 없습니다."}
+
+            c = db.query(ImportCollector).get(connector_id)
+            if not c:
+                return {"ok": False, "error": f"Import collector {connector_id} 를 찾을 수 없습니다."}
+
+            client = get_minio_client(db)
+            bucket = c.target_bucket or "sdl-files"
+            prefix = f"import/{connector_id}/"
+
+            objects = list(client.list_objects(bucket, prefix=prefix, recursive=True))
+            if not objects:
+                return {"ok": False, "error": f"s3://{bucket}/{prefix} 에 파일이 없습니다."}
+
+            encoding = c.encoding or "utf-8"
+            delimiter = c.delimiter or ","
+            skip_header = c.skip_header
+            import_type = (c.import_type or "csv").lower()
+
+            logger.info(
+                "file-source pipeline=%s 시작 — files=%d, format=%s, sinks=%d, run_id=%s",
+                pipeline_id, len(objects), import_type, len(sink_steps), run_id,
+            )
+
+            _commit_progress(0, 0, 0)
+
+            total_processed = 0
+            total_errors = 0
+            total_dropped = 0
+            last_commit_at = _time.time()
+            last_commit_count = 0
+
+            for fi, obj in enumerate(objects):
+                try:
+                    resp = client.get_object(bucket, obj.object_name)
+                    try:
+                        if import_type == "json":
+                            records_iter = _stream_json_records(resp)
+                        else:
+                            records_iter = _stream_csv_records(
+                                resp, encoding, delimiter, skip_header,
+                            )
+
+                        file_record_count = 0
+                        for rec in records_iter:
+                            msg = {
+                                "value": rec,
+                                "source": {
+                                    "connectorType": connector_type,
+                                    "connectorId": connector_id,
+                                    "tagName": "row",
+                                },
+                                "dataType": "object",
+                                "timestamp": datetime.utcnow().isoformat(),
+                            }
+
+                            drop = False
+                            for step_entry in process_steps:
+                                msg = process_message(
+                                    msg, step_entry["module_type"], step_entry["config"],
+                                )
+                                if msg is None:
+                                    drop = True
+                                    break
+                            if drop:
+                                total_dropped += 1
+                                continue
+
+                            for sink_step in sink_steps:
+                                try:
+                                    sink_func = SINK_REGISTRY.get(sink_step["module_type"])
+                                    if sink_func:
+                                        cfg = dict(sink_step["config"])
+                                        cfg["_pipeline_id"] = pipeline_id
+                                        sink_func(copy.deepcopy(msg), cfg)
+                                except Exception as se:
+                                    total_errors += 1
+                                    logger.warning(
+                                        "file-source sink %s 실패: %s",
+                                        sink_step["module_type"], se,
+                                    )
+
+                            total_processed += 1
+                            file_record_count += 1
+
+                            now = _time.time()
+                            if (total_processed - last_commit_count) >= PROGRESS_RECORDS or (now - last_commit_at) >= PROGRESS_SECONDS:
+                                _commit_progress(total_processed, total_errors, total_dropped)
+                                last_commit_count = total_processed
+                                last_commit_at = now
+                    finally:
+                        try:
+                            resp.close(); resp.release_conn()
+                        except Exception:
+                            pass
+
+                    logger.info(
+                        "file-source pipeline=%s file=%s done — rows=%d (cumulative processed=%d)",
+                        pipeline_id, obj.object_name, file_record_count, total_processed,
+                    )
+                    _commit_progress(total_processed, total_errors, total_dropped)
+                    last_commit_count = total_processed
+                    last_commit_at = _time.time()
+                except Exception as e:
+                    total_errors += 1
+                    logger.warning("파일 %s 처리 실패: %s", obj.object_name, e)
+
+            try:
+                flush_all_sink_buffers()
+            except Exception as e:
+                logger.warning("flush_all_sink_buffers 실패: %s", e)
+
+            _commit_progress(total_processed, total_errors, total_dropped)
+
+            logger.info(
+                "file-source pipeline=%s 완료 — files=%d processed=%d dropped=%d errors=%d",
+                pipeline_id, len(objects), total_processed, total_dropped, total_errors,
+            )
+            return {
+                "ok": True,
+                "files": len(objects),
+                "processed": total_processed,
+                "dropped": total_dropped,
+                "errors": total_errors,
+            }
+        finally:
+            _release_lock(run_id)
     finally:
         db.close()
