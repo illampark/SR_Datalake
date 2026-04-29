@@ -126,16 +126,15 @@ def _get_connector_summary(db):
             error += e
             stopped += s
 
-            if t > 0:
-                by_type.append({
-                    "type": type_key,
-                    "label": label,
-                    "total": t,
-                    "running": r,
-                    "stopped": s,
-                    "error": e,
-                    "collected": collected,
-                })
+            by_type.append({
+                "type": type_key,
+                "label": label,
+                "total": t,
+                "running": r,
+                "stopped": s,
+                "error": e,
+                "collected": collected,
+            })
         except Exception as ex:
             logger.warning("커넥터 %s 요약 실패: %s", type_key, ex)
 
@@ -357,7 +356,7 @@ _CONN_ICONS = {
 
 def _check_flask():
     return {
-        "name": "Flask 앱 서버",
+        "name": "웹 서비스 서버",
         "type": "infra",
         "icon": "fa-flask",
         "status": "healthy",
