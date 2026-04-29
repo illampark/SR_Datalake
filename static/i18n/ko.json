@@ -588,6 +588,10 @@
       "lbl_batch_size": "배치 크기",
       "lbl_publish_mqtt": "파이프라인 연계 (MQTT 발행)",
       "mqtt_help": "활성화 시 데이터가 파이프라인을 거쳐 저장됩니다. 비활성화 시 대상 DB에 직접 저장합니다.",
+      "lbl_sheet_name": "시트 이름 (xlsx)",
+      "ph_sheet_name": "비워두면 첫 시트 사용",
+      "sheet_help": "여러 시트가 있는 경우 처리할 시트 이름을 지정하세요. 비워두면 첫 시트를 사용합니다.",
+      "lbl_header_row": "헤더 행 번호 (xlsx)",
       "err_name_required": "이름을 입력하세요.",
       "confirm_delete": "'{name}' 가져오기를 삭제하시겠습니까?",
       "upload_title": "파일 업로드 및 실행",
@@ -1981,6 +1985,7 @@
       "delete_no_data_to_remove": "삭제할 실제 데이터가 식별되지 않았습니다.",
       "btn_preview_file": "파일 미리보기",
       "preview_truncated": "큰 파일은 앞 {n}만 표시 (전체는 다운로드 필요)",
+      "preview_table_truncated": "앞 {n}행만 표시 (전체는 다운로드 필요)",
       "preview_unsupported": "미리보기를 지원하지 않는 형식입니다.",
       "preview_open_raw": "새 탭에서 원본 열기"
     },
@@ -2144,6 +2149,7 @@
       "toast_n_files_deleted": "{n}개 파일이 삭제되었습니다.",
       "btn_preview": "미리보기",
       "preview_truncated": "큰 파일은 앞 {n}만 표시 (전체는 다운로드 필요)",
+      "preview_table_truncated": "앞 {n}행만 표시 (전체는 다운로드 필요)",
       "preview_unsupported": "미리보기를 지원하지 않는 형식입니다.",
       "preview_open_raw": "새 탭에서 원본 열기"
     },

@@ -659,6 +659,9 @@ class ImportCollector(Base):
     delimiter = Column(String(5), default=",")
     skip_header = Column(Boolean, default=True)
     publish_mqtt = Column(Boolean, default=True)  # MQTT 발행 여부 (파이프라인 연계)
+    # xlsx 옵션 (import_type='xlsx' 일 때만 사용)
+    sheet_name = Column(String(200), default="")  # 빈 값이면 첫 시트
+    header_row = Column(Integer, default=1)        # 1-base, 헤더가 있는 행 번호
     # 소스 모드
     source_mode = Column(String(20), default="upload")  # upload / local_path
     local_path = Column(String(1000), default="")        # 서버 로컬 경로
@@ -702,6 +705,8 @@ class ImportCollector(Base):
             "delimiter": self.delimiter,
             "skipHeader": self.skip_header,
             "publishMqtt": self.publish_mqtt,
+            "sheetName": self.sheet_name or "",
+            "headerRow": self.header_row if self.header_row else 1,
             "sourceMode": self.source_mode or "upload",
             "localPath": self.local_path or "",
             "filePatterns": self.file_patterns or ["*"],

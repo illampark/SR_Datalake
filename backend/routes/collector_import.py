@@ -187,6 +187,8 @@ def create_import():
             delimiter=body.get("delimiter", ","),
             skip_header=body.get("skipHeader", True),
             publish_mqtt=body.get("publishMqtt", True),
+            sheet_name=body.get("sheetName", ""),
+            header_row=body.get("headerRow", 1),
             source_mode=body.get("sourceMode", "upload"),
             local_path=body.get("localPath", ""),
             file_patterns=body.get("filePatterns", ["*"]),
@@ -230,6 +232,7 @@ def update_import(cid):
             "batchSize": "batch_size", "encoding": "encoding",
             "delimiter": "delimiter", "skipHeader": "skip_header",
             "publishMqtt": "publish_mqtt",
+            "sheetName": "sheet_name", "headerRow": "header_row",
             "sourceMode": "source_mode", "localPath": "local_path",
             "filePatterns": "file_patterns", "recursive": "recursive",
         }

@@ -106,6 +106,7 @@
           <select class="form-select" id="f-importType" onchange="onImportTypeChange()">
             <option value="csv">CSV</option>
             <option value="json">JSON</option>
+            <option value="xlsx">XLSX</option>
             <option value="files">{{ t('page.import_collector.type_files') }}</option>
           </select>
         </div>
@@ -160,6 +161,15 @@
         <div class="form-group data-only-field">
           <label>{{ t('page.import_collector.lbl_timestamp_col') }}</label>
           <input type="text" class="form-control" id="f-tsCol" placeholder="timestamp">
+        </div>
+        <div class="form-group xlsx-only-field" id="grp-sheetName">
+          <label>{{ t('page.import_collector.lbl_sheet_name') }}</label>
+          <input type="text" class="form-control" id="f-sheetName" placeholder="{{ t('page.import_collector.ph_sheet_name') }}">
+          <div class="fs-11 text-muted">{{ t('page.import_collector.sheet_help') }}</div>
+        </div>
+        <div class="form-group xlsx-only-field" id="grp-headerRow">
+          <label>{{ t('page.import_collector.lbl_header_row') }}</label>
+          <input type="number" class="form-control" id="f-headerRow" min="1" value="1">
         </div>
         <div class="form-group data-only-field">
           <label>{{ t('page.import_collector.lbl_batch_size') }}</label>
@@ -370,6 +380,7 @@ var categoryIcon = {image:'fa-image',video:'fa-video',audio:'fa-music',text:'fa-
 function onImportTypeChange(){
   var it=$('#f-importType').val();
   var isFile = (it==='files');
+  var isXlsx = (it==='xlsx');
   // 파일 모드: 대상을 file로 고정, 데이터 관련 필드 숨김
   if(isFile){
     $('#f-targetType').val('file');
@@ -379,6 +390,14 @@ function onImportTypeChange(){
   } else {
     $('#f-targetType').prop('disabled', false);
     $('.data-only-field').show();
+  }
+  // xlsx 전용 필드 (sheet_name, header_row): xlsx에서만 노출
+  if(isXlsx){
+    $('.xlsx-only-field').show();
+    // xlsx에서는 delimiter/skipHeader 무의미
+    $('#grp-delimiter').hide();
+  } else {
+    $('.xlsx-only-field').hide();
   }
   // 파일 업로드 input 설정 — csv/json 모드도 멀티 + ZIP 지원하므로 항상 multiple 허용
   $('#upload-file').attr('multiple','multiple');
@@ -507,12 +526,15 @@ function openAddModal(){
   $('#f-delimiter').val(',');
   $('#f-batchSize').val(1000);
   $('#f-publishMqtt').prop('checked', true);
+  $('#f-sheetName').val('');
+  $('#f-headerRow').val(1);
   $('input[name=sourceMode][value="upload"]').prop('checked', true);
   $('#f-localPath').val('');
   $('#f-filePatterns').val('*');
   $('#f-recursive').prop('checked', true);
   onSourceModeChange();
   loadTargets(function(){onTargetTypeChange();});
+  onImportTypeChange();
   $('#modal-overlay').show();
 }
 
@@ -534,6 +556,8 @@ function openEditModal(id){
     $('#f-targetTable').val(c.targetTable);
     $('#f-targetBucket').val(c.targetBucket);
     $('#f-publishMqtt').prop('checked', c.publishMqtt);
+    $('#f-sheetName').val(c.sheetName||'');
+    $('#f-headerRow').val(c.headerRow||1);
     $('input[name=sourceMode][value="'+(c.sourceMode||'upload')+'"]').prop('checked',true);
     $('#f-localPath').val(c.localPath||'');
     $('#f-filePatterns').val((c.filePatterns||['*']).join(', '));
@@ -543,6 +567,7 @@ function openEditModal(id){
       onTargetTypeChange();
       if(c.targetId) $('#f-targetId').val(c.targetId);
     });
+    onImportTypeChange();
     $('#modal-overlay').show();
   });
 }
@@ -565,6 +590,8 @@ function saveImport(){
     delimiter: $('#f-delimiter').val(),
     batchSize: parseInt($('#f-batchSize').val())||1000,
     publishMqtt: $('#f-publishMqtt').is(':checked'),
+    sheetName: ($('#f-sheetName').val()||'').trim(),
+    headerRow: parseInt($('#f-headerRow').val())||1,
     sourceMode: $('input[name=sourceMode]:checked').val() || 'upload',
     localPath: $('#f-localPath').val() || '',
     filePatterns: ($('#f-filePatterns').val()||'*').split(',').map(function(s){return s.trim()}).filter(Boolean),

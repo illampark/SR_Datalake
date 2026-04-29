@@ -588,6 +588,10 @@
       "lbl_batch_size": "Batch Size",
       "lbl_publish_mqtt": "Pipeline Integration (MQTT Publish)",
       "mqtt_help": "When enabled, data flows through pipelines before storage. When disabled, data is inserted directly into target DB.",
+      "lbl_sheet_name": "Sheet name (xlsx)",
+      "ph_sheet_name": "Leave blank to use first sheet",
+      "sheet_help": "For multi-sheet workbooks, specify which sheet to process. Blank uses the first sheet.",
+      "lbl_header_row": "Header row (xlsx)",
       "err_name_required": "Name is required.",
       "confirm_delete": "Delete import '{name}'?",
       "upload_title": "File Upload & Execute",
@@ -1981,6 +1985,7 @@
       "delete_no_data_to_remove": "No underlying data was identified for deletion.",
       "btn_preview_file": "Preview file",
       "preview_truncated": "Large file — only first {n} shown (download for full content)",
+      "preview_table_truncated": "Showing first {n} rows only (download for full content)",
       "preview_unsupported": "Preview not supported for this file type.",
       "preview_open_raw": "Open raw in new tab"
     },
@@ -2144,6 +2149,7 @@
       "toast_n_files_deleted": "{n} files deleted.",
       "btn_preview": "Preview",
       "preview_truncated": "Large file — only first {n} shown (download for full content)",
+      "preview_table_truncated": "Showing first {n} rows only (download for full content)",
       "preview_unsupported": "Preview not supported for this file type.",
       "preview_open_raw": "Open raw in new tab"
     },

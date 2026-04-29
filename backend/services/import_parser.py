@@ -503,6 +503,48 @@ def _parse_json(file_content, encoding):
     return [data]
 
 
+def _parse_xlsx(file_content, sheet_name=None, header_row=1):
+    """xlsx(엑셀) 파일을 dict 리스트로 변환.
+
+    sheet_name: 빈 값/None 이면 첫 시트.
+    header_row: 1-base. 헤더가 있는 행 번호. 그 다음 행부터 데이터로 간주.
+    """
+    from io import BytesIO
+    import openpyxl
+
+    if isinstance(file_content, str):
+        file_content = file_content.encode("utf-8")
+    wb = openpyxl.load_workbook(BytesIO(file_content), read_only=True, data_only=True)
+    try:
+        if sheet_name and sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb[wb.sheetnames[0]]
+
+        hr = max(1, int(header_row or 1))
+        headers = None
+        records = []
+        for ri, row in enumerate(ws.iter_rows(values_only=True), start=1):
+            if ri < hr:
+                continue
+            if ri == hr:
+                headers = [(str(c).strip() if c is not None else f"col_{i}") for i, c in enumerate(row)]
+                continue
+            if headers is None:
+                continue
+            # 빈 행 스킵
+            if all(c is None for c in row):
+                continue
+            rec = {}
+            for i, h in enumerate(headers):
+                v = row[i] if i < len(row) else None
+                rec[h] = v
+            records.append(rec)
+        return records
+    finally:
+        wb.close()
+
+
 def _infer_data_type(value):
     """값으로부터 데이터 타입 추론"""
     if value is None or value == "":
@@ -694,6 +736,8 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
             records = _parse_csv(file_content, encoding, delimiter, collector.skip_header)
         elif import_type == "json":
             records = _parse_json(file_content, encoding)
+        elif import_type == "xlsx":
+            records = _parse_xlsx(file_content, collector.sheet_name, collector.header_row)
         else:
             raise ValueError(f"Unsupported import type: {import_type}")
 

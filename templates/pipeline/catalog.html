@@ -1359,17 +1359,19 @@ function loadCatalogFiles(page) {
   });
 }
 
-function previewCatalogFile(bucket, objectName, name) {
+function previewCatalogFile(bucket, objectName, name, sheet) {
+  var params = { bucket: bucket, objectName: objectName };
+  if (sheet) params.sheet = sheet;
   $.ajax({
     url: '/api/storage/file/preview',
     method: 'GET',
-    data: { bucket: bucket, objectName: objectName },
+    data: params,
     success: function(r) {
       if (!r.success) {
         showToast((r.error && r.error.message) || __t('common.error'), 'error');
         return;
       }
-      _showCatalogFilePreview(name, r.data);
+      _showCatalogFilePreview(name, r.data, bucket, objectName);
     },
     error: function() { showToast(__t('common.error'), 'error'); }
   });
@@ -1384,7 +1386,37 @@ function _fmtPrevSize(b) {
   return (b/1073741824).toFixed(2) + ' GB';
 }
 
-function _showCatalogFilePreview(name, data) {
+function _renderCatalogPreviewTable(data, bucket, objectName, name) {
+  var sheets = data.sheets || [];
+  var cur = data.currentSheet || (sheets[0] || '');
+  var sel = '';
+  if (sheets.length > 1) {
+    sel = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+          '<label class="text-muted" style="font-size:12px;">Sheet:</label>' +
+          '<select class="form-select" style="width:auto;font-size:12px;" onchange="closeCatalogPreview();previewCatalogFile(\'' + escAttr(bucket) + '\',\'' + escAttr(objectName) + '\',\'' + escAttr(name) + '\', this.value)">' +
+          sheets.map(function(s){
+            return '<option value="' + escAttr(s) + '"' + (s===cur?' selected':'') + '>' + escHtml(s) + '</option>';
+          }).join('') +
+          '</select></div>';
+  }
+  var trunc = data.truncated ? '<div class="text-warning" style="font-size:12px;margin-bottom:6px;">⚠ ' +
+              __t('page.catalog.preview_table_truncated').replace('{n}', data.previewRows || 0) + '</div>' : '';
+  var headers = (data.headers || []).map(function(h){ return '<th style="border:1px solid #dee2e6;padding:6px 8px;background:#f8f9fa;font-weight:600;">' + escHtml(String(h)) + '</th>'; }).join('');
+  var rowsHtml = (data.rows || []).map(function(row){
+    var tds = row.map(function(v){
+      var s = (v == null) ? '' : String(v);
+      return '<td style="border:1px solid #dee2e6;padding:4px 8px;font-size:12px;white-space:nowrap;">' + escHtml(s) + '</td>';
+    }).join('');
+    return '<tr>' + tds + '</tr>';
+  }).join('');
+  return sel + trunc +
+         '<div style="max-height:60vh;overflow:auto;border:1px solid #dee2e6;border-radius:4px;">' +
+         '<table style="border-collapse:collapse;width:100%;font-size:12px;">' +
+         '<thead><tr>' + headers + '</tr></thead>' +
+         '<tbody>' + rowsHtml + '</tbody></table></div>';
+}
+
+function _showCatalogFilePreview(name, data, bucket, objectName) {
   var meta = '<div class="text-muted" style="font-size:12px;margin-bottom:8px;">' +
              '<i class="fas fa-info-circle"></i> ' +
              escHtml(data.objectName || '') + ' · ' +
@@ -1398,6 +1430,8 @@ function _showCatalogFilePreview(name, data) {
            '<img src="' + data.rawUrl + '" style="max-width:100%;max-height:60vh;object-fit:contain;" alt="' + escAttr(name) + '"></div>';
   } else if (data.kind === 'pdf') {
     body = meta + '<iframe src="' + data.rawUrl + '" style="width:100%;height:65vh;border:1px solid #dee2e6;border-radius:4px;"></iframe>';
+  } else if (data.kind === 'table') {
+    body = meta + _renderCatalogPreviewTable(data, bucket || data.bucket, objectName || data.objectName, name);
   } else {
     body = meta + '<div class="text-muted" style="padding:24px;text-align:center;">' +
            '<i class="fas fa-file" style="font-size:36px;"></i><br>' +

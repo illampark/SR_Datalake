@@ -490,6 +490,60 @@ def run_file_source(pipeline_id):
             # 호출자가 처리해야 함. 빈 yield.
             return
 
+    def _stream_xlsx_records(resp, sheet_name, header_row):
+        """xlsx 스트리밍. ZIP+시트 XML 구조라 진정한 streaming 은 불가능 →
+        BytesIO 적재 후 openpyxl read_only 모드로 행 단위 yield.
+        업무용 수십 MB 범위는 안전. GB 급은 권장하지 않음.
+        """
+        try:
+            import openpyxl
+        except ImportError:
+            logger.warning("openpyxl 미설치 — xlsx 처리 불가")
+            try:
+                resp.close(); resp.release_conn()
+            except Exception:
+                pass
+            return
+
+        from io import BytesIO
+        try:
+            buf = BytesIO(resp.read())
+        finally:
+            try:
+                resp.close(); resp.release_conn()
+            except Exception:
+                pass
+
+        wb = openpyxl.load_workbook(buf, read_only=True, data_only=True)
+        try:
+            if sheet_name and sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+            else:
+                ws = wb[wb.sheetnames[0]]
+
+            hr = max(1, int(header_row or 1))
+            headers = None
+            for ri, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                if ri < hr:
+                    continue
+                if ri == hr:
+                    headers = [(str(c).strip() if c is not None else f"col_{i}") for i, c in enumerate(row)]
+                    continue
+                if headers is None:
+                    continue
+                if all(c is None for c in row):
+                    continue
+                rec = {}
+                for i, h in enumerate(headers):
+                    v = row[i] if i < len(row) else None
+                    # 파이프라인 sink 호환 위해 datetime → ISO 문자열로 변환 (None/숫자/문자열은 그대로)
+                    if hasattr(v, "isoformat"):
+                        v = v.isoformat()
+                    rec[h] = v
+                yield rec
+        finally:
+            wb.close()
+
     db = SessionLocal()
     try:
         p = db.query(Pipeline).get(pipeline_id)
@@ -570,6 +624,10 @@ def run_file_source(pipeline_id):
                     try:
                         if import_type == "json":
                             records_iter = _stream_json_records(resp)
+                        elif import_type == "xlsx":
+                            records_iter = _stream_xlsx_records(
+                                resp, c.sheet_name, c.header_row,
+                            )
                         else:
                             records_iter = _stream_csv_records(
                                 resp, encoding, delimiter, skip_header,

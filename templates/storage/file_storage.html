@@ -433,17 +433,19 @@ function downloadFile(bucket, objectName) {
 }
 
 /* ── 파일 미리보기 ── */
-function previewFile(bucket, objectName, filename) {
+function previewFile(bucket, objectName, filename, sheet) {
+  var params = { bucket: bucket, objectName: objectName };
+  if (sheet) params.sheet = sheet;
   $.ajax({
     url: API + '/preview',
     method: 'GET',
-    data: { bucket: bucket, objectName: objectName },
+    data: params,
     success: function(r) {
       if (!r.success) {
         showToast((r.error && r.error.message) || __t('common.error'), 'error');
         return;
       }
-      _showFilePreviewModal(filename, r.data);
+      _showFilePreviewModal(filename, r.data, bucket, objectName);
     },
     error: function(xhr) {
       var msg = __t('common.error');
@@ -451,6 +453,36 @@ function previewFile(bucket, objectName, filename) {
       showToast(msg, 'error');
     }
   });
+}
+
+function _renderPreviewTable(data, bucket, objectName) {
+  var sheets = data.sheets || [];
+  var cur = data.currentSheet || (sheets[0] || '');
+  var sel = '';
+  if (sheets.length > 1) {
+    sel = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+          '<label class="text-muted" style="font-size:12px;">Sheet:</label>' +
+          '<select class="form-select" style="width:auto;font-size:12px;" onchange="closeFilePreview();previewFile(\'' + escAttr(bucket) + '\',\'' + escAttr(objectName) + '\',\'' + escAttr(objectName.split(\'/\').pop()) + '\', this.value)">' +
+          sheets.map(function(s){
+            return '<option value="' + escAttr(s) + '"' + (s===cur?' selected':'') + '>' + escHtml(s) + '</option>';
+          }).join('') +
+          '</select></div>';
+  }
+  var trunc = data.truncated ? '<div class="text-warning" style="font-size:12px;margin-bottom:6px;">⚠ ' +
+              __t('page.file_storage.preview_table_truncated').replace('{n}', data.previewRows || 0) + '</div>' : '';
+  var headers = (data.headers || []).map(function(h){ return '<th style="border:1px solid #dee2e6;padding:6px 8px;background:#f8f9fa;font-weight:600;">' + escHtml(String(h)) + '</th>'; }).join('');
+  var rowsHtml = (data.rows || []).map(function(row){
+    var tds = row.map(function(v){
+      var s = (v == null) ? '' : String(v);
+      return '<td style="border:1px solid #dee2e6;padding:4px 8px;font-size:12px;white-space:nowrap;">' + escHtml(s) + '</td>';
+    }).join('');
+    return '<tr>' + tds + '</tr>';
+  }).join('');
+  var table = '<div style="max-height:60vh;overflow:auto;border:1px solid #dee2e6;border-radius:4px;">' +
+              '<table style="border-collapse:collapse;width:100%;font-size:12px;">' +
+              '<thead><tr>' + headers + '</tr></thead>' +
+              '<tbody>' + rowsHtml + '</tbody></table></div>';
+  return sel + trunc + table;
 }
 
 function _fmtPreviewSize(b) {
@@ -462,7 +494,7 @@ function _fmtPreviewSize(b) {
   return (b/1073741824).toFixed(2) + ' GB';
 }
 
-function _showFilePreviewModal(name, data) {
+function _showFilePreviewModal(name, data, bucket, objectName) {
   var body = '';
   var meta = '<div class="text-muted" style="font-size:12px;margin-bottom:8px;">' +
              '<i class="fas fa-info-circle"></i> ' +
@@ -476,6 +508,8 @@ function _showFilePreviewModal(name, data) {
            '<img src="' + data.rawUrl + '" style="max-width:100%;max-height:60vh;object-fit:contain;" alt="' + escAttr(name) + '"></div>';
   } else if (data.kind === 'pdf') {
     body = meta + '<iframe src="' + data.rawUrl + '" style="width:100%;height:65vh;border:1px solid #dee2e6;border-radius:4px;"></iframe>';
+  } else if (data.kind === 'table') {
+    body = meta + _renderPreviewTable(data, bucket || data.bucket, objectName || data.objectName);
   } else {
     body = meta + '<div class="text-muted" style="padding:24px;text-align:center;">' +
            '<i class="fas fa-file" style="font-size:36px;"></i><br>' +

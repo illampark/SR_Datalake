@@ -1,3 +1,4 @@
+import logging
 import os
 import io
 from datetime import datetime
@@ -7,6 +8,8 @@ from backend.database import SessionLocal
 from backend.models.storage import FileCleanupPolicy
 from backend.config import MINIO_BUCKETS
 from backend.services.minio_client import get_minio_client, get_minio_config
+
+logger = logging.getLogger(__name__)
 
 file_bp = Blueprint("storage_file", __name__, url_prefix="/api/storage/file")
 
@@ -410,6 +413,67 @@ def preview_file():
                 "extension": ext,
                 "rawUrl": raw_url,
             })
+
+        if ext == ".xlsx":
+            sheet = request.args.get("sheet") or ""
+            max_rows = request.args.get("maxRows", 100, type=int)
+            try:
+                resp = client.get_object(bucket, object_name)
+                try:
+                    raw = resp.read()
+                finally:
+                    resp.close()
+                    resp.release_conn()
+            except Exception as e:
+                return _err(f"파일 읽기 실패: {e}", "READ_ERROR", 500)
+            try:
+                from io import BytesIO
+                import openpyxl
+                wb = openpyxl.load_workbook(BytesIO(raw), read_only=True, data_only=True)
+                try:
+                    sheets = list(wb.sheetnames)
+                    cur = sheet if (sheet and sheet in sheets) else sheets[0]
+                    ws = wb[cur]
+                    headers, rows = None, []
+                    for ri, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                        if ri == 1:
+                            headers = [(str(c).strip() if c is not None else f"col_{i}") for i, c in enumerate(row)]
+                            continue
+                        if all(c is None for c in row):
+                            continue
+                        rows.append([
+                            (v.isoformat() if hasattr(v, "isoformat") else v)
+                            for v in row
+                        ])
+                        if len(rows) >= max_rows:
+                            break
+                finally:
+                    wb.close()
+                return _ok({
+                    "kind": "table",
+                    "objectName": object_name,
+                    "bucket": bucket,
+                    "size": size,
+                    "extension": ext,
+                    "sheets": sheets,
+                    "currentSheet": cur,
+                    "headers": headers or [],
+                    "rows": rows,
+                    "previewRows": len(rows),
+                    "truncated": len(rows) >= max_rows,
+                    "rawUrl": raw_url,
+                })
+            except Exception as e:
+                logger.warning("xlsx 미리보기 실패 %s: %s", object_name, e)
+                return _ok({
+                    "kind": "binary",
+                    "objectName": object_name,
+                    "bucket": bucket,
+                    "size": size,
+                    "extension": ext,
+                    "rawUrl": raw_url,
+                    "error": str(e),
+                })
 
         if ext not in _PREVIEW_BINARY_EXTS and (ext in _PREVIEW_TEXT_EXTS or size <= 4096):
             read_size = max(1, min(size, max_bytes))
