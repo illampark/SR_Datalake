@@ -728,6 +728,10 @@ def _resolve_host_path(container_path):
             if fs_root.startswith("/var/lib/docker"):
                 return fs_root + rel
             prefix = os.environ.get("DOCKER_HOST_DATA_PREFIX", "/data").rstrip("/")
+            # source 파티션이 호스트의 / 에 직접 마운트된 경우 (단일 루트 파티션 환경)
+            # fs_root 가 이미 prefix 로 시작 → prepend 하면 중복 (e.g. /data/data/sdl-ingest).
+            if prefix and (fs_root == prefix or fs_root.startswith(prefix + "/")):
+                return fs_root + rel
             base = prefix + fs_root if fs_root.startswith("/") else os.path.join(prefix, fs_root)
             return base + rel
     except (OSError, IOError):
