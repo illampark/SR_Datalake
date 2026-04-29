@@ -385,6 +385,9 @@ function loadPipelines() {
 
       var actions = '';
       actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="editPipeline(' + p.id + ')"><i class="fas fa-edit"></i></button>';
+      if (p.hasFileSource) {
+        actions += '<button class="btn btn-success btn-sm btn-icon" title="' + __t('page.builder.btn_run_file_source') + '" onclick="runPipelineFileSource(' + p.id + ')"><i class="fas fa-bolt"></i></button>';
+      }
       if (p.status === 'running') {
         actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.stop') + '" onclick="stopPipeline(' + p.id + ')"><i class="fas fa-stop"></i></button>';
       } else {
@@ -1976,6 +1979,17 @@ function createPipeline() {
 }
 
 // ── Delete Pipeline ──
+function runPipelineFileSource(pid){
+  if(!confirm(__t('page.builder.confirm_run_file_source'))) return;
+  fetch(`/api/pipeline/${pid}/run-file-source`, {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(r){
+      if(!r.success){ alert((r.error && r.error.message) || __t('common.error')); return; }
+      alert(__t('page.builder.msg_file_source_triggered'));
+    })
+    .catch(function(){ alert(__t('common.error')); });
+}
+
 function deletePipeline(id, name) {
   confirmAction(escHtml(name) + ' ' + __t('page.builder.confirm_delete_pipeline'), function() {
     $.ajax({

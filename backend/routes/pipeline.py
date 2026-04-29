@@ -303,6 +303,50 @@ def stop_pipeline(pid):
         db.close()
 
 
+# PIP-007b: POST /api/pipeline/<id>/run-file-source
+@pipeline_bp.route("/<int:pid>/run-file-source", methods=["POST"])
+def run_pipeline_file_source(pid):
+    """파일 소스 모드 파이프라인 즉시 트리거 (백그라운드 실행).
+
+    Multi-worker 환경에서 어떤 워커가 받아도 동일하게 동작하도록 DB 에서
+    파이프라인 정의를 직접 검증한다. _running_pipelines in-memory state 에 의존 X.
+    """
+    import threading
+    from backend.models.pipeline import Pipeline, PipelineStep
+    from backend.services import pipeline_engine
+
+    db = _db()
+    try:
+        p = db.query(Pipeline).get(pid)
+        if not p:
+            return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
+        if p.status != "running":
+            return _err(
+                "파이프라인이 실행 중이 아닙니다. 먼저 [시작]을 누른 뒤 다시 시도하세요.",
+                "NOT_RUNNING", 400,
+            )
+        has_file_source = db.query(PipelineStep).filter_by(
+            pipeline_id=pid, enabled=True,
+        ).filter(
+            PipelineStep.module_type.in_(["import_source", "internal_file_source"])
+        ).count() > 0
+        if not has_file_source:
+            return _err("이 파이프라인은 파일 소스 step 이 없습니다.", "WRONG_MODE", 400)
+    finally:
+        db.close()
+
+    def _run():
+        try:
+            result = pipeline_engine.run_file_source(pid)
+            pipeline_engine.logger.info("file-source thread done pipeline=%s: %s", pid, result)
+        except Exception as ex:
+            pipeline_engine.logger.error("file-source thread error pipeline=%s: %s", pid, ex)
+
+    t = threading.Thread(target=_run, daemon=True, name=f"file-src-{pid}")
+    t.start()
+    return _ok({"pipelineId": pid, "status": "triggered"})
+
+
 # PIP-008: GET /api/pipeline/<id>/status
 @pipeline_bp.route("/<int:pid>/status", methods=["GET"])
 def pipeline_status(pid):

@@ -1189,7 +1189,10 @@
       "placeholder_measurement": "예: sensor_data, temperature_log",
       "sec_unit": "초",
       "fields_count": "개 필드",
-      "filter_label": "필터"
+      "filter_label": "필터",
+      "btn_run_file_source": "파일 소스 실행",
+      "confirm_run_file_source": "import 커넥터의 MinIO 파일들을 읽어 파이프라인을 실행합니다. 계속하시겠습니까?",
+      "msg_file_source_triggered": "파일 소스 실행을 시작했습니다. 파이프라인 처리 카운트로 진행을 확인하세요."
     },
     "normalize": {
       "title": "정규화 규칙",

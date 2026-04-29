@@ -1189,7 +1189,10 @@
       "placeholder_measurement": "e.g.: sensor_data, temperature_log",
       "placeholder_enrich_fields": "area=Line1\nequipment=CNC-01\nprocessType=Machining",
       "badge_table_name": "Table Name",
-      "placeholder_script_code": "# Available variables: message, value\nvalue = message['value'] * 2\nmessage['value'] = value"
+      "placeholder_script_code": "# Available variables: message, value\nvalue = message['value'] * 2\nmessage['value'] = value",
+      "btn_run_file_source": "Run from files",
+      "confirm_run_file_source": "Read all files from the import collectors MinIO output and run the pipeline. Continue?",
+      "msg_file_source_triggered": "File-source run started. Check pipeline processed count for progress."
     },
     "normalize": {
       "title": "Normalization Rules",

@@ -47,6 +47,10 @@ class Pipeline(Base):
             "lastError": self.last_error,
             "stepCount": len(self.steps) if self.steps else 0,
             "bindingCount": len(self.bindings) if self.bindings else 0,
+            "hasFileSource": any(
+                getattr(st, "module_type", "") in ("import_source", "internal_file_source")
+                for st in (self.steps or [])
+            ),
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
