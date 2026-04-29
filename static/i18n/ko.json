@@ -598,6 +598,8 @@
       "err_no_file": "파일을 선택하세요.",
       "import_complete": "가져오기 완료!",
       "btn_republish": "파이프라인 재발행",
+      "btn_stop": "중지",
+      "confirm_stop": "\"{name}\" 가져오기를 중지하시겠습니까?",
       "confirm_republish": "저장된 원본 데이터를 MQTT로 재발행합니다.\n파이프라인이 실행 중이어야 데이터가 처리됩니다.\n\n진행하시겠습니까?",
       "republish_in_progress": "원본 데이터를 파이프라인으로 재발행 중...",
       "type_files": "파일 (이미지/문서/동영상 등)",

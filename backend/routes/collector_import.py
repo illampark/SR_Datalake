@@ -192,6 +192,9 @@ def create_import():
             file_patterns=body.get("filePatterns", ["*"]),
             recursive=body.get("recursive", True),
         )
+        # target=file은 MinIO 저장 결과를 파이프라인이 직접 읽으므로 MQTT 재발행 불필요·위험
+        if c.target_type == "file":
+            c.publish_mqtt = False
         db.add(c)
         db.commit()
         db.refresh(c)
@@ -233,6 +236,10 @@ def update_import(cid):
         for api_key, db_key in field_map.items():
             if api_key in body:
                 setattr(c, db_key, body[api_key])
+
+        # target=file은 MinIO 저장만 사용 — MQTT 재발행 강제 비활성화
+        if c.target_type == "file":
+            c.publish_mqtt = False
 
         if "name" in body:
             dup = db.query(ImportCollector).filter(

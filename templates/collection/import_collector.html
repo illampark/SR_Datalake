@@ -165,7 +165,7 @@
           <label>{{ t('page.import_collector.lbl_batch_size') }}</label>
           <input type="number" class="form-control" id="f-batchSize" value="1000">
         </div>
-        <div class="form-group data-only-field" style="grid-column:1/-1">
+        <div class="form-group data-only-field" id="grp-publishMqtt" style="grid-column:1/-1">
           <label style="display:flex;align-items:center;gap:8px;">
             <input type="checkbox" id="f-publishMqtt" checked>
             {{ t('page.import_collector.lbl_publish_mqtt') }}
@@ -423,8 +423,12 @@ function loadList(){
       var executeBtn = c.localPath
         ? '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_execute_path')+'" onclick="doExecutePathFromList('+c.id+')"><i class="fas fa-play" style="color:#28a745"></i></button>'
         : '';
+      var stopBtn = (c.status==='running')
+        ? '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_stop')+'" onclick="doStop('+c.id+',\''+escHtml(c.name)+'\')"><i class="fas fa-stop" style="color:#dc3545"></i></button>'
+        : '';
       var actions =
         executeBtn +
+        stopBtn +
         '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_upload_file')+'" onclick="openUpload('+c.id+')"><i class="fas fa-upload"></i></button>' +
         republishBtn +
         '<button class="btn btn-outline btn-sm" title="'+__t('common.edit')+'" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
@@ -444,7 +448,28 @@ function loadList(){
     $('#stat-completed').text(cntCompleted);
     $('#stat-running').text(cntRunning);
     $('#stat-errors').text(cntErrors);
+    if(cntRunning>0) startListPolling(); else stopListPolling();
   });
+}
+
+/* ── 진행 중 행 자동 갱신 ── */
+var _listPollTimer = null;
+function startListPolling(){
+  if(_listPollTimer) return;
+  _listPollTimer = setInterval(loadList, 2000);
+}
+function stopListPolling(){
+  if(_listPollTimer){ clearInterval(_listPollTimer); _listPollTimer = null; }
+}
+
+/* ── 실행 중지 ── */
+function doStop(id, name){
+  var msg = (__t('page.import_collector.confirm_stop')||'Stop "{name}"?').replace('{name}', name);
+  if(!confirm(msg)) return;
+  $.ajax({url:API+'/'+id+'/stop', method:'POST', success:function(r){
+    if(!r.success) return alert(r.error.message);
+    loadList();
+  }});
 }
 
 /* ── Target type change ── */
@@ -461,6 +486,13 @@ function onTargetTypeChange(){
     (_targets.rdbms||[]).forEach(function(r){$sel.append('<option value="'+r.id+'">'+escHtml(r.name)+' ('+r.dbType+')</option>');});
   } else {
     $('#grp-bucket').show();
+  }
+  // target=file은 MinIO에 저장되어 파이프라인이 직접 읽을 수 있으므로 MQTT 발행 불필요
+  if(tt==='file'){
+    $('#grp-publishMqtt').hide();
+    $('#f-publishMqtt').prop('checked', false);
+  } else {
+    $('#grp-publishMqtt').show();
   }
 }
 

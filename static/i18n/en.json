@@ -598,6 +598,8 @@
       "err_no_file": "Please select a file.",
       "import_complete": "Import completed!",
       "btn_republish": "Republish to Pipeline",
+      "btn_stop": "Stop",
+      "confirm_stop": "Stop import \"{name}\"?",
       "confirm_republish": "This will republish stored data to MQTT.\nA pipeline must be running to process the data.\n\nProceed?",
       "republish_in_progress": "Republishing original data to pipeline...",
       "type_files": "Files (Images/Documents/Videos etc.)",
