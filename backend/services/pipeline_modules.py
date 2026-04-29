@@ -940,11 +940,13 @@ def sink_internal_file(message, config):
         "collected_at": ts.isoformat(),
     }
 
-    # 파일명 생성 (날짜 치환)
+    # 파일명 생성 (날짜 치환). prefix 끝에 '/' 보장하여 누락된 separator 로 인한
+    # 'pipeline/q1_etching_datapipeline_1_2026-04-29.jsonl' 같은 합쳐붙음 방지.
     today = datetime.utcnow().strftime("%Y-%m-%d")
     file_name = file_name_pattern.replace("{pipeline_id}", str(pipeline_id)).replace("{date}", today)
     ext = {"jsonl": "jsonl", "csv": "csv", "json": "json"}.get(file_format, "jsonl")
-    object_name = f"{path_prefix}{file_name}.{ext}"
+    prefix_norm = (path_prefix.rstrip("/") + "/") if path_prefix else ""
+    object_name = f"{prefix_norm}{file_name}.{ext}"
 
     cache_key = f"file_sink:{pipeline_id}:{bucket}:{object_name}"
     cache_entry = {
