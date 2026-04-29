@@ -340,6 +340,165 @@ def upload_file():
 # ──────────────────────────────────────────────
 # DELETE /api/storage/file/delete
 # ──────────────────────────────────────────────
+_PREVIEW_TEXT_EXTS = {
+    ".log", ".csv", ".tsv", ".txt", ".json", ".jsonl", ".ndjson",
+    ".xml", ".yaml", ".yml", ".md", ".sql", ".py", ".sh", ".conf", ".ini",
+    ".html", ".htm", ".css", ".js", ".ts",
+}
+_PREVIEW_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp", ".ico"}
+_PREVIEW_PDF_EXTS = {".pdf"}
+_PREVIEW_BINARY_EXTS = {
+    ".bin", ".dat", ".exe", ".dll", ".so", ".dylib", ".o", ".obj",
+    ".pyc", ".pyo", ".class", ".jar", ".war", ".ear",
+    ".tar", ".gz", ".tgz", ".bz2", ".xz", ".zip", ".7z", ".rar",
+}
+_PREVIEW_MAX_BYTES_DEFAULT = 256 * 1024  # 256 KB
+
+
+def _guess_inline_mime(ext):
+    return {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".bmp": "image/bmp", ".svg": "image/svg+xml",
+        ".webp": "image/webp", ".ico": "image/x-icon",
+        ".pdf": "application/pdf",
+    }.get(ext.lower(), "application/octet-stream")
+
+
+@file_bp.route("/preview", methods=["GET"])
+def preview_file():
+    """파일 미리보기 — 텍스트 컨텐츠 일부 또는 raw 스트리밍 URL 반환."""
+    try:
+        bucket = request.args.get("bucket") or MINIO_BUCKETS[0]
+        object_name = request.args.get("objectName") or request.args.get("object_name")
+        max_bytes = request.args.get("maxBytes", _PREVIEW_MAX_BYTES_DEFAULT, type=int)
+        if not object_name:
+            return _err("objectName 이 필요합니다.", "VALIDATION")
+
+        client = _get_minio()
+        try:
+            stat = client.stat_object(bucket, object_name)
+        except S3Error:
+            return _err(f"파일을 찾을 수 없습니다: {object_name}", "NOT_FOUND", 404)
+
+        ext = os.path.splitext(object_name)[1].lower()
+        size = int(stat.size or 0)
+        raw_url = (
+            f"/api/storage/file/raw?bucket={bucket}"
+            f"&objectName={object_name}"
+        )
+
+        if ext in _PREVIEW_IMAGE_EXTS:
+            mt = stat.content_type
+            if not mt or mt == "application/octet-stream":
+                mt = _guess_inline_mime(ext)
+            return _ok({
+                "kind": "image",
+                "objectName": object_name,
+                "bucket": bucket,
+                "size": size,
+                "extension": ext,
+                "mimeType": mt,
+                "rawUrl": raw_url,
+            })
+
+        if ext in _PREVIEW_PDF_EXTS:
+            return _ok({
+                "kind": "pdf",
+                "objectName": object_name,
+                "bucket": bucket,
+                "size": size,
+                "extension": ext,
+                "rawUrl": raw_url,
+            })
+
+        if ext not in _PREVIEW_BINARY_EXTS and (ext in _PREVIEW_TEXT_EXTS or size <= 4096):
+            read_size = max(1, min(size, max_bytes))
+            data = b""
+            try:
+                resp = client.get_object(bucket, object_name)
+                try:
+                    data = resp.read(read_size)
+                finally:
+                    resp.close()
+                    resp.release_conn()
+            except Exception as e:
+                return _err(f"파일 읽기 실패: {e}", "READ_ERROR", 500)
+            try:
+                content = data.decode("utf-8")
+            except UnicodeDecodeError:
+                content = data.decode("utf-8", errors="replace")
+            return _ok({
+                "kind": "text",
+                "objectName": object_name,
+                "bucket": bucket,
+                "size": size,
+                "previewBytes": len(data),
+                "truncated": size > read_size,
+                "content": content,
+                "extension": ext,
+            })
+
+        return _ok({
+            "kind": "binary",
+            "objectName": object_name,
+            "bucket": bucket,
+            "size": size,
+            "extension": ext,
+            "rawUrl": raw_url,
+            "message": "이 파일 형식은 직접 미리보기를 지원하지 않습니다. 다운로드해서 확인하세요.",
+        })
+    except Exception as e:
+        return _err(str(e), "SERVER_ERROR", 500)
+
+
+@file_bp.route("/raw", methods=["GET"])
+def raw_file():
+    """파일 원본 inline 스트리밍 (이미지/PDF 미리보기 src 용)."""
+    from flask import Response, stream_with_context
+    try:
+        bucket = request.args.get("bucket") or MINIO_BUCKETS[0]
+        object_name = request.args.get("objectName") or request.args.get("object_name")
+        if not object_name:
+            return _err("objectName 이 필요합니다.", "VALIDATION")
+        client = _get_minio()
+        try:
+            stat = client.stat_object(bucket, object_name)
+        except S3Error:
+            return _err("파일을 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        ext = os.path.splitext(object_name)[1].lower()
+        ct = stat.content_type
+        if not ct or ct == "application/octet-stream":
+            ct = _guess_inline_mime(ext)
+
+        resp = client.get_object(bucket, object_name)
+
+        def _generate():
+            try:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                try:
+                    resp.close()
+                    resp.release_conn()
+                except Exception:
+                    pass
+
+        headers = {
+            "Content-Disposition": f"inline; filename=\"{os.path.basename(object_name)}\"",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if stat.size:
+            headers["Content-Length"] = str(stat.size)
+
+        return Response(stream_with_context(_generate()), mimetype=ct, headers=headers)
+    except Exception as e:
+        return _err(str(e), "SERVER_ERROR", 500)
+
+
 @file_bp.route("/delete-batch", methods=["DELETE"])
 def delete_files_batch():
     """여러 파일을 한 번에 삭제 (멀티 선택용).

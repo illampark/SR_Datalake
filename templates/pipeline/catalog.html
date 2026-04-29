@@ -1345,7 +1345,10 @@ function loadCatalogFiles(page) {
           '<td><span class="badge-sm badge-primary">' + escHtml(f.type || 'other') + '</span></td>' +
           '<td class="mono fs-12">' + escHtml(f.sizeDisplay || '-') + '</td>' +
           '<td class="fs-12">' + escHtml((f.modifiedAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
-          '<td><a href="' + API + '/' + _dataCatalogId + '/files/download?objectName=' + encodeURIComponent(f.objectName || '') + '&bucket=' + encodeURIComponent(f.bucket || '') + '" class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '"><i class="fas fa-download"></i></a></td>' +
+          '<td>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.catalog.btn_preview_file') + '" onclick="previewCatalogFile(\'' + escAttr(f.bucket) + '\',\'' + escAttr(f.objectName) + '\',\'' + escAttr(f.name) + '\')"><i class="fas fa-eye"></i></button> ' +
+            '<a href="' + API + '/' + _dataCatalogId + '/files/download?objectName=' + encodeURIComponent(f.objectName || '') + '&bucket=' + encodeURIComponent(f.bucket || '') + '" class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '"><i class="fas fa-download"></i></a>' +
+          '</td>' +
         '</tr>'
       );
     });
@@ -1355,6 +1358,68 @@ function loadCatalogFiles(page) {
     $tb.html('<tr><td colspan="7" class="text-center text-danger" style="padding:30px">' + __t('page.catalog.file_load_fail') + '</td></tr>');
   });
 }
+
+function previewCatalogFile(bucket, objectName, name) {
+  $.ajax({
+    url: '/api/storage/file/preview',
+    method: 'GET',
+    data: { bucket: bucket, objectName: objectName },
+    success: function(r) {
+      if (!r.success) {
+        showToast((r.error && r.error.message) || __t('common.error'), 'error');
+        return;
+      }
+      _showCatalogFilePreview(name, r.data);
+    },
+    error: function() { showToast(__t('common.error'), 'error'); }
+  });
+}
+
+function _fmtPrevSize(b) {
+  if (b == null) return '';
+  b = Number(b);
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+
+function _showCatalogFilePreview(name, data) {
+  var meta = '<div class="text-muted" style="font-size:12px;margin-bottom:8px;">' +
+             '<i class="fas fa-info-circle"></i> ' +
+             escHtml(data.objectName || '') + ' · ' +
+             _fmtPrevSize(data.size || 0) + (data.extension ? ' · ' + data.extension : '') + '</div>';
+  var body = '';
+  if (data.kind === 'text') {
+    var trunc = data.truncated ? '<div class="text-warning" style="font-size:12px;margin-bottom:6px;">⚠ ' + __t('page.catalog.preview_truncated').replace('{n}', _fmtPrevSize(data.previewBytes || 0)) + '</div>' : '';
+    body = meta + trunc + '<pre style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;padding:12px;max-height:60vh;overflow:auto;font-size:12px;line-height:1.5;white-space:pre;word-wrap:normal;">' + escHtml(data.content || '') + '</pre>';
+  } else if (data.kind === 'image') {
+    body = meta + '<div style="text-align:center;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;padding:12px;">' +
+           '<img src="' + data.rawUrl + '" style="max-width:100%;max-height:60vh;object-fit:contain;" alt="' + escAttr(name) + '"></div>';
+  } else if (data.kind === 'pdf') {
+    body = meta + '<iframe src="' + data.rawUrl + '" style="width:100%;height:65vh;border:1px solid #dee2e6;border-radius:4px;"></iframe>';
+  } else {
+    body = meta + '<div class="text-muted" style="padding:24px;text-align:center;">' +
+           '<i class="fas fa-file" style="font-size:36px;"></i><br>' +
+           escHtml(data.message || __t('page.catalog.preview_unsupported')) +
+           (data.rawUrl ? '<br><br><a href="' + data.rawUrl + '" target="_blank" class="btn btn-secondary btn-sm">' + __t('page.catalog.preview_open_raw') + '</a>' : '') +
+           '</div>';
+  }
+  var html =
+    '<div class="modal-overlay" id="cat-preview-overlay" style="display:flex;z-index:9000;" onclick="if(event.target===this)closeCatalogPreview()">' +
+      '<div class="modal" style="max-width:900px;width:90vw;">' +
+        '<div class="modal-header">' +
+          '<h3><i class="fas fa-eye"></i> ' + escHtml(name) + '</h3>' +
+          '<button class="modal-close" onclick="closeCatalogPreview()">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' + body + '</div>' +
+      '</div>' +
+    '</div>';
+  $('#cat-preview-overlay').remove();
+  $('body').append(html);
+}
+
+function closeCatalogPreview() { $('#cat-preview-overlay').remove(); }
 
 function toggleFileSelectAll(checked) {
   $('.file-check').prop('checked', checked);

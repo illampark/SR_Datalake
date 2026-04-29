@@ -1976,7 +1976,11 @@
       "delete_modal_summary": "Underlying data referenced by this catalog:",
       "delete_modal_check_data": "Also delete the underlying data (cannot be undone)",
       "delete_modal_data_warning": "TSDB rows / RDBMS table TRUNCATE / MinIO objects will be permanently removed.",
-      "delete_no_data_to_remove": "No underlying data was identified for deletion."
+      "delete_no_data_to_remove": "No underlying data was identified for deletion.",
+      "btn_preview_file": "Preview file",
+      "preview_truncated": "Large file — only first {n} shown (download for full content)",
+      "preview_unsupported": "Preview not supported for this file type.",
+      "preview_open_raw": "Open raw in new tab"
     },
     "tsdb": {
       "title": "Time-Series DB Management",
@@ -2135,7 +2139,11 @@
       "btn_delete_selected": "Delete Selected",
       "btn_delete_selected_n": "Delete Selected ({n})",
       "confirm_delete_n_files": "Delete {n} selected files?",
-      "toast_n_files_deleted": "{n} files deleted."
+      "toast_n_files_deleted": "{n} files deleted.",
+      "btn_preview": "Preview",
+      "preview_truncated": "Large file — only first {n} shown (download for full content)",
+      "preview_unsupported": "Preview not supported for this file type.",
+      "preview_open_raw": "Open raw in new tab"
     },
     "rdbms": {
       "title": "Relational DB Management",

@@ -1976,7 +1976,11 @@
       "delete_modal_summary": "이 카탈로그가 가리키는 실제 데이터:",
       "delete_modal_check_data": "실제 데이터도 함께 삭제 (되돌릴 수 없습니다)",
       "delete_modal_data_warning": "TSDB 행 / RDBMS 테이블 TRUNCATE / MinIO 객체가 영구 삭제됩니다.",
-      "delete_no_data_to_remove": "삭제할 실제 데이터가 식별되지 않았습니다."
+      "delete_no_data_to_remove": "삭제할 실제 데이터가 식별되지 않았습니다.",
+      "btn_preview_file": "파일 미리보기",
+      "preview_truncated": "큰 파일은 앞 {n}만 표시 (전체는 다운로드 필요)",
+      "preview_unsupported": "미리보기를 지원하지 않는 형식입니다.",
+      "preview_open_raw": "새 탭에서 원본 열기"
     },
     "tsdb": {
       "title": "시계열 DB 관리",
@@ -2135,7 +2139,11 @@
       "btn_delete_selected": "선택 삭제",
       "btn_delete_selected_n": "선택 삭제 ({n})",
       "confirm_delete_n_files": "선택한 {n}개 파일을 삭제하시겠습니까?",
-      "toast_n_files_deleted": "{n}개 파일이 삭제되었습니다."
+      "toast_n_files_deleted": "{n}개 파일이 삭제되었습니다.",
+      "btn_preview": "미리보기",
+      "preview_truncated": "큰 파일은 앞 {n}만 표시 (전체는 다운로드 필요)",
+      "preview_unsupported": "미리보기를 지원하지 않는 형식입니다.",
+      "preview_open_raw": "새 탭에서 원본 열기"
     },
     "rdbms": {
       "title": "관계형 DB 관리",

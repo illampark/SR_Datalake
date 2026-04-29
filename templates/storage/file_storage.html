@@ -317,6 +317,7 @@ function loadFiles() {
         '<td class="mono fs-12 truncate">' + escHtml(f.path) + '</td>' +
         '<td class="mono fs-12">' + modified + '</td>' +
         '<td>' +
+          '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.file_storage.btn_preview') + '" onclick="previewFile(\'' + escAttr(f.bucket) + '\',\'' + escAttr(f.objectName) + '\',\'' + escAttr(f.name) + '\')"><i class="fas fa-eye"></i></button> ' +
           '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '" onclick="downloadFile(\'' + escAttr(f.bucket) + '\',\'' + escAttr(f.objectName) + '\')"><i class="fas fa-download"></i></button> ' +
           '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteFile(\'' + escAttr(f.bucket) + '\',\'' + escAttr(f.objectName) + '\',\'' + escAttr(f.name) + '\')"><i class="fas fa-trash"></i></button>' +
         '</td></tr>';
@@ -430,6 +431,74 @@ function doUpload() {
 function downloadFile(bucket, objectName) {
   window.location.href = API + '/download?bucket=' + encodeURIComponent(bucket) + '&objectName=' + encodeURIComponent(objectName);
 }
+
+/* ── 파일 미리보기 ── */
+function previewFile(bucket, objectName, filename) {
+  $.ajax({
+    url: API + '/preview',
+    method: 'GET',
+    data: { bucket: bucket, objectName: objectName },
+    success: function(r) {
+      if (!r.success) {
+        showToast((r.error && r.error.message) || __t('common.error'), 'error');
+        return;
+      }
+      _showFilePreviewModal(filename, r.data);
+    },
+    error: function(xhr) {
+      var msg = __t('common.error');
+      try { var b = JSON.parse(xhr.responseText); if (b.error) msg = b.error.message; } catch(e) {}
+      showToast(msg, 'error');
+    }
+  });
+}
+
+function _fmtPreviewSize(b) {
+  if (b == null) return '';
+  b = Number(b);
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+
+function _showFilePreviewModal(name, data) {
+  var body = '';
+  var meta = '<div class="text-muted" style="font-size:12px;margin-bottom:8px;">' +
+             '<i class="fas fa-info-circle"></i> ' +
+             escHtml(data.objectName || '') + ' · ' +
+             _fmtPreviewSize(data.size || 0) + (data.extension ? ' · ' + data.extension : '') + '</div>';
+  if (data.kind === 'text') {
+    var trunc = data.truncated ? '<div class="text-warning" style="font-size:12px;margin-bottom:6px;">⚠ ' + __t('page.file_storage.preview_truncated').replace('{n}', _fmtPreviewSize(data.previewBytes || 0)) + '</div>' : '';
+    body = meta + trunc + '<pre style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;padding:12px;max-height:60vh;overflow:auto;font-size:12px;line-height:1.5;white-space:pre;word-wrap:normal;">' + escHtml(data.content || '') + '</pre>';
+  } else if (data.kind === 'image') {
+    body = meta + '<div style="text-align:center;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;padding:12px;">' +
+           '<img src="' + data.rawUrl + '" style="max-width:100%;max-height:60vh;object-fit:contain;" alt="' + escAttr(name) + '"></div>';
+  } else if (data.kind === 'pdf') {
+    body = meta + '<iframe src="' + data.rawUrl + '" style="width:100%;height:65vh;border:1px solid #dee2e6;border-radius:4px;"></iframe>';
+  } else {
+    body = meta + '<div class="text-muted" style="padding:24px;text-align:center;">' +
+           '<i class="fas fa-file" style="font-size:36px;"></i><br>' +
+           escHtml(data.message || __t('page.file_storage.preview_unsupported')) +
+           (data.rawUrl ? '<br><br><a href="' + data.rawUrl + '" target="_blank" class="btn btn-secondary btn-sm">' + __t('page.file_storage.preview_open_raw') + '</a>' : '') +
+           '</div>';
+  }
+
+  var html =
+    '<div class="modal-overlay" id="file-preview-overlay" style="display:flex;z-index:9000;" onclick="if(event.target===this)closeFilePreview()">' +
+      '<div class="modal" style="max-width:900px;width:90vw;">' +
+        '<div class="modal-header">' +
+          '<h3><i class="fas fa-eye"></i> ' + escHtml(name) + '</h3>' +
+          '<button class="modal-close" onclick="closeFilePreview()">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' + body + '</div>' +
+      '</div>' +
+    '</div>';
+  $('#file-preview-overlay').remove();
+  $('body').append(html);
+}
+
+function closeFilePreview() { $('#file-preview-overlay').remove(); }
 
 /* ── 멀티 선택 + 일괄 삭제 ── */
 var selectedFiles = {}; // selKey -> {bucket, objectName, name}
