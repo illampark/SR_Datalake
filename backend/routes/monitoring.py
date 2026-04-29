@@ -17,6 +17,7 @@ from backend.database import SessionLocal
 from backend.models.collector import (
     OpcuaConnector, OpcdaConnector, ModbusConnector,
     MqttConnector, ApiConnector, FileCollector, DbConnector,
+    ImportCollector,
 )
 from backend.models.pipeline import Pipeline
 from backend.models.metadata import DataLineage, TagMetadata
@@ -36,6 +37,7 @@ _CONN = [
     ("api",    ApiConnector,    "API",     "request_count"),
     ("file",   FileCollector,   "File",    "file_count"),
     ("db",     DbConnector,     "DB",      "row_count"),
+    ("import", ImportCollector, "Import",  "imported_rows"),
 ]
 
 
@@ -245,7 +247,7 @@ def _get_performance(db):
             ).all()
             for r in rows:
                 last_at = None
-                for col in ("last_collected_at", "last_message_at", "last_called_at", "last_file_at"):
+                for col in ("last_collected_at", "last_message_at", "last_called_at", "last_file_at", "last_imported_at"):
                     v = getattr(r, col, None)
                     if v:
                         last_at = v.isoformat()
@@ -349,6 +351,7 @@ _CONN_ICONS = {
     "opcua": "fa-plug-circle-bolt", "opcda": "fa-plug",
     "modbus": "fa-microchip", "mqtt": "fa-satellite-dish",
     "api": "fa-code", "file": "fa-file-import", "db": "fa-database",
+    "import": "fa-file-arrow-up",
 }
 
 
