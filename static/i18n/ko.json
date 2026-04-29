@@ -635,7 +635,10 @@
       "browse_no_subdir": "하위 폴더가 없습니다",
       "browse_container_path": "컨테이너 경로",
       "browse_host_path": "호스트 경로 (scp/rsync 시 사용)",
-      "browse_roots_label": "루트:"
+      "browse_roots_label": "루트:",
+      "btn_execute_path": "서버 경로에서 실행",
+      "confirm_execute_path": "설정된 서버 경로의 파일들을 가져옵니다. 계속하시겠습니까?",
+      "msg_execute_started": "가져오기를 시작했습니다."
     },
     "db_connector": {
       "title": "DB 커넥터",

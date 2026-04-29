@@ -635,7 +635,10 @@
       "browse_no_subdir": "No subdirectories",
       "browse_container_path": "Container path",
       "browse_host_path": "Host path (for scp/rsync)",
-      "browse_roots_label": "Roots:"
+      "browse_roots_label": "Roots:",
+      "btn_execute_path": "Execute from server path",
+      "confirm_execute_path": "Import all files at the configured server path. Continue?",
+      "msg_execute_started": "Import started."
     },
     "db_connector": {
       "title": "DB Connector",

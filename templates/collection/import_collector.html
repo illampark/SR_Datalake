@@ -420,7 +420,11 @@ function loadList(){
       var republishBtn = (c.status==='completed')
         ? '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_republish')+'" onclick="doRepublish('+c.id+')"><i class="fas fa-rotate"></i></button>'
         : '';
+      var executeBtn = c.localPath
+        ? '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_execute_path')+'" onclick="doExecutePathFromList('+c.id+')"><i class="fas fa-play" style="color:#28a745"></i></button>'
+        : '';
       var actions =
+        executeBtn +
         '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_upload_file')+'" onclick="openUpload('+c.id+')"><i class="fas fa-upload"></i></button>' +
         republishBtn +
         '<button class="btn btn-outline btn-sm" title="'+__t('common.edit')+'" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
@@ -859,6 +863,27 @@ function doUpload(){
   xhr.open('POST', API + '/' + cid + '/upload');
   xhr.send(fd);
 }
+function doExecutePathFromList(cid){
+  if(!confirm(__t('page.import_collector.confirm_execute_path'))) return;
+  $.ajax({
+    url: API + '/' + cid + '/execute-path',
+    method: 'POST',
+    success: function(r){
+      if(!r.success){ alert(r.error.message); return; }
+      alert(__t('page.import_collector.msg_execute_started'));
+      loadList();
+    },
+    error: function(xhr){
+      var msg = __t('common.error');
+      try {
+        var b = JSON.parse(xhr.responseText);
+        if(b && b.error && b.error.message) msg = b.error.message;
+      } catch(e){}
+      alert(msg);
+    }
+  });
+}
+
 function doExecute(){
   var cid=$('#upload-cid').val();
   $.ajax({url:API+'/'+cid+'/execute', method:'POST', success:function(r){
