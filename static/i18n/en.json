@@ -632,7 +632,9 @@
       "browse_btn_select": "Select",
       "browse_select_current": "Use current folder",
       "browse_parent": "parent",
-      "browse_no_subdir": "No subdirectories"
+      "browse_no_subdir": "No subdirectories",
+      "browse_container_path": "Container path",
+      "browse_host_path": "Host path (for scp/rsync)"
     },
     "db_connector": {
       "title": "DB Connector",

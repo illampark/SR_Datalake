@@ -681,7 +681,7 @@ def execute_from_path(cid):
 # 화이트리스트 루트 안에서만 탐색 가능. realpath로 심볼릭 탈출 방지.
 _BROWSE_ROOTS = [
     {"label": "기본 적재 폴더", "path": "/app/static/uploads",
-     "description": "scp로 호스트 sdl-uploads 볼륨에 올린 파일이 보입니다"},
+     "description": "scp/rsync로 아래 호스트 경로에 올린 파일이 보입니다"},
 ]
 
 
@@ -693,6 +693,30 @@ def _is_under_root(abs_path):
         if abs_path == rp or abs_path.startswith(rp + os.sep):
             return True
     return False
+
+
+def _resolve_host_path(container_path):
+    """컨테이너 마운트 타겟을 호스트 측 절대 경로로 변환.
+
+    /proc/self/mountinfo 의 root(field 3)가 underlying fs 기준 경로이므로,
+    Docker 데이터 루트가 별도 파티션에 있을 때(prefix 필요) DOCKER_HOST_DATA_PREFIX
+    환경변수 또는 기본값 '/data'를 앞에 붙인다.
+    /var/lib/docker (호스트 / 직속) 같으면 그대로 반환.
+    """
+    import os
+    try:
+        with open("/proc/self/mountinfo") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 5 and parts[4] == container_path:
+                    fs_root = parts[3]
+                    if fs_root.startswith("/var/lib/docker"):
+                        return fs_root
+                    prefix = os.environ.get("DOCKER_HOST_DATA_PREFIX", "/data").rstrip("/")
+                    return prefix + fs_root if fs_root.startswith("/") else os.path.join(prefix, fs_root)
+    except (OSError, IOError):
+        pass
+    return None
 
 
 @import_bp.route("/browse", methods=["GET"])
@@ -769,11 +793,32 @@ def browse_path_dir():
 
     is_root = any(abs_path == r["path"] for r in _BROWSE_ROOTS)
 
+    # 호스트 절대 경로 매핑 — 사용자가 scp/rsync 시 참조
+    roots_with_host = []
+    matched_root_host = None
+    for r in _BROWSE_ROOTS:
+        rd = dict(r)
+        host = _resolve_host_path(r["path"])
+        if host:
+            rd["hostPath"] = host
+        roots_with_host.append(rd)
+        if abs_path == r["path"] or abs_path.startswith(r["path"] + os.sep):
+            matched_root_host = (r["path"], host)
+
+    current_host_path = None
+    if matched_root_host and matched_root_host[1]:
+        root_path, root_host = matched_root_host
+        if abs_path == root_path:
+            current_host_path = root_host
+        else:
+            current_host_path = root_host + abs_path[len(root_path):]
+
     return _ok({
         "currentPath": abs_path,
+        "currentHostPath": current_host_path,
         "parent": parent,
         "isRoot": is_root,
-        "roots": _BROWSE_ROOTS,
+        "roots": roots_with_host,
         "subdirs": subdirs,
         "files": files[:50],
         "fileCount": len(files),
