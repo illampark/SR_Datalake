@@ -1971,7 +1971,12 @@
       "recipe_no_sources": "No sources registered",
       "recipe_tags_loading": "Loading tags...",
       "recipe_no_tags": "No tags found",
-      "recipe_select_tags": "Select Tags"
+      "recipe_select_tags": "Select Tags",
+      "delete_modal_title": "Delete Catalog",
+      "delete_modal_summary": "Underlying data referenced by this catalog:",
+      "delete_modal_check_data": "Also delete the underlying data (cannot be undone)",
+      "delete_modal_data_warning": "TSDB rows / RDBMS table TRUNCATE / MinIO objects will be permanently removed.",
+      "delete_no_data_to_remove": "No underlying data was identified for deletion."
     },
     "tsdb": {
       "title": "Time-Series DB Management",

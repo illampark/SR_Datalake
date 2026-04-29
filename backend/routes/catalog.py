@@ -200,16 +200,296 @@ def update_catalog(cid):
 # ──────────────────────────────────────────────
 # CAT-005: DELETE /api/catalog/<id>
 # ──────────────────────────────────────────────
-@catalog_bp.route("/<int:cid>", methods=["DELETE"])
-def delete_catalog(cid):
+def _summary_minio(db, bucket, prefix):
+    if not bucket or not prefix:
+        return None
+    try:
+        from backend.services.minio_client import get_minio_client
+        client = get_minio_client(db)
+        n = 0
+        size = 0
+        for o in client.list_objects(bucket, prefix=prefix, recursive=True):
+            n += 1
+            size += int(o.size or 0)
+            if n >= 50000:
+                break
+        return {
+            "kind": "minio",
+            "location": f"s3://{bucket}/{prefix}",
+            "bucket": bucket,
+            "prefix": prefix,
+            "count": n,
+            "sizeBytes": size,
+            "deletable": True,
+        }
+    except Exception as e:
+        return {"kind": "minio", "location": f"s3://{bucket}/{prefix}",
+                "error": str(e), "deletable": False}
+
+
+def _summary_tsdb(db, kind, **kw):
+    from sqlalchemy import text as _sql
+    where = []
+    params = {}
+    if kind == "pipeline":
+        where.append("connector_type = 'pipeline' AND connector_id = :cid")
+        params["cid"] = kw.get("pipeline_id")
+    elif kind == "connector":
+        where.append("connector_type = :ctype AND connector_id = :cid")
+        params["ctype"] = kw.get("connector_type")
+        params["cid"] = kw.get("connector_id")
+    elif kind == "tag":
+        where.append(
+            "connector_type = :ctype AND connector_id = :cid AND tag_name = :tag"
+        )
+        params["ctype"] = kw.get("connector_type")
+        params["cid"] = kw.get("connector_id")
+        params["tag"] = kw.get("tag_name")
+    where_sql = " AND ".join(where)
+    try:
+        n = db.execute(_sql(f"SELECT COUNT(*) FROM time_series_data WHERE {where_sql}"),
+                        params).scalar()
+    except Exception as e:
+        return {"kind": "tsdb", "location": "time_series_data",
+                "error": str(e), "deletable": False}
+    return {
+        "kind": "tsdb",
+        "location": "time_series_data",
+        "filter": where_sql,
+        "filterParams": params,
+        "count": int(n or 0),
+        "deletable": True,
+    }
+
+
+def _summary_rdbms(db, rdbms_id, table_name):
+    if not rdbms_id or not table_name:
+        return None
+    from backend.models.storage import RdbmsConfig
+    from backend.routes.storage_rdbms import _pg_connect
+    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    if not rdbms:
+        return {"kind": "rdbms", "location": f"?/{table_name}",
+                "error": "RDBMS instance not found", "deletable": False}
+    try:
+        conn = _pg_connect(rdbms)
+        cur = conn.cursor()
+        cur.execute(f'SELECT COUNT(*) FROM "{table_name}"')
+        n = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return {
+            "kind": "rdbms",
+            "location": f"{rdbms.name}/{table_name}",
+            "rdbmsId": rdbms_id,
+            "tableName": table_name,
+            "count": int(n or 0),
+            "deletable": True,
+        }
+    except Exception as e:
+        return {"kind": "rdbms", "location": f"{rdbms.name}/{table_name}",
+                "rdbmsId": rdbms_id, "tableName": table_name,
+                "error": str(e), "deletable": False}
+
+
+def _get_data_summary(db, catalog):
+    sources = []
+    warnings = []
+
+    if (catalog.sink_type or "").startswith("external_"):
+        warnings.append(
+            "외부 sink — 자동 삭제하지 않음. 외부 시스템에서 직접 정리하세요."
+        )
+
+    ctype = catalog.connector_type
+    if ctype == "import":
+        from backend.models.collector import ImportCollector
+        imp = db.query(ImportCollector).get(catalog.connector_id)
+        if imp:
+            tt = imp.target_type
+            if tt == "file":
+                src = _summary_minio(db, imp.target_bucket or "sdl-files",
+                                     f"import/{imp.id}/")
+                if src:
+                    sources.append(src)
+            elif tt == "tsdb":
+                sources.append(_summary_tsdb(db, "connector",
+                    connector_type="import", connector_id=imp.id))
+            elif tt == "rdbms":
+                src = _summary_rdbms(db, imp.target_id, imp.target_table)
+                if src:
+                    sources.append(src)
+        else:
+            warnings.append("연결된 import collector 가 이미 존재하지 않습니다.")
+
+    elif ctype == "pipeline":
+        from backend.models.pipeline import PipelineStep
+        pid = catalog.pipeline_id
+        if pid:
+            sink_steps = db.query(PipelineStep).filter_by(
+                pipeline_id=pid
+            ).filter(PipelineStep.module_type.in_([
+                "internal_tsdb_sink", "internal_rdbms_sink", "internal_file_sink"
+            ])).all()
+            for step in sink_steps:
+                cfg = step.config or {}
+                mt = step.module_type
+                if catalog.sink_type and catalog.sink_type != mt:
+                    continue
+                if mt == "internal_tsdb_sink":
+                    sources.append(_summary_tsdb(db, "pipeline", pipeline_id=pid))
+                elif mt == "internal_rdbms_sink":
+                    src = _summary_rdbms(db, cfg.get("rdbmsId"), cfg.get("tableName"))
+                    if src:
+                        sources.append(src)
+                elif mt == "internal_file_sink":
+                    bucket = cfg.get("bucket") or "sdl-files"
+                    prefix = (cfg.get("pathPrefix") or "").rstrip("/") + "/"
+                    src = _summary_minio(db, bucket, prefix)
+                    if src:
+                        sources.append(src)
+
+    elif ctype in ("opcua", "opcda", "modbus", "mqtt", "db", "file", "api"):
+        if catalog.tag_name:
+            sources.append(_summary_tsdb(db, "tag",
+                connector_type=ctype, connector_id=catalog.connector_id,
+                tag_name=catalog.tag_name))
+        else:
+            sources.append(_summary_tsdb(db, "connector",
+                connector_type=ctype, connector_id=catalog.connector_id))
+
+    return {
+        "catalogId": catalog.id,
+        "name": catalog.name,
+        "connectorType": ctype,
+        "sinkType": catalog.sink_type,
+        "tagName": catalog.tag_name,
+        "sources": [s for s in sources if s],
+        "warnings": warnings,
+    }
+
+
+def _delete_minio_prefix(db, bucket, prefix):
+    from backend.services.minio_client import get_minio_client
+    client = get_minio_client(db)
+    n = 0
+    for o in list(client.list_objects(bucket, prefix=prefix, recursive=True)):
+        client.remove_object(bucket, o.object_name)
+        n += 1
+    return n
+
+
+def _delete_tsdb_rows(db, where_sql, params):
+    from sqlalchemy import text as _sql
+    res = db.execute(_sql(f"DELETE FROM time_series_data WHERE {where_sql}"),
+                     params)
+    db.commit()
+    return res.rowcount or 0
+
+
+def _truncate_rdbms_table(db, rdbms_id, table_name):
+    from backend.models.storage import RdbmsConfig
+    from backend.routes.storage_rdbms import _pg_connect
+    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    if not rdbms:
+        return 0
+    conn = _pg_connect(rdbms)
+    try:
+        cur = conn.cursor()
+        cur.execute(f'SELECT COUNT(*) FROM "{table_name}"')
+        n = int(cur.fetchone()[0] or 0)
+        cur.execute(f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY')
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
+    return n
+
+
+def _delete_data_for_catalog(db, catalog):
+    # safety: pipeline running 차단
+    if catalog.connector_type == "pipeline":
+        from backend.models.pipeline import Pipeline
+        p = db.query(Pipeline).get(catalog.pipeline_id)
+        if p and p.status == "running":
+            raise RuntimeError(
+                "파이프라인이 실행 중입니다. 정지 후 다시 시도하세요."
+            )
+
+    deleted = []
+    summary = _get_data_summary(db, catalog)
+    for src in summary["sources"]:
+        if not src.get("deletable"):
+            continue
+        kind = src.get("kind")
+        try:
+            if kind == "minio":
+                n = _delete_minio_prefix(db, src["bucket"], src["prefix"])
+                deleted.append({"kind": "minio",
+                                "location": src["location"], "count": n})
+            elif kind == "tsdb":
+                n = _delete_tsdb_rows(db, src["filter"], src["filterParams"])
+                deleted.append({"kind": "tsdb",
+                                "location": "time_series_data", "count": n})
+            elif kind == "rdbms":
+                n = _truncate_rdbms_table(db,
+                                          src.get("rdbmsId"),
+                                          src.get("tableName"))
+                deleted.append({"kind": "rdbms",
+                                "location": src["location"], "count": n})
+        except Exception as e:
+            deleted.append({"kind": kind, "location": src.get("location"),
+                            "error": str(e)})
+    return deleted
+
+
+@catalog_bp.route("/<int:cid>/data-summary", methods=["GET"])
+def get_catalog_data_summary(cid):
+    """카탈로그가 가리키는 실제 데이터 위치/건수/크기 요약."""
     db = _db()
     try:
         c = db.query(DataCatalog).get(cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        return _ok(_get_data_summary(db, c))
+    finally:
+        db.close()
+
+
+@catalog_bp.route("/<int:cid>", methods=["DELETE"])
+def delete_catalog(cid):
+    """카탈로그 삭제. ?delete_data=true 면 가리키는 실제 데이터도 함께 삭제."""
+    db = _db()
+    try:
+        c = db.query(DataCatalog).get(cid)
+        if not c:
+            return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        delete_data = (request.args.get("delete_data") or "").lower() in ("1", "true", "yes")
+
+        result = {"deleted": cid, "deletedData": False, "details": [], "cascadeDeleted": 0}
+
+        if delete_data:
+            try:
+                details = _delete_data_for_catalog(db, c)
+                result["deletedData"] = True
+                result["details"] = details
+            except RuntimeError as e:
+                return _err(str(e), "WRONG_STATE", 400)
+
+        # connector-level 카탈로그 (tag_name="") 삭제 시 같은 connector 의 tag-level 카탈로그도 삭제
+        if not c.tag_name:
+            related = db.query(DataCatalog).filter_by(
+                connector_type=c.connector_type,
+                connector_id=c.connector_id,
+            ).filter(DataCatalog.id != c.id).all()
+            for r in related:
+                db.delete(r)
+                result["cascadeDeleted"] += 1
+
         db.delete(c)
         db.commit()
-        return _ok({"deleted": cid})
+        return _ok(result)
     except Exception as e:
         db.rollback()
         return _err(str(e))

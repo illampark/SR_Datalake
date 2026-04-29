@@ -878,20 +878,120 @@ function updateCatalog(id) {
   });
 }
 
-/* ── Delete ── */
+/* ── Delete (with optional underlying-data cascade) ── */
+function _fmtSize(b) {
+  if (b == null) return '';
+  b = Number(b);
+  if (isNaN(b)) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+
 function deleteCatalog(id, name) {
-  confirmAction('"' + name + '" ' + __t('page.catalog.confirm_delete'), function() {
-    $.ajax({
-      url: API + '/' + id,
-      type: 'DELETE',
-      success: function(r) {
-        showToast(r.success ? __t('page.catalog.toast_deleted') : __t('common.delete_failed'), r.success ? 'success' : 'error');
-        refreshAll();
-      },
-      error: function() {
-        showToast(__t('common.delete_failed'), 'error');
+  $.ajax({
+    url: API + '/' + id + '/data-summary',
+    method: 'GET',
+    success: function(r) {
+      if (!r.success) {
+        showToast((r.error && r.error.message) || __t('common.error'), 'error');
+        return;
       }
-    });
+      _showCatalogDeleteModal(id, name, r.data);
+    },
+    error: function() {
+      // fallback: 옛 방식으로라도 삭제 가능하게
+      _showCatalogDeleteModal(id, name, {sources: [], warnings: []});
+    }
+  });
+}
+
+function _showCatalogDeleteModal(id, name, summary) {
+  var rows = (summary && summary.sources) || [];
+  var warnings = (summary && summary.warnings) || [];
+
+  var sourcesHtml = '';
+  rows.forEach(function(s) {
+    var label = s.kind === 'minio' ? 'MinIO' : (s.kind === 'tsdb' ? 'TSDB' : (s.kind === 'rdbms' ? 'RDBMS' : s.kind));
+    var unit = s.kind === 'minio' ? 'objects' : 'rows';
+    var countStr = (s.count != null) ? Number(s.count).toLocaleString() + ' ' + unit : '';
+    var sizeStr = (s.kind === 'minio' && s.sizeBytes != null) ? ' · ' + _fmtSize(s.sizeBytes) : '';
+    var errStr = s.error ? ' <span class="text-warning">(' + escHtml(s.error) + ')</span>' : '';
+    sourcesHtml += '<li><b>' + label + '</b>: <code>' + escHtml(s.location || '') + '</code> ' +
+                   '<span class="text-muted">(' + countStr + sizeStr + ')</span>' + errStr + '</li>';
+  });
+  if (!sourcesHtml) {
+    sourcesHtml = '<li class="text-muted">' + __t('page.catalog.delete_no_data_to_remove') + '</li>';
+  }
+
+  var warnHtml = warnings.map(function(w) {
+    return '<div class="text-warning" style="font-size:12px;margin-top:4px;">⚠ ' + escHtml(w) + '</div>';
+  }).join('');
+
+  var html =
+    '<div class="modal-overlay" id="catalog-del-overlay" style="display:flex" onclick="if(event.target===this)closeCatalogDel()">' +
+      '<div class="modal" style="max-width:620px">' +
+        '<div class="modal-header">' +
+          '<h3>' + __t('page.catalog.delete_modal_title') + '</h3>' +
+          '<button class="modal-close" onclick="closeCatalogDel()">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<p><b>' + escHtml(name) + '</b></p>' +
+          '<p class="text-muted" style="font-size:13px;">' + __t('page.catalog.delete_modal_summary') + '</p>' +
+          '<ul style="font-size:13px;padding-left:18px;">' + sourcesHtml + '</ul>' +
+          warnHtml +
+          '<div style="margin-top:14px;padding:10px;background:#fff8e1;border:1px solid #ffe082;border-radius:4px;">' +
+            '<label style="cursor:pointer;"><input type="checkbox" id="catalog-del-data" style="margin-right:6px;">' +
+            __t('page.catalog.delete_modal_check_data') + '</label>' +
+            '<div class="text-muted" style="font-size:11px;margin-top:4px;">' + __t('page.catalog.delete_modal_data_warning') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button class="btn btn-secondary" onclick="closeCatalogDel()">' + __t('common.cancel') + '</button>' +
+          '<button class="btn btn-danger" onclick="confirmCatalogDelete(' + id + ')">' + __t('common.delete') + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  $('#catalog-del-overlay').remove();
+  $('body').append(html);
+}
+
+function closeCatalogDel() {
+  $('#catalog-del-overlay').remove();
+}
+
+function confirmCatalogDelete(id) {
+  var deleteData = $('#catalog-del-data').is(':checked');
+  var url = API + '/' + id + (deleteData ? '?delete_data=true' : '');
+  $.ajax({
+    url: url,
+    type: 'DELETE',
+    success: function(r) {
+      closeCatalogDel();
+      if (r.success) {
+        var msg = __t('page.catalog.toast_deleted');
+        if (r.data && r.data.deletedData && (r.data.details || []).length) {
+          var det = r.data.details.map(function(d) {
+            return d.kind + ': ' + (d.error ? ('❌ ' + d.error) : Number(d.count || 0).toLocaleString());
+          }).join(', ');
+          msg += ' [' + det + ']';
+        }
+        showToast(msg, 'success');
+      } else {
+        showToast((r.error && r.error.message) || __t('common.delete_failed'), 'error');
+      }
+      refreshAll();
+    },
+    error: function(xhr) {
+      var msg = __t('common.delete_failed');
+      try {
+        var b = JSON.parse(xhr.responseText);
+        if (b && b.error && b.error.message) msg = b.error.message;
+      } catch (e) {}
+      showToast(msg, 'error');
+    }
   });
 }
 

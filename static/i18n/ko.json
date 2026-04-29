@@ -1971,7 +1971,12 @@
       "recipe_sql_required": "SQL 쿼리를 입력하세요",
       "recipe_source_required": "소스를 선택하세요",
       "recipe_table_required": "테이블을 최소 1개 선택하세요",
-      "recipe_no_sources": "등록된 소스가 없습니다"
+      "recipe_no_sources": "등록된 소스가 없습니다",
+      "delete_modal_title": "카탈로그 삭제",
+      "delete_modal_summary": "이 카탈로그가 가리키는 실제 데이터:",
+      "delete_modal_check_data": "실제 데이터도 함께 삭제 (되돌릴 수 없습니다)",
+      "delete_modal_data_warning": "TSDB 행 / RDBMS 테이블 TRUNCATE / MinIO 객체가 영구 삭제됩니다.",
+      "delete_no_data_to_remove": "삭제할 실제 데이터가 식별되지 않았습니다."
     },
     "tsdb": {
       "title": "시계열 DB 관리",
