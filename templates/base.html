@@ -48,12 +48,12 @@
     </div>
 
     <ul class="sidebar-menu">
-      <!-- 1. Dashboard -->
+      <!-- 1. 서비스 대시보드 -->
       <li class="menu-item {% if active == 'dashboard' %}active{% endif %}">
         <a href="/"><i class="fas fa-tachometer-alt"></i><span>{{ t('nav.dashboard') }}</span></a>
       </li>
 
-      <!-- 2. Data Collection -->
+      <!-- 2. 데이터 커넥터 -->
       <li class="menu-item has-sub {% if active and active.startswith(('conn-','eng-')) %}open{% endif %}">
         <a href="#"><i class="fas fa-download"></i><span>{{ t('nav.data_collection') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
@@ -74,7 +74,18 @@
         </ul>
       </li>
 
-      <!-- 3. Pipeline -->
+      <!-- 3. 외부 연결 설정 -->
+      <li class="menu-item has-sub {% if active and active.startswith('int-') %}open{% endif %}">
+        <a href="#"><i class="fas fa-link"></i><span>{{ t('nav.integration') }}</span><i class="fas fa-chevron-right arrow"></i></a>
+        <ul class="sub-menu">
+          <li class="{% if active == 'int-tsdb' %}active{% endif %}"><a href="/integration/tsdb"><i class="fas fa-clock-rotate-left"></i><span>{{ t('nav.ext_tsdb') }}</span></a></li>
+          <li class="{% if active == 'int-rdbms' %}active{% endif %}"><a href="/integration/rdbms"><i class="fas fa-server"></i><span>{{ t('nav.ext_rdbms') }}</span></a></li>
+          <li class="{% if active == 'int-messaging' %}active{% endif %}"><a href="/integration/messaging"><i class="fas fa-stream"></i><span>{{ t('nav.ext_messaging') }}</span></a></li>
+          <li class="{% if active == 'int-file' %}active{% endif %}"><a href="/integration/file"><i class="fas fa-folder-open"></i><span>{{ t('nav.ext_file') }}</span></a></li>
+        </ul>
+      </li>
+
+      <!-- 4. 데이터 파이프라인 -->
       <li class="menu-item has-sub {% if active and active.startswith(('pip-','mod-')) %}open{% endif %}">
         <a href="#"><i class="fas fa-diagram-project"></i><span>{{ t('nav.pipeline') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
@@ -92,7 +103,7 @@
         </ul>
       </li>
 
-      <!-- 4. Data Management -->
+      <!-- 5. 데이터 조회 -->
       <li class="menu-item has-sub {% if active and active.startswith('data-') %}open{% endif %}">
         <a href="#"><i class="fas fa-database"></i><span>{{ t('nav.data_mgmt') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
@@ -101,29 +112,7 @@
         </ul>
       </li>
 
-      <!-- 5. Storage -->
-      <li class="menu-item has-sub {% if active and active.startswith('stor-') %}open{% endif %}">
-        <a href="#"><i class="fas fa-hard-drive"></i><span>{{ t('nav.storage') }}</span><i class="fas fa-chevron-right arrow"></i></a>
-        <ul class="sub-menu">
-          <li class="{% if active == 'stor-tsdb' %}active{% endif %}"><a href="/storage/tsdb"><i class="fas fa-clock-rotate-left"></i><span>{{ t('nav.tsdb') }}</span></a></li>
-          <li class="{% if active == 'stor-file' %}active{% endif %}"><a href="/storage/file"><i class="fas fa-folder-open"></i><span>{{ t('nav.file_storage') }}</span></a></li>
-          <li class="{% if active == 'stor-rdbms' %}active{% endif %}"><a href="/storage/rdbms"><i class="fas fa-table"></i><span>{{ t('nav.rdbms') }}</span></a></li>
-          <li class="{% if active == 'stor-retention' %}active{% endif %}"><a href="/storage/retention"><i class="fas fa-calendar-check"></i><span>{{ t('nav.retention') }}</span></a></li>
-        </ul>
-      </li>
-
-      <!-- 6. Integration -->
-      <li class="menu-item has-sub {% if active and active.startswith('int-') %}open{% endif %}">
-        <a href="#"><i class="fas fa-link"></i><span>{{ t('nav.integration') }}</span><i class="fas fa-chevron-right arrow"></i></a>
-        <ul class="sub-menu">
-          <li class="{% if active == 'int-tsdb' %}active{% endif %}"><a href="/integration/tsdb"><i class="fas fa-clock-rotate-left"></i><span>{{ t('nav.ext_tsdb') }}</span></a></li>
-          <li class="{% if active == 'int-rdbms' %}active{% endif %}"><a href="/integration/rdbms"><i class="fas fa-server"></i><span>{{ t('nav.ext_rdbms') }}</span></a></li>
-          <li class="{% if active == 'int-messaging' %}active{% endif %}"><a href="/integration/messaging"><i class="fas fa-stream"></i><span>{{ t('nav.ext_messaging') }}</span></a></li>
-          <li class="{% if active == 'int-file' %}active{% endif %}"><a href="/integration/file"><i class="fas fa-folder-open"></i><span>{{ t('nav.ext_file') }}</span></a></li>
-        </ul>
-      </li>
-
-      <!-- 7. Monitoring -->
+      <!-- 6. 시스템 모니터링 -->
       <li class="menu-item has-sub {% if active and active.startswith('mon-') %}open{% endif %}">
         <a href="#"><i class="fas fa-desktop"></i><span>{{ t('nav.monitoring') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
@@ -138,7 +127,18 @@
         </ul>
       </li>
 
-      <!-- 8. Admin (admin 전용) -->
+      <!-- 7. 시스템 스토리지 -->
+      <li class="menu-item has-sub {% if active and active.startswith('stor-') %}open{% endif %}">
+        <a href="#"><i class="fas fa-hard-drive"></i><span>{{ t('nav.storage') }}</span><i class="fas fa-chevron-right arrow"></i></a>
+        <ul class="sub-menu">
+          <li class="{% if active == 'stor-tsdb' %}active{% endif %}"><a href="/storage/tsdb"><i class="fas fa-clock-rotate-left"></i><span>{{ t('nav.tsdb') }}</span></a></li>
+          <li class="{% if active == 'stor-file' %}active{% endif %}"><a href="/storage/file"><i class="fas fa-folder-open"></i><span>{{ t('nav.file_storage') }}</span></a></li>
+          <li class="{% if active == 'stor-rdbms' %}active{% endif %}"><a href="/storage/rdbms"><i class="fas fa-table"></i><span>{{ t('nav.rdbms') }}</span></a></li>
+          <li class="{% if active == 'stor-retention' %}active{% endif %}"><a href="/storage/retention"><i class="fas fa-calendar-check"></i><span>{{ t('nav.retention') }}</span></a></li>
+        </ul>
+      </li>
+
+      <!-- 8. 시스템 설정 (admin 전용) -->
       {% if is_admin %}
       <li class="menu-item has-sub {% if active and active.startswith('adm-') %}open{% endif %}">
         <a href="#"><i class="fas fa-cog"></i><span>{{ t('nav.admin') }}</span><i class="fas fa-chevron-right arrow"></i></a>
