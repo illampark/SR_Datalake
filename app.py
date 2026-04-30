@@ -157,6 +157,8 @@ def require_login():
         from backend.services.api_auth import authenticate_api_key
         ok, err = authenticate_api_key()
         if ok is True:
+            from flask import g
+            g.api_key_authenticated = True
             return None
         if ok is False:
             code, msg, status = err
@@ -167,6 +169,37 @@ def require_login():
                         "error": {"code": "UNAUTHORIZED",
                                   "message": "로그인 또는 API 키가 필요합니다."}}), 401
     return redirect("/login")
+
+
+# ── RBAC Middleware ──
+@app.before_request
+def enforce_rbac():
+    """역할 기반 접근 제어 — require_login 통과 후 호출.
+
+    정책: GET = 인증된 모든 사용자, 변경 = admin 만.
+    예외 매트릭스는 backend/services/rbac.py 참조.
+    """
+    # 인증 면제 경로 (login/static/callback) 는 require_login 에서 이미 통과
+    allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/")
+    if any(request.path == p or request.path.startswith(p) for p in allowed_paths):
+        return None
+    if "/callback" in request.path:
+        return None
+    if request.method == "OPTIONS":
+        return None
+    # 인증 통과 못한 경우는 require_login 에서 이미 응답을 반환했음 → 여기는 인증 후
+    # 단, 비-API 페이지(GET /admin/users 등)도 동일 정책 적용 — 화면 자체를 막음
+    if "user_id" not in session and not getattr(__import__("flask").g, "api_key_authenticated", False):
+        return None  # 안전망: 인증 미통과는 require_login 이 처리
+    from backend.services.rbac import enforce_request_rbac
+    return enforce_request_rbac()
+
+
+# ── Jinja Context: is_admin ──
+@app.context_processor
+def _inject_rbac():
+    from backend.services.rbac import is_admin, current_role
+    return {"is_admin": is_admin(), "current_role": current_role()}
 
 
 # ── Login Page ──

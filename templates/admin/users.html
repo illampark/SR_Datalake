@@ -94,8 +94,6 @@
             <tr>
               <th>{{ t('page.users.th_feature') }}</th>
               <th class="text-center">{{ t('page.users.role_system_admin') }}</th>
-              <th class="text-center">{{ t('page.users.role_engineer') }}</th>
-              <th class="text-center">{{ t('page.users.role_operator') }}</th>
               <th class="text-center">{{ t('page.users.role_viewer') }}</th>
             </tr>
           </thead>
@@ -104,27 +102,19 @@
               <td class="fw-600">{{ t('page.users.feat_dashboard_view') }}</td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
             </tr>
             <tr>
               <td class="fw-600">{{ t('page.users.feat_connector_mgmt') }}</td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-muted"><i class="fas fa-minus"></i></td>
               <td class="text-center text-danger"><i class="fas fa-times"></i></td>
             </tr>
             <tr>
               <td class="fw-600">{{ t('page.users.feat_pipeline_mgmt') }}</td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-muted"><i class="fas fa-minus"></i></td>
               <td class="text-center text-danger"><i class="fas fa-times"></i></td>
             </tr>
             <tr>
               <td class="fw-600">{{ t('page.users.feat_alarm_mgmt') }}</td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
               <td class="text-center text-danger"><i class="fas fa-times"></i></td>
             </tr>
@@ -132,28 +122,20 @@
               <td class="fw-600">{{ t('page.users.feat_log_view') }}</td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-success"><i class="fas fa-check"></i></td>
             </tr>
             <tr>
               <td class="fw-600">{{ t('page.users.feat_user_mgmt') }}</td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
               <td class="text-center text-danger"><i class="fas fa-times"></i></td>
-              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
-              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
             </tr>
             <tr>
               <td class="fw-600">{{ t('page.users.feat_infra_mgmt') }}</td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-muted"><i class="fas fa-minus"></i></td>
-              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
               <td class="text-center text-danger"><i class="fas fa-times"></i></td>
             </tr>
             <tr>
               <td class="fw-600">{{ t('page.users.feat_system_settings') }}</td>
               <td class="text-center text-success"><i class="fas fa-check"></i></td>
-              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
-              <td class="text-center text-danger"><i class="fas fa-times"></i></td>
               <td class="text-center text-danger"><i class="fas fa-times"></i></td>
             </tr>
           </tbody>
@@ -386,8 +368,8 @@ function openAddUserModal() {
     '<input type="password" class="form-control" id="add-pw" placeholder="' + __t('page.users.placeholder_password') + '"></div>' +
     '<div class="form-group"><label class="form-label">' + __t('page.users.label_role') + '</label>' +
     '<select class="form-select" id="add-role">' +
-    '<option value="viewer">' + __t('page.users.role_viewer') + '</option><option value="operator">' + __t('page.users.role_operator') + '</option>' +
-    '<option value="engineer">' + __t('page.users.role_engineer') + '</option><option value="admin">' + __t('page.users.role_system_admin') + '</option>' +
+    '<option value="viewer">' + __t('page.users.role_viewer') + '</option>' +
+    '<option value="admin">' + __t('page.users.role_system_admin') + '</option>' +
     '</select></div>' +
     '</div>';
   var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
@@ -429,9 +411,7 @@ function openEditModal(userId) {
     '<div class="form-group"><label class="form-label">' + __t('page.users.label_role') + '</label>' +
     '<select class="form-select" id="edit-role">' +
     '<option value="viewer"' + (u.role === 'viewer' ? ' selected' : '') + '>' + __t('page.users.role_viewer') + '</option>' +
-    '<option value="operator"' + (u.role === 'operator' ? ' selected' : '') + '>' + __t('page.users.role_operator') + '</option>' +
-    '<option value="engineer"' + (u.role === 'engineer' ? ' selected' : '') + '>' + __t('page.users.role_engineer') + '</option>' +
-    '<option value="admin"' + (u.role === 'admin' ? ' selected' : '') + '>' + __t('page.users.role_system_admin') + '</option>' +
+    '<option value="admin"' + (u.role !== 'viewer' ? ' selected' : '') + '>' + __t('page.users.role_system_admin') + '</option>' +
     '</select></div></div>' +
     '<div class="form-group"><label class="form-label">' + __t('page.users.label_email') + '</label>' +
     '<input type="email" class="form-control" id="edit-email" value="' + _esc(u.email) + '"></div>';

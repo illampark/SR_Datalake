@@ -132,11 +132,14 @@
           <li class="{% if active == 'mon-alarm' %}active{% endif %}"><a href="/monitoring/alarm"><i class="fas fa-bell"></i><span>{{ t('nav.alarm') }}</span></a></li>
           <li class="sub-header">{{ t('nav.log_mgmt') }}</li>
           <li class="{% if active == 'mon-syslog' %}active{% endif %}"><a href="/monitoring/logs/system"><i class="fas fa-scroll"></i><span>{{ t('nav.system_log') }}</span></a></li>
+          {% if is_admin %}
           <li class="{% if active == 'mon-audit' %}active{% endif %}"><a href="/monitoring/logs/audit"><i class="fas fa-clipboard-list"></i><span>{{ t('nav.audit_log') }}</span></a></li>
+          {% endif %}
         </ul>
       </li>
 
-      <!-- 8. Admin -->
+      <!-- 8. Admin (admin 전용) -->
+      {% if is_admin %}
       <li class="menu-item has-sub {% if active and active.startswith('adm-') %}open{% endif %}">
         <a href="#"><i class="fas fa-cog"></i><span>{{ t('nav.admin') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
@@ -147,6 +150,7 @@
           <li class="{% if active == 'adm-settings' %}active{% endif %}"><a href="/admin/settings"><i class="fas fa-sliders"></i><span>{{ t('nav.system_settings') }}</span></a></li>
         </ul>
       </li>
+      {% endif %}
     </ul>
   </nav>
 

@@ -115,11 +115,11 @@ def seed_default_users():
                     role="admin",
                 ),
                 User(
-                    username="operator",
-                    display_name="운영자",
-                    email="operator@sdm-factory.co.kr",
-                    password_hash=generate_password_hash("operator1234"),
-                    role="operator",
+                    username="viewer",
+                    display_name="뷰어",
+                    email="viewer@sdm-factory.co.kr",
+                    password_hash=generate_password_hash("viewer1234"),
+                    role="viewer",
                 ),
             ]
             db.add_all(defaults)
