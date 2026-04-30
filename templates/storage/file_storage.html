@@ -462,7 +462,7 @@ function _renderPreviewTable(data, bucket, objectName) {
   if (sheets.length > 1) {
     sel = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
           '<label class="text-muted" style="font-size:12px;">Sheet:</label>' +
-          '<select class="form-select" style="width:auto;font-size:12px;" onchange="closeFilePreview();previewFile(\'' + escAttr(bucket) + '\',\'' + escAttr(objectName) + '\',\'' + escAttr(objectName.split(\'/\').pop()) + '\', this.value)">' +
+          '<select class="form-select" style="width:auto;font-size:12px;" onchange="closeFilePreview();previewFile(\'' + escAttr(bucket) + '\',\'' + escAttr(objectName) + '\',\'' + escAttr(objectName.split("/").pop()) + '\', this.value)">' +
           sheets.map(function(s){
             return '<option value="' + escAttr(s) + '"' + (s===cur?' selected':'') + '>' + escHtml(s) + '</option>';
           }).join('') +
