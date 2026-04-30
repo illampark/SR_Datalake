@@ -112,7 +112,8 @@
         </ul>
       </li>
 
-      <!-- 6. 시스템 모니터링 -->
+      <!-- 6. 시스템 모니터링 (admin 전용) -->
+      {% if is_admin %}
       <li class="menu-item has-sub {% if active and active.startswith('mon-') %}open{% endif %}">
         <a href="#"><i class="fas fa-desktop"></i><span>{{ t('nav.monitoring') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
@@ -121,13 +122,13 @@
           <li class="{% if active == 'mon-alarm' %}active{% endif %}"><a href="/monitoring/alarm"><i class="fas fa-bell"></i><span>{{ t('nav.alarm') }}</span></a></li>
           <li class="sub-header">{{ t('nav.log_mgmt') }}</li>
           <li class="{% if active == 'mon-syslog' %}active{% endif %}"><a href="/monitoring/logs/system"><i class="fas fa-scroll"></i><span>{{ t('nav.system_log') }}</span></a></li>
-          {% if is_admin %}
           <li class="{% if active == 'mon-audit' %}active{% endif %}"><a href="/monitoring/logs/audit"><i class="fas fa-clipboard-list"></i><span>{{ t('nav.audit_log') }}</span></a></li>
-          {% endif %}
         </ul>
       </li>
+      {% endif %}
 
-      <!-- 7. 시스템 스토리지 -->
+      <!-- 7. 시스템 스토리지 (admin 전용) -->
+      {% if is_admin %}
       <li class="menu-item has-sub {% if active and active.startswith('stor-') %}open{% endif %}">
         <a href="#"><i class="fas fa-hard-drive"></i><span>{{ t('nav.storage') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
@@ -137,6 +138,7 @@
           <li class="{% if active == 'stor-retention' %}active{% endif %}"><a href="/storage/retention"><i class="fas fa-calendar-check"></i><span>{{ t('nav.retention') }}</span></a></li>
         </ul>
       </li>
+      {% endif %}
 
       <!-- 8. 시스템 설정 (admin 전용) -->
       {% if is_admin %}

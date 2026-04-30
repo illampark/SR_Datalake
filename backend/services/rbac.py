@@ -30,6 +30,8 @@ RBAC_ALLOWED_FOR_ALL_PATHS = (
 
 # 조회(GET)여도 admin 만 허용할 경로(prefix 비교).
 # 감사 로그·사용자 관리 등 보안/관리 정보 + 관련 HTML 페이지.
+# 주의: API GET 엔드포인트는 메인 대시보드/카탈로그 등에서 폭넓게 재사용되므로
+# 시스템 모니터링·스토리지의 경우 HTML 페이지만 차단하고 API GET 은 그대로 둔다.
 ADMIN_ONLY_GET_PATHS = (
     "/api/monitoring/logs/audit",
     "/monitoring/logs/audit",
@@ -41,6 +43,10 @@ ADMIN_ONLY_GET_PATHS = (
     "/admin/infra",
     "/admin/gateway",
     "/admin/settings",
+    # 시스템 모니터링·스토리지 페이지 자체는 admin 전용
+    # (단, 메인 대시보드·카탈로그 등이 의존하는 /api/monitoring/*·/api/storage/* GET 은 viewer 도 사용)
+    "/monitoring",
+    "/storage",
 )
 
 
