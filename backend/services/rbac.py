@@ -61,9 +61,14 @@ def normalize_role(raw):
 
 
 def current_role():
-    """현재 요청의 정규화된 role 반환. API 키 인증은 admin 으로 간주."""
+    """현재 요청의 정규화된 role 반환.
+
+    API 키 인증은 viewer(읽기 전용) 로 고정한다.
+    외부에서 임베드되는 API 키 특성상 노출 위험이 높아 최소 권한 원칙 적용.
+    필요 시 키별 role 컬럼을 추가해 admin 키를 별도 발급하는 방식으로 확장 가능.
+    """
     if getattr(g, "api_key_authenticated", False):
-        return "admin"
+        return "viewer"
     return normalize_role(session.get("role"))
 
 
