@@ -20,6 +20,14 @@ from backend.services import metadata_tracker
 # 파일 소스 step 타입 — start_pipeline 시 MQTT 구독을 건너뛰고 트리거 기반으로 동작
 _FILE_SOURCE_TYPES = {"import_source", "internal_file_source"}
 
+# 파일 확장자 → 연결자 import_type 매핑. run_file_source 에서 연결자 설정과
+# 실제 파일 확장자가 다를 때 fail-fast 하기 위한 용도.
+_EXT_TO_IMPORT_TYPE = {
+    "xlsx": "xlsx", "xls": "xlsx",
+    "json": "json",
+    "csv": "csv", "tsv": "csv", "txt": "csv",
+}
+
 logger = logging.getLogger(__name__)
 
 # 실행 중인 파이프라인 상태
@@ -620,6 +628,13 @@ def run_file_source(pipeline_id):
 
             for fi, obj in enumerate(objects):
                 try:
+                    _ext = obj.object_name.rsplit(".", 1)[-1].lower() if "." in obj.object_name else ""
+                    _detected = _EXT_TO_IMPORT_TYPE.get(_ext)
+                    if _detected and _detected != import_type:
+                        raise ValueError(
+                            f"연결자 형식이 '{import_type}'(으)로 설정돼 있으나 파일 확장자는 '.{_ext}' 입니다. "
+                            f"수집 관리 → 가져오기 수집기에서 형식을 '{_detected}'(으)로 변경하세요."
+                        )
                     resp = client.get_object(bucket, obj.object_name)
                     try:
                         if import_type == "json":
