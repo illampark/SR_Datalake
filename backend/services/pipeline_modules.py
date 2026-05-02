@@ -557,22 +557,29 @@ def _write_tsdb_rows(rows):
 
 
 def flush_all_sink_buffers():
-    """남은 배치 버퍼 모두 플러시 (파이프라인 정지 시 호출)"""
+    """남은 배치 버퍼 모두 플러시 (파이프라인 정지 시 호출).
+
+    한 sink 의 flush 가 실패해도 다른 sink 들의 flush 가 차단되지 않도록
+    각 키 단위로 try/except 로 격리한다 (실패는 logger.error 로 기록).
+    """
     for key in list(_sink_buffers.keys()):
-        if key.startswith("rdbms_sink:"):
-            _flush_rdbms_batch(key)
-        elif key.startswith("file_sink:"):
-            _flush_file_batch(key)
-        elif key.startswith("ext_tsdb:"):
-            _flush_ext_tsdb_batch(key)
-        elif key.startswith("ext_rdbms:"):
-            _flush_ext_rdbms_batch(key)
-        elif key.startswith("ext_file_export:"):
-            _flush_ext_file_export(key)
-        elif key.startswith("ext_file:"):
-            _flush_ext_file_batch(key)
-        else:
-            _flush_tsdb_batch(key)
+        try:
+            if key.startswith("rdbms_sink:"):
+                _flush_rdbms_batch(key)
+            elif key.startswith("file_sink:"):
+                _flush_file_batch(key)
+            elif key.startswith("ext_tsdb:"):
+                _flush_ext_tsdb_batch(key)
+            elif key.startswith("ext_rdbms:"):
+                _flush_ext_rdbms_batch(key)
+            elif key.startswith("ext_file_export:"):
+                _flush_ext_file_export(key)
+            elif key.startswith("ext_file:"):
+                _flush_ext_file_batch(key)
+            else:
+                _flush_tsdb_batch(key)
+        except Exception as fe:
+            logger.error("flush_all_sink_buffers: key=%s 실패 — %s", key, fe)
 
 
 # ── 버퍼 상태 조회 / 개별 플러시 (engine_buffer API 용) ──
@@ -795,7 +802,17 @@ def _write_rdbms_rows(entries):
 
         logger.debug("RDBMS sink: %d rows written to %s", len(rows), table_name)
     except Exception as e:
+        # 로그 + 재발생: engine 의 sink 루프가 sink_func 예외를 잡아
+        # pipeline.error_count / per-step error_count 를 증가시킬 수 있도록.
         logger.error("RDBMS sink write error: %s", e)
+        raise
+
+
+def _mysql_ident(s):
+    """MySQL 식별자 quoting — 내부 backtick 은 backtick backtick 으로,
+    `%` 는 `%%` 로 이스케이프 (executemany 의 pyformat substitution 충돌 방지).
+    """
+    return "`" + str(s).replace("`", "``").replace("%", "%%") + "`"
 
 
 def _rdbms_write_mysql(host, port, database, username, password,
@@ -808,18 +825,18 @@ def _rdbms_write_mysql(host, port, database, username, password,
     )
     try:
         cur = conn.cursor()
+        tbl = _mysql_ident(table_name)
+        col_idents = [_mysql_ident(c) for c in columns]
         # 테이블 자동 생성 (없으면)
-        col_defs = ", ".join(
-            f"`{c}` TEXT" for c in columns
-        )
+        col_defs = ", ".join(f"{ci} TEXT" for ci in col_idents)
         cur.execute(
-            f"CREATE TABLE IF NOT EXISTS `{table_name}` "
+            f"CREATE TABLE IF NOT EXISTS {tbl} "
             f"(id INT AUTO_INCREMENT PRIMARY KEY, {col_defs})"
         )
         # INSERT
         placeholders = ", ".join(["%s"] * len(columns))
-        col_names = ", ".join(f"`{c}`" for c in columns)
-        sql = f"INSERT INTO `{table_name}` ({col_names}) VALUES ({placeholders})"
+        col_names = ", ".join(col_idents)
+        sql = f"INSERT INTO {tbl} ({col_names}) VALUES ({placeholders})"
         values = [
             tuple(str(r.get(c, "")) if r.get(c) is not None else None for c in columns)
             for r in rows
@@ -832,7 +849,15 @@ def _rdbms_write_mysql(host, port, database, username, password,
 
 def _rdbms_write_pg(host, port, database, username, password,
                      schema, table_name, columns, rows):
+    """식별자(스키마/테이블/컬럼명)는 psycopg2.sql.Identifier 로 안전하게 quoting.
+
+    `전전월OCP(%)` 같은 % 포함 컬럼명을 f-string 으로 SQL 에 끼워 넣으면
+    psycopg2 의 pyformat parameter substitution 이 깨져 'tuple index out of
+    range' 가 발생한다 (placeholder 카운트 오인). sql.Identifier 사용 시
+    임의의 문자(따옴표·% 등)를 안전하게 이스케이프해 동일 사고를 차단.
+    """
     import psycopg2
+    from psycopg2 import sql as _sql
     conn = psycopg2.connect(
         host=host, port=port, dbname=database or "postgres",
         user=username, password=password,
@@ -840,24 +865,30 @@ def _rdbms_write_pg(host, port, database, username, password,
     )
     try:
         cur = conn.cursor()
-        # 테이블 자동 생성 (없으면)
-        col_defs = ", ".join(
-            f'"{c}" TEXT' for c in columns
+        full_table = (
+            _sql.Identifier(schema, table_name) if schema
+            else _sql.Identifier(table_name)
         )
-        full_table = f'"{schema}"."{table_name}"' if schema else f'"{table_name}"'
+        col_idents = [_sql.Identifier(c) for c in columns]
+        col_defs = _sql.SQL(", ").join(
+            _sql.SQL("{} TEXT").format(ci) for ci in col_idents
+        )
         cur.execute(
-            f"CREATE TABLE IF NOT EXISTS {full_table} "
-            f'(id SERIAL PRIMARY KEY, {col_defs})'
+            _sql.SQL(
+                "CREATE TABLE IF NOT EXISTS {tbl} (id SERIAL PRIMARY KEY, {cols})"
+            ).format(tbl=full_table, cols=col_defs)
         )
-        # INSERT
-        placeholders = ", ".join(["%s"] * len(columns))
-        col_names = ", ".join(f'"{c}"' for c in columns)
-        sql = f"INSERT INTO {full_table} ({col_names}) VALUES ({placeholders})"
+        # INSERT — placeholder 는 %s 로, 식별자는 sql.Identifier 로 분리
+        placeholders = _sql.SQL(", ").join(_sql.Placeholder() for _ in columns)
+        col_names = _sql.SQL(", ").join(col_idents)
+        insert_sql = _sql.SQL(
+            "INSERT INTO {tbl} ({cols}) VALUES ({vals})"
+        ).format(tbl=full_table, cols=col_names, vals=placeholders)
         values = [
             tuple(str(r.get(c, "")) if r.get(c) is not None else None for c in columns)
             for r in rows
         ]
-        cur.executemany(sql, values)
+        cur.executemany(insert_sql, values)
         conn.commit()
     finally:
         conn.close()
