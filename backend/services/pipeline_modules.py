@@ -851,10 +851,14 @@ def _rdbms_write_pg(host, port, database, username, password,
                      schema, table_name, columns, rows):
     """식별자(스키마/테이블/컬럼명)는 psycopg2.sql.Identifier 로 안전하게 quoting.
 
-    `전전월OCP(%)` 같은 % 포함 컬럼명을 f-string 으로 SQL 에 끼워 넣으면
-    psycopg2 의 pyformat parameter substitution 이 깨져 'tuple index out of
-    range' 가 발생한다 (placeholder 카운트 오인). sql.Identifier 사용 시
-    임의의 문자(따옴표·% 등)를 안전하게 이스케이프해 동일 사고를 차단.
+    `전전월OCP(%)` 같은 % 포함 컬럼명 처리 주의:
+      - sql.Identifier 는 따옴표(`"`) 만 escape 하고 `%` 는 그대로 둔다
+      - psycopg2 는 cur.execute(sql) 에 params 가 없으면 `%` 를 literal 로,
+        cur.executemany(sql, vars_list) 에서는 pyformat substitution 으로
+        `%%` → `%` 처리한다 → CREATE TABLE 과 INSERT 가 동일 컬럼명을
+        써도 결과가 어긋나 'column does not exist' 가 발생할 수 있다
+      - 따라서 INSERT 경로에 한해 식별자 내부 `%` → `%%` 로 escape 하고,
+        CREATE TABLE (no-params 경로) 는 원본 식별자 그대로 사용.
     """
     import psycopg2
     from psycopg2 import sql as _sql
@@ -865,25 +869,34 @@ def _rdbms_write_pg(host, port, database, username, password,
     )
     try:
         cur = conn.cursor()
-        full_table = (
+        # CREATE TABLE — no params → % 는 literal 그대로
+        full_table_create = (
             _sql.Identifier(schema, table_name) if schema
             else _sql.Identifier(table_name)
         )
-        col_idents = [_sql.Identifier(c) for c in columns]
+        create_col_idents = [_sql.Identifier(c) for c in columns]
         col_defs = _sql.SQL(", ").join(
-            _sql.SQL("{} TEXT").format(ci) for ci in col_idents
+            _sql.SQL("{} TEXT").format(ci) for ci in create_col_idents
         )
         cur.execute(
             _sql.SQL(
                 "CREATE TABLE IF NOT EXISTS {tbl} (id SERIAL PRIMARY KEY, {cols})"
-            ).format(tbl=full_table, cols=col_defs)
+            ).format(tbl=full_table_create, cols=col_defs)
         )
-        # INSERT — placeholder 는 %s 로, 식별자는 sql.Identifier 로 분리
+        # INSERT — executemany 가 %-format 처리하므로 식별자 % → %% escape
+        safe_table = str(table_name).replace("%", "%%")
+        safe_schema = str(schema).replace("%", "%%") if schema else None
+        safe_cols = [str(c).replace("%", "%%") for c in columns]
+        full_table_insert = (
+            _sql.Identifier(safe_schema, safe_table) if safe_schema
+            else _sql.Identifier(safe_table)
+        )
+        insert_col_idents = [_sql.Identifier(c) for c in safe_cols]
         placeholders = _sql.SQL(", ").join(_sql.Placeholder() for _ in columns)
-        col_names = _sql.SQL(", ").join(col_idents)
+        col_names = _sql.SQL(", ").join(insert_col_idents)
         insert_sql = _sql.SQL(
             "INSERT INTO {tbl} ({cols}) VALUES ({vals})"
-        ).format(tbl=full_table, cols=col_names, vals=placeholders)
+        ).format(tbl=full_table_insert, cols=col_names, vals=placeholders)
         values = [
             tuple(str(r.get(c, "")) if r.get(c) is not None else None for c in columns)
             for r in rows
