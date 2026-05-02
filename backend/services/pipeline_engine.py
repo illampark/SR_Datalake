@@ -397,6 +397,42 @@ def run_file_source(pipeline_id):
         finally:
             ss.close()
 
+    def _reset_step_progress():
+        ss = SessionLocal()
+        try:
+            ss.execute(_sql_text("""
+                UPDATE pipeline_step
+                SET processed_count = 0, error_count = 0, dropped_count = 0,
+                    last_processed_at = NULL
+                WHERE pipeline_id = :pid
+            """), {"pid": pipeline_id})
+            ss.commit()
+        except Exception:
+            ss.rollback()
+        finally:
+            ss.close()
+
+    def _commit_step_progress(step_stats):
+        if not step_stats:
+            return
+        ss = SessionLocal()
+        try:
+            for sid, s in step_stats.items():
+                ss.execute(_sql_text("""
+                    UPDATE pipeline_step
+                    SET processed_count = :p, error_count = :e, dropped_count = :d,
+                        last_processed_at = :ts
+                    WHERE id = :sid
+                """), {
+                    "p": s["processed"], "e": s["errors"], "d": s["dropped"],
+                    "ts": s["last_at"], "sid": sid,
+                })
+            ss.commit()
+        except Exception:
+            ss.rollback()
+        finally:
+            ss.close()
+
     def _try_acquire_lock(run_id):
         ss = SessionLocal()
         try:
@@ -576,16 +612,19 @@ def run_file_source(pipeline_id):
             source_steps = []
             process_steps = []
             sink_steps = []
+            step_stats = {}  # step_id → {"processed", "errors", "dropped", "last_at"}
             for st in steps:
                 if not st.enabled:
                     continue
-                entry = {"module_type": st.module_type, "config": dict(st.config or {})}
+                entry = {"step_id": st.id, "module_type": st.module_type, "config": dict(st.config or {})}
+                step_stats[st.id] = {"processed": 0, "errors": 0, "dropped": 0, "last_at": None}
                 if st.module_type in _FILE_SOURCE_TYPES:
                     source_steps.append(entry)
                 elif st.module_type in SINK_REGISTRY:
                     sink_steps.append(entry)
                 else:
                     process_steps.append(entry)
+            source_step_id = source_steps[0].get("step_id") if source_steps else None
 
             if not source_steps:
                 return {"ok": False, "error": "import_source 스텝이 없습니다."}
@@ -619,6 +658,7 @@ def run_file_source(pipeline_id):
             )
 
             _commit_progress(0, 0, 0)
+            _reset_step_progress()
 
             total_processed = 0
             total_errors = 0
@@ -661,27 +701,47 @@ def run_file_source(pipeline_id):
                                 "timestamp": datetime.utcnow().isoformat(),
                             }
 
+                            _now_ts = datetime.utcnow()
+                            if source_step_id is not None and source_step_id in step_stats:
+                                _s = step_stats[source_step_id]
+                                _s["processed"] += 1
+                                _s["last_at"] = _now_ts
+
                             drop = False
                             for step_entry in process_steps:
+                                _sid = step_entry.get("step_id")
                                 msg = process_message(
                                     msg, step_entry["module_type"], step_entry["config"],
                                 )
                                 if msg is None:
+                                    if _sid in step_stats:
+                                        step_stats[_sid]["dropped"] += 1
+                                        step_stats[_sid]["last_at"] = _now_ts
                                     drop = True
                                     break
+                                if _sid in step_stats:
+                                    step_stats[_sid]["processed"] += 1
+                                    step_stats[_sid]["last_at"] = _now_ts
                             if drop:
                                 total_dropped += 1
                                 continue
 
                             for sink_step in sink_steps:
+                                _sid = sink_step.get("step_id")
                                 try:
                                     sink_func = SINK_REGISTRY.get(sink_step["module_type"])
                                     if sink_func:
                                         cfg = dict(sink_step["config"])
                                         cfg["_pipeline_id"] = pipeline_id
                                         sink_func(copy.deepcopy(msg), cfg)
+                                        if _sid in step_stats:
+                                            step_stats[_sid]["processed"] += 1
+                                            step_stats[_sid]["last_at"] = _now_ts
                                 except Exception as se:
                                     total_errors += 1
+                                    if _sid in step_stats:
+                                        step_stats[_sid]["errors"] += 1
+                                        step_stats[_sid]["last_at"] = _now_ts
                                     logger.warning(
                                         "file-source sink %s 실패: %s",
                                         sink_step["module_type"], se,
@@ -693,6 +753,7 @@ def run_file_source(pipeline_id):
                             now = _time.time()
                             if (total_processed - last_commit_count) >= PROGRESS_RECORDS or (now - last_commit_at) >= PROGRESS_SECONDS:
                                 _commit_progress(total_processed, total_errors, total_dropped)
+                                _commit_step_progress(step_stats)
                                 last_commit_count = total_processed
                                 last_commit_at = now
                     finally:
@@ -718,6 +779,7 @@ def run_file_source(pipeline_id):
                 logger.warning("flush_all_sink_buffers 실패: %s", e)
 
             _commit_progress(total_processed, total_errors, total_dropped)
+            _commit_step_progress(step_stats)
 
             logger.info(
                 "file-source pipeline=%s 완료 — files=%d processed=%d dropped=%d errors=%d",

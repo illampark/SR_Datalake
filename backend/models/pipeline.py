@@ -69,6 +69,11 @@ class PipelineStep(Base):
     module_type = Column(String(50), nullable=False)         # normalize / unit_convert / filter / anomaly / aggregate / enrich / script
     enabled = Column(Boolean, default=True)
     config = Column(JSON, default={})                        # 모듈별 설정 JSON
+    # 단계별 런타임 통계 (run_file_source 가 throttle commit)
+    processed_count = Column(Integer, default=0)
+    error_count = Column(Integer, default=0)
+    dropped_count = Column(Integer, default=0)
+    last_processed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -82,6 +87,10 @@ class PipelineStep(Base):
             "moduleType": self.module_type,
             "enabled": self.enabled,
             "config": self.config or {},
+            "processedCount": self.processed_count or 0,
+            "errorCount": self.error_count or 0,
+            "droppedCount": self.dropped_count or 0,
+            "lastProcessedAt": self.last_processed_at.isoformat() if self.last_processed_at else None,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }

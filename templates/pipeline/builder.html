@@ -446,6 +446,47 @@ function loadPipelineDetail(id) {
 
     // Render bindings
     renderBindings();
+
+    // Live per-step progress polling (running 상태에서만)
+    if (p.status === 'running') {
+      startStepProgressPolling();
+    } else {
+      stopStepProgressPolling();
+    }
+  });
+}
+
+// ── Per-step live progress polling ──
+var _stepProgressTimer = null;
+function startStepProgressPolling() {
+  stopStepProgressPolling();
+  _stepProgressTimer = setInterval(function() {
+    if (!selectedPipelineId) { stopStepProgressPolling(); return; }
+    $.getJSON(API + '/' + selectedPipelineId, function(res) {
+      if (!res || !res.success || !res.data) return;
+      var p = res.data;
+      _updateStepCounters(p.steps || []);
+      if (p.status !== 'running') stopStepProgressPolling();
+    });
+  }, 3000);
+}
+function stopStepProgressPolling() {
+  if (_stepProgressTimer) {
+    clearInterval(_stepProgressTimer);
+    _stepProgressTimer = null;
+  }
+}
+function _updateStepCounters(steps) {
+  steps.forEach(function(s) {
+    if (!s.id) return;
+    var $wrap = $('#step-counters-' + s.id);
+    if (!$wrap.length) return;
+    var ec = s.errorCount || 0, dc = s.droppedCount || 0;
+    $wrap.find('.cnt-processed').text(fmtNum(s.processedCount || 0));
+    $wrap.find('.cnt-errors').text(fmtNum(ec));
+    $wrap.find('.cnt-errors-wrap').css('display', ec > 0 ? 'inline' : 'none');
+    $wrap.find('.cnt-dropped').text(fmtNum(dc));
+    $wrap.find('.cnt-dropped-wrap').css('display', dc > 0 ? 'inline' : 'none');
   });
 }
 
@@ -471,6 +512,15 @@ function renderSteps() {
       ? '<span class="badge-sm badge-success">' + __t('page.builder.badge_enabled') + '</span>'
       : '<span class="badge-sm badge-outline">' + __t('page.builder.badge_disabled') + '</span>';
 
+    var sid = step.id;
+    var counters = sid
+      ? '<span id="step-counters-' + sid + '" class="fs-11 mono" style="display:inline-flex;align-items:center;gap:8px;color:var(--text-secondary);">' +
+          '<span title="' + __t('page.builder.step_processed') + '"><i class="fas fa-check-circle text-success"></i> <span class="cnt-processed">' + fmtNum(step.processedCount || 0) + '</span></span>' +
+          '<span class="cnt-errors-wrap" style="display:' + ((step.errorCount || 0) > 0 ? 'inline' : 'none') + ';" title="' + __t('page.builder.step_errors') + '"><i class="fas fa-circle-exclamation text-danger"></i> <span class="cnt-errors">' + fmtNum(step.errorCount || 0) + '</span></span>' +
+          '<span class="cnt-dropped-wrap" style="display:' + ((step.droppedCount || 0) > 0 ? 'inline' : 'none') + ';" title="' + __t('page.builder.step_dropped') + '"><i class="fas fa-filter text-warning"></i> <span class="cnt-dropped">' + fmtNum(step.droppedCount || 0) + '</span></span>' +
+        '</span>'
+      : '';
+
     $body.append(
       '<div class="step-item" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:8px;">' +
         '<span class="fs-12 text-muted" style="min-width:24px;text-align:center;">' + (idx + 1) + '</span>' +
@@ -482,6 +532,7 @@ function renderSteps() {
               '</span>'
             : _procConfigSummary(moduleType, step.config)) +
         '</span>' +
+        counters +
         enabledBadge +
         '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.builder.btn_settings') + '" onclick="editStepConfig(' + idx + ')"><i class="fas fa-gear"></i></button>' +
         '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="removeStep(' + idx + ')"><i class="fas fa-times text-danger"></i></button>' +

@@ -36,6 +36,11 @@ def _migrate_add_columns():
         ("tag_metadata", "retention_policy", "VARCHAR(100)", "''"),
         ("tag_metadata", "is_published", "BOOLEAN", "true"),
         ("tag_metadata", "is_deprecated", "BOOLEAN", "false"),
+        # PipelineStep per-step run counters (run_file_source 가 throttle commit)
+        ("pipeline_step", "processed_count", "INTEGER", "0"),
+        ("pipeline_step", "error_count", "INTEGER", "0"),
+        ("pipeline_step", "dropped_count", "INTEGER", "0"),
+        ("pipeline_step", "last_processed_at", "TIMESTAMP", "NULL"),
     ]
     with engine.begin() as conn:
         for table, col, col_type, default in _additions:
