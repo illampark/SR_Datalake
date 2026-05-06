@@ -72,11 +72,29 @@ def dashboard():
         db.close()
 
 
+# 디스크 메트릭이 가리킬 경로 — SDL 데이터가 적재되는 파티션을 우선.
+# 컨테이너 내부에서 /app/static/uploads 가 호스트 DATA_ROOT/sdl-uploads 로 bind 됨.
+# 그 경로의 underlying filesystem 통계를 보면 데이터 적재 가용량을 정확히 표시.
+_DISK_PATH_CANDIDATES = (
+    "/app/static/uploads",   # bind mount target (DATA_ROOT/sdl-uploads)
+    "/data",                 # host data dir (스테이징 등)
+    "/",                     # 최후 fallback
+)
+
+
+def _resolve_disk_path():
+    for p in _DISK_PATH_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return "/"
+
+
 # ── 시스템 메트릭 (psutil) ──
 def _get_system_metrics():
     try:
         mem = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
+        disk_path = _resolve_disk_path()
+        disk = psutil.disk_usage(disk_path)
         net = psutil.net_io_counters()
         boot = psutil.boot_time()
         uptime = time.time() - boot
@@ -95,6 +113,7 @@ def _get_system_metrics():
                 "percent": round(disk.percent, 1),
                 "used_gb": round(disk.used / (1024 ** 3), 1),
                 "total_gb": round(disk.total / (1024 ** 3), 1),
+                "path": disk_path,
             },
             "network": {
                 "bytes_sent": net.bytes_sent,
