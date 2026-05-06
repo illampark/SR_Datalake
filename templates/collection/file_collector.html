@@ -93,7 +93,7 @@
     <div class="toolbar-right">
       <div class="filter-group">
         <label>{{ t('page.opcua.filter_status_label') }}</label>
-        <select class="form-select" id="filter-status" onchange="loadCollectors()">
+        <select class="form-select" id="filter-status" onchange="onFilterChange()">
           <option value="">{{ t('page.opcua.filter_all') }}</option>
           <option value="running">{{ t('page.opcua.filter_running') }}</option>
           <option value="stopped">{{ t('page.opcua.filter_stopped') }}</option>
@@ -123,6 +123,7 @@
         </tbody>
       </table>
     </div>
+    <div id="connector-paging" class="d-flex justify-between align-center p-16"></div>
   </div>
 </div>
 {% endblock %}
@@ -159,14 +160,34 @@ function loadSummary() {
 }
 
 /* ── List ── */
+/* ── Pagination state ── */
+var _curPage = 1;
+var _pageSize = 10;
+function gotoPage(p) { _curPage = p; loadCollectors(); }
+function onFilterChange() { _curPage = 1; loadCollectors(); }
+function renderPaging(total) {
+  var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+  if (_curPage > totalPages) _curPage = totalPages;
+  var html = '<span class="text-muted">' + __t('common.total') + ' ' + fmt(total) + ' ' + __t('common.items') + '</span><div class="d-flex gap-8">';
+  if (_curPage > 1) html += '<button class="btn btn-outline btn-sm" onclick="gotoPage(1)"><i class="fas fa-angle-double-left"></i></button>';
+  if (_curPage > 1) html += '<button class="btn btn-outline btn-sm" onclick="gotoPage(' + (_curPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>';
+  html += '<span class="btn btn-sm" style="cursor:default">' + _curPage + ' / ' + totalPages + '</span>';
+  if (_curPage < totalPages) html += '<button class="btn btn-outline btn-sm" onclick="gotoPage(' + (_curPage + 1) + ')"><i class="fas fa-chevron-right"></i></button>';
+  if (_curPage < totalPages) html += '<button class="btn btn-outline btn-sm" onclick="gotoPage(' + totalPages + ')"><i class="fas fa-angle-double-right"></i></button>';
+  html += '</div>';
+  $('#connector-paging').html(html);
+}
+
 function loadCollectors() {
-  var params = {};
+  var params = { page: _curPage, size: _pageSize };
   var st = $('#filter-status').val(); if (st) params.status = st;
 
   $.getJSON(API, params, function(r) {
     if (!r.success) return;
     var items = r.data;
     var $tb = $('#collector-tbody').empty();
+    var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
+    renderPaging(total);
     if (!items.length) {
       $tb.html('<tr><td colspan="9" class="text-center text-muted" style="padding:40px">' + __t('page.file_collector.no_collectors') + '</td></tr>');
       return;
