@@ -402,7 +402,9 @@
     }
   });
 
-  $(document).on('click', '.search-result-item', function() {
+  // #header-search 의 stopPropagation() 이 document 까지 버블링을 막으므로
+  // 위임은 search-results 컨테이너에 직접 붙여 사이에서 처리되도록 한다.
+  $('#search-results').on('click', '.search-result-item', function() {
     window.location.href = $(this).data('url');
   });
 
