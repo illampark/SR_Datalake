@@ -531,12 +531,35 @@ def run_file_source(pipeline_id):
         finally:
             ss.close()
 
-    def _stream_csv_records(resp, encoding, delimiter, skip_header):
+    def _stream_csv_records(resp, encoding, delimiter, skip_header,
+                             stream_base_byte=0, fixed_header=None):
+        """CSV 스트리밍.
+
+        stream_base_byte: 이 스트림이 파일의 어느 byte 위치에서 시작하는지.
+                          MinIO Range 로 부분 GET 했을 때 caller 가 base 를 전달한다.
+        fixed_header:    Range 부분 GET 의 경우 헤더가 스트림에 없으므로 외부에서
+                          미리 파싱한 헤더 (list[str]) 를 주입한다.
+
+        yields (record_dict, abs_byte_after_line, header) 튜플.
+          - abs_byte_after_line = stream_base_byte + 이 스트림에서 소비한 bytes
+            (직전 line 의 \n 직후, 다음 line 시작 위치 = 안전한 resume offset)
+          - header 는 이 스트림에서 처음 추출했을 때만 의미 있음. caller 가
+            resume_state 에 저장해두면 다음 run 에서 fixed_header 로 재주입.
+        """
+        state = {"bytes": 0}  # 이 stream 에서 누적 소비 bytes (\n 포함)
+        first_chunk = [True]
+
         def _line_iter():
             buf = b""
             for chunk in resp.stream(1 * 1024 * 1024):
                 if not isinstance(chunk, (bytes, bytearray)):
                     continue
+                if first_chunk[0]:
+                    first_chunk[0] = False
+                    # offset=0 인 경우에만 BOM 가능성 있음 (Range 요청은 BOM 미포함)
+                    if stream_base_byte == 0 and chunk.startswith(b"\xef\xbb\xbf"):
+                        state["bytes"] += 3
+                        chunk = chunk[3:]
                 buf += chunk
                 while True:
                     nl = buf.find(b"\n")
@@ -544,16 +567,18 @@ def run_file_source(pipeline_id):
                         break
                     line_b = buf[:nl]
                     buf = buf[nl + 1:]
+                    state["bytes"] += nl + 1  # line + \n
                     if line_b.endswith(b"\r"):
                         line_b = line_b[:-1]
                     yield line_b.decode(encoding, errors="replace")
             if buf:
+                state["bytes"] += len(buf)
                 if buf.endswith(b"\r"):
                     buf = buf[:-1]
                 yield buf.decode(encoding, errors="replace")
 
         reader = _csv.reader(_line_iter(), delimiter=delimiter)
-        header = None
+        header = list(fixed_header) if fixed_header else None
         for row in reader:
             if header is None:
                 if skip_header:
@@ -562,9 +587,10 @@ def run_file_source(pipeline_id):
                 else:
                     header = [f"col{i}" for i in range(len(row))]
             if len(row) == len(header):
-                yield dict(zip(header, row))
+                rec = dict(zip(header, row))
             else:
-                yield {h: (row[i] if i < len(row) else "") for i, h in enumerate(header)}
+                rec = {h: (row[i] if i < len(row) else "") for i, h in enumerate(header)}
+            yield rec, stream_base_byte + state["bytes"], header
 
     def _stream_json_records(resp):
         """ijson 으로 JSON 스트리밍. 루트가 array (item) 또는 {data|records|items: [...]} 지원."""
@@ -719,14 +745,18 @@ def run_file_source(pipeline_id):
             _processed_objects = set(_resume_state.get("processed_objects") or [])
             _resume_object = _resume_state.get("current_object") or None
             _resume_record_idx = int(_resume_state.get("current_record_idx") or 0)
+            _resume_byte_offset = int(_resume_state.get("current_byte_offset") or 0)
+            _resume_header = _resume_state.get("current_header") or None
             _resume_processed = int(_resume_state.get("processed_count_at_save") or 0)
             _resume_errors = int(_resume_state.get("error_count_at_save") or 0)
             _resume_dropped = int(_resume_state.get("dropped_count_at_save") or 0)
 
             if _processed_objects or _resume_object:
                 logger.info(
-                    "file-source pipeline=%s 재개 — completed_files=%d, resume_in='%s' record_idx=%d",
-                    pipeline_id, len(_processed_objects), _resume_object, _resume_record_idx,
+                    "file-source pipeline=%s 재개 — completed_files=%d, resume_in='%s' "
+                    "byte_offset=%d record_idx=%d",
+                    pipeline_id, len(_processed_objects), _resume_object,
+                    _resume_byte_offset, _resume_record_idx,
                 )
 
             logger.info(
@@ -766,8 +796,25 @@ def run_file_source(pipeline_id):
                             f"연결자 형식이 '{import_type}'(으)로 설정돼 있으나 파일 확장자는 '.{_ext}' 입니다. "
                             f"수집 관리 → 가져오기 수집기에서 형식을 '{_detected}'(으)로 변경하세요."
                         )
-                    resp = client.get_object(bucket, obj.object_name)
+                    # CSV 재개 시 byte offset 사용 — Range 로 부분 GET, 헤더는 saved 사용
+                    is_resume_target = (obj.object_name == _resume_object)
+                    use_byte_resume = (
+                        import_type == "csv" and is_resume_target
+                        and _resume_byte_offset > 0 and _resume_header
+                    )
+                    if use_byte_resume:
+                        resp = client.get_object(
+                            bucket, obj.object_name, offset=_resume_byte_offset,
+                        )
+                        logger.info(
+                            "file-source pipeline=%s resume %s @ byte %d (skip parsing)",
+                            pipeline_id, obj.object_name, _resume_byte_offset,
+                        )
+                    else:
+                        resp = client.get_object(bucket, obj.object_name)
                     try:
+                        # CSV 인 경우 byte-offset 모드 / 그 외 (json/xlsx) 는 record_idx 모드 유지
+                        csv_byte_mode = (import_type == "csv")
                         if import_type == "json":
                             records_iter = _stream_json_records(resp)
                         elif import_type == "xlsx":
@@ -777,16 +824,34 @@ def run_file_source(pipeline_id):
                         else:
                             records_iter = _stream_csv_records(
                                 resp, encoding, delimiter, skip_header,
+                                stream_base_byte=(_resume_byte_offset if use_byte_resume else 0),
+                                fixed_header=(_resume_header if use_byte_resume else None),
                             )
 
-                        # 재개 대상 파일이면 첫 N record skip
-                        skip_records = _resume_record_idx if obj.object_name == _resume_object else 0
-                        if skip_records:
-                            logger.info("file-source pipeline=%s resume %s @ record %d",
-                                        pipeline_id, obj.object_name, skip_records)
-                        file_record_count = 0
+                        # 재개 대상 파일이면 첫 N record skip (byte resume 면 0)
+                        if csv_byte_mode and use_byte_resume:
+                            skip_records = 0
+                            file_record_count = _resume_record_idx
+                        elif is_resume_target:
+                            skip_records = _resume_record_idx
+                            if skip_records:
+                                logger.info(
+                                    "file-source pipeline=%s resume %s @ record %d (legacy skip)",
+                                    pipeline_id, obj.object_name, skip_records,
+                                )
+                            file_record_count = 0
+                        else:
+                            skip_records = 0
+                            file_record_count = 0
+                        cur_byte_offset = _resume_byte_offset if use_byte_resume else 0
+                        cur_header = _resume_header if use_byte_resume else None
                         skipped = 0
-                        for rec in records_iter:
+                        for _item in records_iter:
+                            # CSV 는 (rec, abs_byte, header) tuple — 그 외는 dict 단일
+                            if csv_byte_mode:
+                                rec, cur_byte_offset, cur_header = _item
+                            else:
+                                rec = _item
                             if skipped < skip_records:
                                 skipped += 1
                                 continue
@@ -856,15 +921,20 @@ def run_file_source(pipeline_id):
                                 _commit_step_progress(step_stats)
                                 last_commit_count = total_processed
                                 last_commit_at = now
-                                # 재개 상태 저장 (현재 파일 + 진행 record idx)
-                                _resume_save(pipeline_id, {
+                                # 재개 상태 저장 (CSV 는 byte offset 우선, 그 외는 record_idx)
+                                _save_state = {
                                     "processed_objects": list(_processed_objects),
                                     "current_object": obj.object_name,
                                     "current_record_idx": skip_records + file_record_count,
                                     "processed_count_at_save": total_processed,
                                     "error_count_at_save": total_errors,
                                     "dropped_count_at_save": total_dropped,
-                                })
+                                }
+                                if csv_byte_mode and cur_byte_offset > 0:
+                                    _save_state["current_byte_offset"] = cur_byte_offset
+                                    if cur_header:
+                                        _save_state["current_header"] = cur_header
+                                _resume_save(pipeline_id, _save_state)
                                 # 외부에서 정지 요청? — 안전하게 break
                                 if _is_stop_requested(pipeline_id):
                                     logger.info(
@@ -895,10 +965,14 @@ def run_file_source(pipeline_id):
                     _processed_objects.add(obj.object_name)
                     _resume_object = None
                     _resume_record_idx = 0
+                    _resume_byte_offset = 0
+                    _resume_header = None
                     _resume_save(pipeline_id, {
                         "processed_objects": list(_processed_objects),
                         "current_object": None,
                         "current_record_idx": 0,
+                        "current_byte_offset": 0,
+                        "current_header": None,
                         "processed_count_at_save": total_processed,
                         "error_count_at_save": total_errors,
                         "dropped_count_at_save": total_dropped,
