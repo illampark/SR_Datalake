@@ -316,7 +316,18 @@ def _restore_postgresql(client, storage_key):
 
 
 def _backup_minio_buckets(client, storage_key):
-    """sdl-files + sdl-archive 버킷을 tar.gz로 백업."""
+    """sdl-files + sdl-archive 버킷을 tar.gz로 백업.
+
+    DEPRECATED — 더 이상 호출되지 않는다. 다음 이유로 비활성화 (route 단계에서 차단):
+    - 모든 객체를 BytesIO 에 통째 적재 → 대용량 시 OOM
+    - 백업 산출물을 같은 MinIO 인스턴스(sdl-backup)에 저장 → 재해 복구 가치 0
+    - Python 단일 스레드 스트리밍 → 매우 느림
+
+    실제 MinIO 데이터 보호는 다음 중 하나로 처리한다:
+      1) MinIO server-side replication (별도 MinIO 또는 S3)
+      2) `mc mirror` 외부 destination (NFS / 별도 MinIO)
+      3) 호스트 파일시스템 스냅샷 (Restic / BorgBackup, /opt/sdl-data/minio 대상)
+    """
     buf = io.BytesIO()
     total = 0
 

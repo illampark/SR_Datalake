@@ -31,11 +31,11 @@
     <div class="card-body">
       <div class="form-group">
         <label class="form-label">{{ t('page.backup.label_backup_targets') }}</label>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <label class="form-check"><input type="checkbox" id="chk-target-postgresql" checked> <strong>{{ t('page.backup.target_postgresql') }}</strong> <span class="text-muted fs-12">- {{ t('page.backup.target_postgresql_desc') }}</span></label>
-          <label class="form-check"><input type="checkbox" id="chk-target-minio"> <strong>{{ t('page.backup.target_minio') }}</strong> <span class="text-muted fs-12">- {{ t('page.backup.target_minio_desc') }}</span></label>
           <label class="form-check"><input type="checkbox" id="chk-target-config" checked> <strong>{{ t('page.backup.target_config') }}</strong> <span class="text-muted fs-12">- {{ t('page.backup.target_config_desc') }}</span></label>
         </div>
+        <span class="form-hint">{{ t('page.backup.minio_excluded_hint') }}</span>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -168,7 +168,6 @@ function loadSettings() {
     var s = res.data;
     var targets = (s.targets || '').split(',');
     $('#chk-target-postgresql').prop('checked', targets.indexOf('postgresql') >= 0);
-    $('#chk-target-minio').prop('checked', targets.indexOf('minio') >= 0);
     $('#chk-target-config').prop('checked', targets.indexOf('config') >= 0);
     $('#sel-schedule').val(s.schedule);
     $('#sel-retention').val(s.retentionDays);
@@ -179,7 +178,6 @@ function loadSettings() {
 function saveSettings() {
   var targets = [];
   if ($('#chk-target-postgresql').is(':checked')) targets.push('postgresql');
-  if ($('#chk-target-minio').is(':checked')) targets.push('minio');
   if ($('#chk-target-config').is(':checked')) targets.push('config');
 
   if (targets.length === 0) { showToast(__t('page.backup.toast_select_target'), 'error'); return; }
@@ -344,7 +342,6 @@ function escHtml(s) {
 function executeBackup() {
   var targets = [];
   if ($('#chk-target-postgresql').is(':checked')) targets.push('postgresql');
-  if ($('#chk-target-minio').is(':checked')) targets.push('minio');
   if ($('#chk-target-config').is(':checked')) targets.push('config');
 
   if (targets.length === 0) { showToast(__t('page.backup.toast_select_target'), 'error'); return; }

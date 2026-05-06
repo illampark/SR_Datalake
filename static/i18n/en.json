@@ -3089,6 +3089,7 @@
       "target_minio_desc": "sdl-files, sdl-archive",
       "target_config": "Configuration Files",
       "target_config_desc": "config.py, Benthos YAML",
+      "minio_excluded_hint": "Note: handle MinIO data backup separately via external mirroring (mc mirror) or filesystem snapshot.",
       "label_backup_schedule": "Backup Schedule",
       "hint_schedule": "Recommended during low server load periods",
       "label_retention_period": "Retention Period",

@@ -3089,6 +3089,7 @@
       "target_minio_desc": "sdl-files, sdl-archive",
       "target_config": "설정 파일",
       "target_config_desc": "config.py, Benthos YAML",
+      "minio_excluded_hint": "※ MinIO 데이터 백업은 별도 외부 스토리지 미러링(mc mirror) 또는 파일시스템 스냅샷으로 처리하세요.",
       "label_backup_schedule": "백업 스케줄",
       "hint_schedule": "서버 부하가 낮은 시간대를 권장합니다",
       "label_retention_period": "보관 기간",

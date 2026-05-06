@@ -72,6 +72,16 @@ def update_settings():
     db = SessionLocal()
     try:
         body = request.get_json(force=True)
+        # MinIO 백업은 비활성화 상태 — 저장값에서 제거 (Option A)
+        if "targets" in body:
+            t = body["targets"]
+            if isinstance(t, list):
+                t = [x for x in t if x != "minio"]
+                body["targets"] = ",".join(t)
+            elif isinstance(t, str):
+                body["targets"] = ",".join(
+                    x for x in t.split(",") if x.strip() and x.strip() != "minio"
+                )
         updated = []
         for camel, db_key in _BACKUP_SETTINGS_MAP.items():
             if camel in body:
@@ -175,8 +185,12 @@ def manual_execute():
     body = request.get_json(force=True) if request.is_json else {}
     targets = body.get("targets", ["postgresql", "config"])
 
-    valid_targets = {"postgresql", "minio", "config"}
+    # MinIO 백업은 동일 인스턴스에 저장되어 OOM 위험 + 가짜 백업이라 제외 (Option A)
+    valid_targets = {"postgresql", "config"}
     for t in targets:
+        if t == "minio":
+            return _err("MinIO 백업은 비활성화되었습니다. 외부 미러링(mc mirror) 또는 파일시스템 스냅샷을 사용하세요.",
+                        "MINIO_BACKUP_DISABLED")
         if t not in valid_targets:
             return _err(f"유효하지 않은 백업 대상: {t}")
 
