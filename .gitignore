@@ -12,3 +12,6 @@ sessions/
 .claude/
 .pytest_cache/
 docs/github.txt
+
+# i18n 자동 백업
+static/i18n/.backup/
