@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 libmagic1 curl \
+    libpq5 libmagic1 curl postgresql-client \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r sdl && useradd -r -g sdl -d /app sdl
 

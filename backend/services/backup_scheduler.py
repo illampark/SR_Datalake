@@ -10,6 +10,8 @@ import logging
 import threading
 from datetime import datetime
 
+from sqlalchemy import text as _sql_text
+
 from backend.database import SessionLocal
 from backend.models.user import AdminSetting
 from backend.services.backup_executor import execute_backup
@@ -20,6 +22,10 @@ logger = logging.getLogger(__name__)
 _scheduler_thread = None
 _stop_event = None
 _last_executed = None
+
+# 멀티 워커 환경에서 단일 워커만 실제 백업을 수행하도록 advisory lock key.
+# 임의 고정 int64. 다른 모듈과 충돌하지 않는 값으로 선택.
+_BACKUP_LOCK_KEY = 0x53444C5F4255  # "SDL_BU"
 
 # 스케줄 문자열 → 실행 파라미터 매핑
 _SCHEDULE_MAP = {
@@ -140,14 +146,37 @@ def _scheduler_loop(stop_event):
             now_key = now.strftime("%Y-%m-%d %H:%M")
 
             if _should_execute_now(schedule_str, now) and _last_executed != now_key:
-                logger.info("Backup scheduler: executing scheduled backup")
                 _last_executed = now_key
-
                 targets = [t.strip() for t in targets_str.split(",") if t.strip()]
+                # Postgres advisory lock 으로 멀티 워커 중 1개만 실제 백업 수행.
+                # 나머지 워커는 lock 획득 실패 → 로그만 남기고 skip (실패 레코드 미생성).
+                lock_db = SessionLocal()
                 try:
-                    execute_backup(targets, "scheduled")
-                except Exception as e:
-                    logger.error("Scheduled backup failed: %s", e)
+                    got_lock = lock_db.execute(
+                        _sql_text("SELECT pg_try_advisory_lock(:k)"),
+                        {"k": _BACKUP_LOCK_KEY},
+                    ).scalar()
+                    if not got_lock:
+                        logger.info(
+                            "Backup scheduler: another worker holds the lock — skip"
+                        )
+                    else:
+                        try:
+                            logger.info("Backup scheduler: executing scheduled backup")
+                            execute_backup(targets, "scheduled")
+                        except Exception as e:
+                            logger.error("Scheduled backup failed: %s", e)
+                        finally:
+                            try:
+                                lock_db.execute(
+                                    _sql_text("SELECT pg_advisory_unlock(:k)"),
+                                    {"k": _BACKUP_LOCK_KEY},
+                                )
+                                lock_db.commit()
+                            except Exception:
+                                lock_db.rollback()
+                finally:
+                    lock_db.close()
 
         except Exception as e:
             logger.error("Backup scheduler loop error: %s", e)
