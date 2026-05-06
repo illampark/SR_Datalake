@@ -100,6 +100,38 @@
   </div>
 </div>
 
+<!-- Data Cleanup -->
+{% if is_admin %}
+<div class="card">
+  <div class="card-header">
+    <h3><i class="fas fa-broom"></i> {{ t('page.tsdb.card_data_cleanup') }}</h3>
+    <div class="d-flex gap-8">
+      <button class="btn btn-outline btn-sm" onclick="loadDataSummary()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ t('page.tsdb.th_pipeline') }}</th>
+            <th>{{ t('page.tsdb.th_measurement') }}</th>
+            <th class="text-right">{{ t('page.tsdb.th_rows') }}</th>
+            <th>{{ t('page.tsdb.th_first_ts') }}</th>
+            <th>{{ t('page.tsdb.th_last_ts') }}</th>
+            <th class="text-center">{{ t('page.tsdb.th_status') }}</th>
+            <th class="text-center">{{ t('common.action') }}</th>
+          </tr>
+        </thead>
+        <tbody id="data-summary-body">
+          <tr><td colspan="7" class="text-muted text-center py-16">{{ t('common.loading') }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- Query Editor -->
 <div class="card">
   <div class="card-header">
@@ -136,11 +168,115 @@ function loadCurrentInstance() {
       renderConnectionInfo(currentInstance);
       loadUsage(currentInstance.id);
       loadPolicies(currentInstance.id);
+      loadDataSummary();
     } else {
       renderEmptyState();
     }
   }).fail(function() {
     renderEmptyState();
+  });
+}
+
+// ── 데이터 정리 카드 ──
+function loadDataSummary() {
+  if (!currentInstance) return;
+  if (!$('#data-summary-body').length) return;  // viewer 의 경우 카드 없음
+  $.getJSON(API + '/' + currentInstance.id + '/data-summary', function(resp) {
+    if (!resp.success) return;
+    var items = resp.data.items || [];
+    if (items.length === 0) {
+      $('#data-summary-body').html('<tr><td colspan="7" class="text-muted text-center py-16">' + __t('page.tsdb.no_data_summary') + '</td></tr>');
+      return;
+    }
+    var h = '';
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var label = it.is_orphan
+        ? '<span class="tag tag-yellow">' + __t('page.tsdb.tag_orphan') + '</span>'
+        : '<span class="tag tag-green">' + __t('page.tsdb.tag_active') + '</span>';
+      h += '<tr>';
+      h += '<td class="mono">' + (it.pipeline_id != null ? '#' + it.pipeline_id : '-') + ' ' + escHtml(it.pipeline_name || '') + '</td>';
+      h += '<td class="mono">' + escHtml(it.measurement || '-') + '</td>';
+      h += '<td class="text-right mono">' + fmtNum(it.rows) + '</td>';
+      h += '<td class="mono fs-12">' + (it.first_ts ? it.first_ts.replace('T', ' ').substring(0, 19) : '-') + '</td>';
+      h += '<td class="mono fs-12">' + (it.last_ts ? it.last_ts.replace('T', ' ').substring(0, 19) : '-') + '</td>';
+      h += '<td class="text-center">' + label + '</td>';
+      h += '<td class="text-center">';
+      h += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.tsdb.btn_delete_data') + '" onclick="openDeleteDataModal(' + (it.pipeline_id || 'null') + ', ' + JSON.stringify(it.measurement || '') + ', ' + (it.rows || 0) + ')"><i class="fas fa-trash text-danger"></i></button>';
+      h += '</td>';
+      h += '</tr>';
+    }
+    $('#data-summary-body').html(h);
+  });
+}
+
+function openDeleteDataModal(pipelineId, measurement, rows) {
+  if (!currentInstance) return;
+  var meta = '<div class="text-muted" style="font-size:12px;margin-bottom:12px;">' +
+             __t('page.tsdb.delete_target') + ': pipeline_id=' + (pipelineId || 'NULL') +
+             ', measurement="' + escHtml(measurement || '') + '"' +
+             ' / ' + __t('page.tsdb.delete_target_rows') + ' = <strong>' + fmtNum(rows) + '</strong></div>';
+  var warn = '<div class="alert alert-warning" style="margin-bottom:12px;">' +
+             '<i class="fas fa-exclamation-triangle"></i> ' + __t('page.tsdb.delete_warn_irreversible') +
+             '</div>';
+  var expectedConfirm = 'DELETE-' + rows;
+  var body = meta + warn +
+             '<div class="form-group"><label>' +
+             '<input type="checkbox" id="del-cleanup-catalog" checked> ' + __t('page.tsdb.delete_cleanup_catalog') + '</label></div>' +
+             '<div class="form-group">' +
+             '<label class="form-label"><strong>' + __t('page.tsdb.delete_confirm_label').replace('{name}', '<span class="mono">' + escHtml(expectedConfirm) + '</span>') + '</strong></label>' +
+             '<input type="text" id="del-confirm-input" class="form-control mono" placeholder="' + escHtml(expectedConfirm) + '" oninput="_updateDelDataBtnState(\'' + escHtml(expectedConfirm) + '\')">' +
+             '</div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+               '<button id="del-data-btn" class="btn btn-danger" disabled onclick="_executeDeleteData(' + (pipelineId || 'null') + ', ' + JSON.stringify(measurement || '') + ', ' + rows + ')"><i class="fas fa-trash"></i> ' + __t('page.tsdb.delete_execute') + '</button>';
+  openModal(__t('page.tsdb.modal_delete_data_title'), body, footer);
+}
+
+function _updateDelDataBtnState(expected) {
+  var v = $('#del-confirm-input').val() || '';
+  $('#del-data-btn').prop('disabled', v !== expected);
+}
+
+function _executeDeleteData(pipelineId, measurement, rows) {
+  if (!currentInstance) return;
+  var cleanupCatalog = $('#del-cleanup-catalog').is(':checked');
+  var expected = 'DELETE-' + rows;
+  var confirm = $('#del-confirm-input').val() || '';
+  if (confirm !== expected) { showToast(__t('page.tsdb.delete_confirm_mismatch'), 'error'); return; }
+
+  $('#del-data-btn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.tsdb.delete_executing'));
+
+  $.ajax({
+    url: API + '/' + currentInstance.id + '/data',
+    method: 'DELETE',
+    contentType: 'application/json',
+    data: JSON.stringify({
+      pipeline_id: pipelineId,
+      measurement: measurement || '',
+      cleanup_catalog: cleanupCatalog,
+      confirm: confirm,
+    }),
+    success: function(res) {
+      if (res.success) {
+        var msg = __t('page.tsdb.toast_data_deleted').replace('{n}', fmtNum(res.data.deleted));
+        if (res.data.catalog_cleaned > 0) {
+          msg += ' (' + __t('page.tsdb.toast_catalog_cleaned').replace('{n}', res.data.catalog_cleaned) + ')';
+        }
+        showToast(msg, 'success');
+        closeModal();
+        loadDataSummary();
+        loadUsage(currentInstance.id);
+      } else {
+        showToast((res.error && res.error.message) || __t('common.error'), 'error');
+        $('#del-data-btn').prop('disabled', false).html('<i class="fas fa-trash"></i> ' + __t('page.tsdb.delete_execute'));
+      }
+    },
+    error: function(xhr) {
+      var msg = __t('common.error');
+      try { var b = JSON.parse(xhr.responseText); if (b.error) msg = b.error.message; } catch(e) {}
+      showToast(msg, 'error');
+      $('#del-data-btn').prop('disabled', false).html('<i class="fas fa-trash"></i> ' + __t('page.tsdb.delete_execute'));
+    }
   });
 }
 

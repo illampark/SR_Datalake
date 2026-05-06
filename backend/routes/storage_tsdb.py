@@ -1,9 +1,12 @@
+import logging
 import random
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
-from sqlalchemy import func
+from sqlalchemy import func, text as _sql_text
 from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, DownsamplingPolicy
+
+logger = logging.getLogger(__name__)
 
 tsdb_bp = Blueprint("storage_tsdb", __name__, url_prefix="/api/storage/tsdb")
 
@@ -485,5 +488,215 @@ def execute_query(tsdb_id):
             })
         except Exception as qe:
             return _err(f"쿼리 실행 오류: {qe}", "QUERY_ERROR")
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────
+# GET /api/storage/tsdb/<id>/data-summary  — 적재 데이터 요약
+# ──────────────────────────────────────────────
+@tsdb_bp.route("/<int:tsdb_id>/data-summary", methods=["GET"])
+def get_data_summary(tsdb_id):
+    """time_series_data 의 (pipeline_id × measurement) 별 행수/시간 범위.
+
+    pipeline 이 카탈로그/sink 에서 제거된 후 남은 잔존 데이터(orphan)도
+    그대로 보여준다. UI 에서 행 별 [삭제] 버튼으로 정리 가능.
+    """
+    db = _db()
+    try:
+        row = db.query(TsdbConfig).get(tsdb_id)
+        if not row:
+            return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        # 현재 sink 로 활성 사용 중인 (pipeline_id, measurement) 조합 — 잔존 식별용
+        active_sinks = set()
+        try:
+            res = db.execute(_sql_text("""
+                SELECT DISTINCT ps.pipeline_id, ps.config->>'measurement' AS meas
+                FROM pipeline_step ps
+                WHERE ps.module_type = 'internal_tsdb_sink' AND ps.enabled = TRUE
+            """))
+            for pid, meas in res.fetchall():
+                active_sinks.add((pid, meas or ""))
+        except Exception as e:
+            logger.warning("active sinks lookup failed: %s", e)
+
+        # 요약 집계
+        summary = []
+        try:
+            res = db.execute(_sql_text("""
+                SELECT pipeline_id, measurement,
+                       COUNT(*) AS rows,
+                       MIN(timestamp) AS first_ts,
+                       MAX(timestamp) AS last_ts
+                FROM time_series_data
+                WHERE tsdb_id = :tid
+                GROUP BY pipeline_id, measurement
+                ORDER BY rows DESC
+            """), {"tid": tsdb_id})
+            for pid, meas, n, mn, mx in res.fetchall():
+                # pipeline 이름 조회
+                pname = ""
+                try:
+                    pname = db.execute(_sql_text(
+                        "SELECT name FROM pipeline WHERE id=:p"
+                    ), {"p": pid}).scalar() or ""
+                except Exception:
+                    pass
+                is_orphan = (pid, meas or "") not in active_sinks
+                summary.append({
+                    "pipeline_id": pid,
+                    "pipeline_name": pname,
+                    "measurement": meas or "",
+                    "rows": n or 0,
+                    "first_ts": mn.isoformat() if mn else None,
+                    "last_ts": mx.isoformat() if mx else None,
+                    "is_orphan": is_orphan,
+                })
+        except Exception as e:
+            logger.warning("data summary failed: %s", e)
+
+        return _ok({"tsdb_id": tsdb_id, "items": summary})
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────
+# DELETE /api/storage/tsdb/<id>/data  — 행 단위 삭제
+# ──────────────────────────────────────────────
+@tsdb_bp.route("/<int:tsdb_id>/data", methods=["DELETE"])
+def delete_data(tsdb_id):
+    """기준 (pipeline_id, measurement, before_ts) 으로 time_series_data 행 삭제.
+
+    Body:
+      pipeline_id  : int  (선택)
+      measurement  : str  (선택)
+      before_ts    : ISO  (선택, 해당 시각 이전 행만)
+      cleanup_catalog : bool (default True) — 카탈로그 항목도 함께 정리
+      confirm      : str  ("DELETE-{rows}" 형식, 미리 보여준 row 수와 일치해야)
+    적어도 pipeline_id 또는 measurement 또는 before_ts 중 하나가 있어야 한다
+    (전체 TRUNCATE 방지).
+    """
+    body = request.get_json(silent=True) or {}
+    pid = body.get("pipeline_id")
+    meas = (body.get("measurement") or "").strip()
+    before_ts = (body.get("before_ts") or "").strip()
+    cleanup_catalog = bool(body.get("cleanup_catalog", True))
+    confirm = (body.get("confirm") or "").strip()
+
+    if pid is None and not meas and not before_ts:
+        return _err("pipeline_id, measurement, before_ts 중 하나는 지정해야 합니다.", "VALIDATION")
+
+    db = _db()
+    try:
+        row = db.query(TsdbConfig).get(tsdb_id)
+        if not row:
+            return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        # 활성 sink 사용 중이면 거부 (pipeline_id 가 명시되었을 때만 검사)
+        if pid is not None:
+            running = db.execute(_sql_text("""
+                SELECT p.id FROM pipeline p
+                JOIN pipeline_step ps ON ps.pipeline_id = p.id
+                WHERE p.id = :pid
+                  AND ps.module_type = 'internal_tsdb_sink'
+                  AND COALESCE(p.current_run_id,'') <> ''
+            """), {"pid": pid}).fetchone()
+            if running:
+                return _err(
+                    "지정한 파이프라인이 TSDB sink 로 실행 중입니다. 정지 후 다시 시도하세요.",
+                    "PIPELINE_RUNNING", 409,
+                )
+
+        # WHERE 절 동적 조립
+        clauses = ["tsdb_id = :tid"]
+        params = {"tid": tsdb_id}
+        if pid is not None:
+            clauses.append("pipeline_id = :pid")
+            params["pid"] = int(pid)
+        if meas:
+            clauses.append("measurement = :meas")
+            params["meas"] = meas
+        if before_ts:
+            clauses.append("timestamp < cast(:bts as timestamp)")
+            params["bts"] = before_ts
+        where_sql = " AND ".join(clauses)
+
+        # 영향받을 행 수 미리 카운트 (confirm 검증용)
+        try:
+            row_count = db.execute(_sql_text(
+                f"SELECT COUNT(*) FROM time_series_data WHERE {where_sql}"
+            ), params).scalar() or 0
+        except Exception as e:
+            return _err(f"행 수 계산 오류: {e}", "SQL_ERROR", 500)
+
+        # confirm 검증
+        expected = f"DELETE-{row_count}"
+        if confirm != expected:
+            return _err(
+                f"확인 문자열이 일치하지 않습니다. 예상: {expected}",
+                "CONFIRM_MISMATCH",
+            )
+
+        # 실제 삭제
+        try:
+            res = db.execute(_sql_text(
+                f"DELETE FROM time_series_data WHERE {where_sql}"
+            ), params)
+            deleted = res.rowcount or 0
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            return _err(f"삭제 실패: {e}", "SQL_ERROR", 500)
+
+        # 카탈로그 정리 (pipeline_id 가 있고 cleanup_catalog=true 일 때)
+        catalog_cleaned = 0
+        if cleanup_catalog and pid is not None:
+            try:
+                cat_res = db.execute(_sql_text("""
+                    DELETE FROM data_catalog
+                    WHERE connector_type = 'pipeline'
+                      AND connector_id = :pid
+                      AND sink_type = 'internal_tsdb_sink'
+                """), {"pid": int(pid)})
+                catalog_cleaned = cat_res.rowcount or 0
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning("catalog cleanup failed: %s", e)
+
+        # 감사 로그
+        try:
+            from flask import session, g
+            uname = session.get("username") or ("api-key" if getattr(g, "api_key_authenticated", False) else "unknown")
+            import json as _json
+            detail_str = _json.dumps({
+                "tsdb_id": tsdb_id,
+                "pipeline_id": pid,
+                "measurement": meas or None,
+                "before_ts": before_ts or None,
+                "deleted": deleted,
+                "cleanup_catalog": cleanup_catalog,
+                "catalog_cleaned": catalog_cleaned,
+            }, ensure_ascii=False)
+            db.execute(_sql_text("""
+                INSERT INTO audit_log (timestamp, username, action_type, action, target_type, target_name, ip_address, result, detail)
+                VALUES (NOW(), :u, 'storage.tsdb.data_delete', :a, 'tsdb_data', :tn, :ip, 'success', cast(:detail as json))
+            """), {
+                "u": uname,
+                "a": "TSDB data DELETE",
+                "tn": f"tsdb#{tsdb_id} pid={pid} meas={meas}",
+                "ip": (request.remote_addr or ""),
+                "detail": detail_str,
+            })
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("audit log failed: %s", e)
+
+        return _ok({
+            "deleted": deleted,
+            "catalog_cleaned": catalog_cleaned,
+        })
     finally:
         db.close()
