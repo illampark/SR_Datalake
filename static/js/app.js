@@ -71,11 +71,14 @@ function closeModal() { $('#modal-overlay').addClass('hidden'); }
   }, true);
   document.addEventListener('click', function (e) {
     var ovr = e.target.closest && e.target.closest('.modal-overlay');
-    if (ovr && ovr.__mdInside) {
+    // 차단 조건: click 이벤트의 target 이 overlay 자체 (드래그-아웃의 공통 조상
+    // 마커) 이면서 mousedown 은 내부에서 시작된 경우. 모달 내부 버튼/입력 클릭은
+    // target !== ovr 이므로 통과시켜 X 버튼 등 정상 동작 유지.
+    if (ovr && e.target === ovr && ovr.__mdInside) {
       e.stopImmediatePropagation();
       e.stopPropagation();
-      ovr.__mdInside = false;
     }
+    if (ovr) ovr.__mdInside = false;
   }, true);
 })();
 
