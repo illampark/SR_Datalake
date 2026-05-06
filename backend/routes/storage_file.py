@@ -9,6 +9,7 @@ from backend.database import SessionLocal
 from backend.models.storage import FileCleanupPolicy
 from backend.config import MINIO_BUCKETS
 from backend.services.minio_client import get_minio_client, get_minio_config
+from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ def browse_files():
         file_type = request.args.get("type", "")
         search = request.args.get("search", "").lower()
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
 
         items = []
         for obj in client.list_objects(bucket, prefix=path, recursive=True):

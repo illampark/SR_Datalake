@@ -10,6 +10,7 @@ from backend.database import SessionLocal
 from backend.models.metadata import TagMetadata, DataLineage
 from backend.models.catalog import DataCatalog
 from backend.models.pipeline import Pipeline, PipelineBinding
+from backend.services.system_settings import get_default_page_size
 
 metadata_bp = Blueprint("metadata", __name__, url_prefix="/api/metadata")
 
@@ -37,7 +38,7 @@ def list_tag_metadata():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         connector_type = request.args.get("connector_type", "")
         connector_id = request.args.get("connector_id", 0, type=int)
         active_only = request.args.get("active", "").lower() == "true"
@@ -196,7 +197,7 @@ def list_lineage():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         pipeline_id = request.args.get("pipeline_id", 0, type=int)
         connector_type = request.args.get("connector_type", "")
 
@@ -253,7 +254,7 @@ def unified_tag_search():
         category = request.args.get("category", "")
         active_only = request.args.get("active", "").lower() == "true"
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
 
         q = db.query(TagMetadata)
         if q_str:

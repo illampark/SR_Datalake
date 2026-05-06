@@ -12,6 +12,7 @@ from backend.database import SessionLocal
 from backend.models.gateway import ApiAccessLog, ApiKey
 from backend.models.user import AdminSetting
 from backend.services.api_access_logger import cleanup_old_logs
+from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def list_routes():
 def get_access_log():
     """접근 로그 페이지네이션 조회"""
     page = request.args.get("page", 1, type=int)
-    size = request.args.get("size", 20, type=int)
+    size = request.args.get("size", get_default_page_size(), type=int)
     method_filter = request.args.get("method", "")
     status_filter = request.args.get("status", "")
     path_filter = request.args.get("path", "")

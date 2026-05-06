@@ -190,7 +190,7 @@ function loadSummary() {
 /* ── List ── */
 /* ── Pagination state ── */
 var _curPage = 1;
-var _pageSize = 10;
+var _pageSize = 20;  // server meta.size 로 갱신
 function gotoPage(p) { _curPage = p; loadConnectors(); }
 function onFilterChange() { _curPage = 1; loadConnectors(); }
 function renderPaging(total) {
@@ -207,7 +207,7 @@ function renderPaging(total) {
 }
 
 function loadConnectors() {
-  var params = { page: _curPage, size: _pageSize };
+  var params = { page: _curPage };
   var st = $('#filter-status').val(); if (st) params.status = st;
   var dt = $('#filter-dbtype').val(); if (dt) params.dbType = dt;
 
@@ -215,6 +215,7 @@ function loadConnectors() {
     if (!r.success) return;
     var items = r.data;
     var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
+    if (r.meta && typeof r.meta.size === 'number') _pageSize = r.meta.size;
     renderPaging(total);
     var $tb = $('#connector-tbody').empty();
     if (!items.length) {

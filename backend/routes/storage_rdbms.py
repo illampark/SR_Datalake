@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import func, text as _sql_text
 from backend.database import SessionLocal
 from backend.models.storage import RdbmsConfig
+from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def list_instances():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 20, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         total = db.query(func.count(RdbmsConfig.id)).scalar()
         rows = (
             db.query(RdbmsConfig)
@@ -758,7 +759,7 @@ def get_slow_queries(rdbms_id):
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 20, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         queries = []
 
         try:

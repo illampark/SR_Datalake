@@ -21,6 +21,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import or_, func
 from backend.database import SessionLocal
 from backend.models.collector import ImportCollector
+from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
 import_bp = Blueprint("collector_import", __name__, url_prefix="/api/connectors/import")
@@ -121,7 +122,7 @@ def list_imports():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
         search = (request.args.get("q") or "").strip()
 

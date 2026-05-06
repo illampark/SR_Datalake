@@ -4,6 +4,7 @@ from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import MqttConnector, MqttTag
 from backend.services import benthos_manager as bm
+from backend.services.system_settings import get_default_page_size
 
 mqtt_bp = Blueprint("collector_mqtt", __name__, url_prefix="/api/connectors/mqtt")
 
@@ -31,7 +32,7 @@ def list_connectors():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
         search = (request.args.get("q") or "").strip()
 

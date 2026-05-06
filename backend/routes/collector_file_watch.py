@@ -5,6 +5,7 @@ from backend.database import SessionLocal
 from backend.models.collector import FileCollector
 from backend.services import file_scanner as fs
 from backend.services import mqtt_manager
+from backend.services.system_settings import get_default_page_size
 
 file_watch_bp = Blueprint("collector_file_watch", __name__, url_prefix="/api/connectors/file")
 
@@ -56,7 +57,7 @@ def list_collectors():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
         search = (request.args.get("q") or "").strip()
 

@@ -636,7 +636,7 @@ def syslog_list():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
         page = max(1, int(request.args.get("page", 1)))
-        size = min(200, max(10, int(request.args.get("size", 50))))
+        size = min(200, max(10, int(request.args.get("size", get_default_page_size()))))
 
         q = db.query(SystemLog).order_by(SystemLog.timestamp.desc())
 
@@ -841,6 +841,7 @@ def syslog_export():
 # ══════════════════════════════════════════════════
 
 from backend.models.audit import AuditLog
+from backend.services.system_settings import get_default_page_size
 
 
 # ──────────────────────────────────────────────
@@ -858,7 +859,7 @@ def audit_list():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
         page = max(1, int(request.args.get("page", 1)))
-        size = min(200, max(10, int(request.args.get("size", 50))))
+        size = min(200, max(10, int(request.args.get("size", get_default_page_size()))))
 
         q = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
 

@@ -3,6 +3,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import func
 from backend.database import SessionLocal
 from backend.models.integration import ExternalConnection
+from backend.services.system_settings import get_default_page_size
 
 integration_bp = Blueprint("integration", __name__, url_prefix="/api/integration")
 
@@ -30,7 +31,7 @@ def list_connections():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 20, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         conn_type = request.args.get("type", "").strip()
         search = request.args.get("search", "").strip()
 

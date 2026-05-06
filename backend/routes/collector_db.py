@@ -7,6 +7,7 @@ from backend.database import SessionLocal
 from backend.models.collector import DbConnector, DbTag
 from backend.services import benthos_manager as bm
 from backend.services import mqtt_manager
+from backend.services.system_settings import get_default_page_size
 
 db_bp = Blueprint("collector_db", __name__, url_prefix="/api/connectors/db")
 
@@ -34,7 +35,7 @@ def list_connectors():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
         dbtype_filter = request.args.get("dbType", "")
         search = (request.args.get("q") or "").strip()

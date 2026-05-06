@@ -353,7 +353,8 @@ function loadAccessLog(page) {
   _logPage = page || 1;
   var method = $('#log-method').val();
   var status = $('#log-status').val();
-  var url = '/api/gateway/access-log?page=' + _logPage + '&size=15';
+  // size 미전송 → 백엔드 default(system.page_size) 적용
+  var url = '/api/gateway/access-log?page=' + _logPage;
   if (method) url += '&method=' + method;
   if (status) url += '&status=' + status;
 
@@ -361,6 +362,7 @@ function loadAccessLog(page) {
     if (!res.success) return;
     var items = res.data.items;
     var total = res.data.total;
+    var size = res.data.size || 15;
     var html = '';
 
     items.forEach(function(r) {
@@ -378,7 +380,7 @@ function loadAccessLog(page) {
 
     $('#log-tbody').html(html || '<tr><td colspan="6" class="text-center text-muted p-24">' + __t('page.gateway.no_access_log') + '</td></tr>');
 
-    var totalPages = Math.ceil(total / 15) || 1;
+    var totalPages = Math.ceil(total / size) || 1;
     var pHtml = '<span class="text-muted">' + __t('common.total') + ' ' + fmtNum(total) + __t('common.items') + '</span><div class="d-flex gap-8">';
     if (_logPage > 1) pHtml += '<button class="btn btn-outline btn-sm" onclick="loadAccessLog(' + (_logPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>';
     pHtml += '<span class="btn btn-sm" style="cursor:default">' + _logPage + ' / ' + totalPages + '</span>';

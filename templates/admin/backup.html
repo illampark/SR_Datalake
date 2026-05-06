@@ -266,13 +266,15 @@ var _histPage = 1;
 function loadHistory(page) {
   _histPage = page || 1;
   var status = $('#filter-status').val();
-  var url = '/api/backup/history?page=' + _histPage + '&size=10';
+  // size 미전송 → 백엔드 default(system.page_size) 적용
+  var url = '/api/backup/history?page=' + _histPage;
   if (status) url += '&status=' + status;
 
   $.getJSON(url, function(res) {
     if (!res.success) return;
     var rows = res.data.history;
     var total = res.data.total;
+    var size = res.data.size || 10;
     var tbody = '';
 
     if (!rows.length) {
@@ -307,7 +309,7 @@ function loadHistory(page) {
     $('#history-tbody').html(tbody);
 
     // Paging
-    var totalPages = Math.ceil(total / 10) || 1;
+    var totalPages = Math.ceil(total / size) || 1;
     var paging = '<span class="text-muted fs-12">' + __t('common.total') + ' ' + total + __t('common.items') + '</span><div class="d-flex gap-4">';
     if (_histPage > 1) paging += '<button class="btn btn-outline btn-sm" onclick="loadHistory(' + (_histPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>';
     paging += '<span class="btn btn-sm" style="pointer-events:none;">' + _histPage + ' / ' + totalPages + '</span>';

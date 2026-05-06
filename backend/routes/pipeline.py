@@ -13,6 +13,7 @@ from backend.models.collector import (
     MqttConnector, ApiConnector, FileCollector, DbConnector, DbTag,
     ImportCollector,
 )
+from backend.services.system_settings import get_default_page_size
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
 
@@ -72,7 +73,7 @@ def list_pipelines():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
 
         q = db.query(Pipeline)

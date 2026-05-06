@@ -162,7 +162,7 @@ function loadSummary() {
 /* ── List ── */
 /* ── Pagination state ── */
 var _curPage = 1;
-var _pageSize = 10;
+var _pageSize = 20;  // server meta.size 로 갱신
 function gotoPage(p) { _curPage = p; loadCollectors(); }
 function onFilterChange() { _curPage = 1; loadCollectors(); }
 function renderPaging(total) {
@@ -179,7 +179,7 @@ function renderPaging(total) {
 }
 
 function loadCollectors() {
-  var params = { page: _curPage, size: _pageSize };
+  var params = { page: _curPage };
   var st = $('#filter-status').val(); if (st) params.status = st;
 
   $.getJSON(API, params, function(r) {
@@ -187,6 +187,7 @@ function loadCollectors() {
     var items = r.data;
     var $tb = $('#collector-tbody').empty();
     var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
+    if (r.meta && typeof r.meta.size === 'number') _pageSize = r.meta.size;
     renderPaging(total);
     if (!items.length) {
       $tb.html('<tr><td colspan="9" class="text-center text-muted" style="padding:40px">' + __t('page.file_collector.no_collectors') + '</td></tr>');

@@ -163,7 +163,7 @@ function loadSummary() {
 
 /* ── Pagination state ── */
 var _curPage = 1;
-var _pageSize = 10;
+var _pageSize = 20;  // server meta.size 로 갱신
 function gotoPage(p) { _curPage = p; loadConnectors(); }
 function onFilterChange() { _curPage = 1; loadConnectors(); }
 function renderPaging(total) {
@@ -182,7 +182,7 @@ function renderPaging(total) {
 // ── Load Connector Table ──
 function loadConnectors() {
   var status = $('#filter-status').val();
-  var url = API + '?page=' + _curPage + '&size=' + _pageSize + (status ? '&status=' + status : '');
+  var url = API + '?page=' + _curPage + (status ? '&status=' + status : '');
 
   $.getJSON(url, function(res) {
     if (!res.success) return;
@@ -190,6 +190,7 @@ function loadConnectors() {
     var $tbody = $('#connector-tbody');
     $tbody.empty();
     var total = (res.meta && typeof res.meta.total === 'number') ? res.meta.total : rows.length;
+    if (res.meta && typeof res.meta.size === 'number') _pageSize = res.meta.size;
     renderPaging(total);
 
     if (!rows.length) {

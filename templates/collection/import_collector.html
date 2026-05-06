@@ -419,7 +419,7 @@ function loadTargets(cb){
 /* ── List ── */
 /* ── Pagination state ── */
 var _curPage = 1;
-var _pageSize = 10;
+var _pageSize = 20;  // server meta.size 로 갱신
 function gotoPage(p) { _curPage = p; loadList(); }
 function onFilterChange() { _curPage = 1; loadList(); }
 function renderPaging(total) {
@@ -447,7 +447,7 @@ function loadSummary(){
 }
 
 function loadList(){
-  var params = { page: _curPage, size: _pageSize };
+  var params = { page: _curPage };
   var st=$('#filter-status').val(); if(st)params.status=st;
   var search = ($('#filter-search').val() || '').trim();
   if (search) params.q = search;
@@ -456,6 +456,7 @@ function loadList(){
     if(!r.success)return;
     var items=r.data, $tb=$('#import-tbody').empty();
     var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
+    if (r.meta && typeof r.meta.size === 'number') _pageSize = r.meta.size;
     renderPaging(total);
     if(!items.length){
       $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' + __t('page.import_collector.no_data') + '</td></tr>');

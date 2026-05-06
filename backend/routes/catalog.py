@@ -12,6 +12,7 @@ from sqlalchemy import func
 from backend.database import SessionLocal
 from backend.models.catalog import DataCatalog, CatalogSearchTag, DataRecipe, AggregatedData
 from backend.models.storage import TimeSeriesData
+from backend.services.system_settings import get_default_page_size
 
 catalog_bp = Blueprint("catalog", __name__, url_prefix="/api/catalog")
 
@@ -39,7 +40,7 @@ def list_catalogs():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         connector_type = request.args.get("connector_type", "")
         category = request.args.get("category", "")
         search = request.args.get("search", "")
@@ -917,7 +918,7 @@ def query_catalog_data(cid):
             return _err("파일 커넥터는 /api/catalog/<id>/files 를 사용해주세요.", "USE_FILES_API")
 
         page = request.args.get("page", 1, type=int)
-        size = min(request.args.get("size", 100, type=int), 1000)
+        size = min(request.args.get("size", get_default_page_size(), type=int), 1000)
         date_from = request.args.get("from", "")
         date_to = request.args.get("to", "")
         quality_min = request.args.get("quality_min", 0, type=int)
@@ -1294,7 +1295,7 @@ def list_catalog_files(cid):
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         search = request.args.get("search", "").lower()
         browse_path = request.args.get("path", "")  # 하위 디렉토리 탐색
         date_from = request.args.get("date_from", "")
@@ -2180,7 +2181,7 @@ def list_export_requests():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 20, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
 
         q = db.query(DatasetRequest)

@@ -6,6 +6,7 @@ from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, RdbmsConfig, RetentionPolicy, RetentionExecutionLog
 from backend.config import MINIO_BUCKETS
 from backend.services.minio_client import get_minio_client
+from backend.services.system_settings import get_default_page_size
 
 retention_bp = Blueprint("storage_retention", __name__, url_prefix="/api/storage/retention")
 
@@ -274,7 +275,7 @@ def get_history():
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 20, type=int)
+        size = request.args.get("size", get_default_page_size(), type=int)
         total = db.query(func.count(RetentionExecutionLog.id)).scalar()
         rows = (
             db.query(RetentionExecutionLog)

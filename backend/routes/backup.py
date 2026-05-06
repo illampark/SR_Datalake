@@ -16,6 +16,7 @@ from backend.services.backup_executor import (
 from backend.services.backup_scheduler import (
     get_scheduler_status, get_schedule_options,
 )
+from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ def list_history():
     db = SessionLocal()
     try:
         page = max(1, request.args.get("page", 1, type=int))
-        size = min(100, max(1, request.args.get("size", 20, type=int)))
+        size = min(100, max(1, request.args.get("size", get_default_page_size(), type=int)))
         status_filter = request.args.get("status", "")
         op_filter = request.args.get("operation", "")
 

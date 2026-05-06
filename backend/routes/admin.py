@@ -522,6 +522,15 @@ def update_settings():
     db = SessionLocal()
     try:
         body = request.get_json(force=True)
+        # pageSize 정규화 — 잘못된 값/범위 차단
+        if "pageSize" in body:
+            try:
+                v = int(body["pageSize"])
+            except (ValueError, TypeError):
+                return _err("페이지 크기는 숫자여야 합니다.", "VALIDATION")
+            if not (5 <= v <= 200):
+                return _err("페이지 크기는 5~200 사이여야 합니다.", "VALIDATION")
+            body["pageSize"] = str(v)
         updated = []
         for camel, db_key in _SETTINGS_MAP.items():
             if camel in body:
@@ -533,6 +542,10 @@ def update_settings():
                     db.add(AdminSetting(key=db_key, value=val))
                 updated.append(camel)
         db.commit()
+        # pageSize 변경 즉시 반영
+        if "pageSize" in updated:
+            from backend.services.system_settings import invalidate_page_size_cache
+            invalidate_page_size_cache()
         logger.info("시스템 설정 수정: %s", ", ".join(updated))
         log_audit("config", "settings.update", "setting", "", detail={"updated": updated})
         return _ok({"updated": updated})
