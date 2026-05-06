@@ -1,6 +1,6 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import ModbusConnector, ModbusTag
 from backend.services import benthos_manager as bm
@@ -34,12 +34,17 @@ def list_connectors():
         size = request.args.get("size", 50, type=int)
         status_filter = request.args.get("status", "")
         modbus_type_filter = request.args.get("modbusType", "")
+        search = (request.args.get("q") or "").strip()
 
         q = db.query(ModbusConnector)
         if status_filter:
             q = q.filter(ModbusConnector.status == status_filter)
         if modbus_type_filter:
             q = q.filter(ModbusConnector.modbus_type == modbus_type_filter)
+        if search:
+            like = f"%{search}%"
+            q = q.filter(or_(ModbusConnector.name.ilike(like),
+                             ModbusConnector.description.ilike(like)))
 
         total = q.count()
         rows = q.order_by(ModbusConnector.id).offset((page - 1) * size).limit(size).all()

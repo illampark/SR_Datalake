@@ -62,6 +62,10 @@
           <option value="error">{{ t('common.error') }}</option>
         </select>
       </div>
+      <div class="filter-group">
+        <label>{{ t('common.search') }}</label>
+        <input type="text" class="form-control" id="filter-search" placeholder="{{ t('page.opcua.filter_search_placeholder') }}" oninput="onFilterChange()">
+      </div>
     </div>
   </div>
   <div class="card-body p-0">
@@ -431,22 +435,32 @@ function renderPaging(total) {
   $('#connector-paging').html(html);
 }
 
+function loadSummary(){
+  $.getJSON(API + '/summary', function(r){
+    if(!r.success || !r.data) return;
+    $('#stat-total').text(r.data.total);
+    $('#stat-completed').text(r.data.completed);
+    $('#stat-running').text(r.data.running);
+    $('#stat-errors').text(r.data.errors);
+    if(r.data.running>0) startListPolling(); else stopListPolling();
+  });
+}
+
 function loadList(){
   var params = { page: _curPage, size: _pageSize };
   var st=$('#filter-status').val(); if(st)params.status=st;
+  var search = ($('#filter-search').val() || '').trim();
+  if (search) params.q = search;
+  loadSummary();
   $.getJSON(API, params, function(r){
     if(!r.success)return;
     var items=r.data, $tb=$('#import-tbody').empty();
     var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
     renderPaging(total);
-    var cntTotal=total, cntCompleted=0, cntRunning=0, cntErrors=0;
     if(!items.length){
       $tb.html('<tr><td colspan="8" class="text-center text-muted" style="padding:40px">' + __t('page.import_collector.no_data') + '</td></tr>');
     }
     items.forEach(function(c){
-      if(c.status==='completed') cntCompleted++;
-      if(c.status==='running') cntRunning++;
-      if(c.status==='error') cntErrors++;
       var progressHtml = '';
       if(c.status==='running'){
         progressHtml = '<div style="display:flex;align-items:center;gap:6px;"><div style="flex:1;height:6px;background:#e9ecef;border-radius:3px;overflow:hidden;min-width:60px;"><div style="height:100%;width:'+c.progress+'%;background:var(--primary);"></div></div><span class="fs-11">'+c.progress+'%</span></div>';
@@ -484,11 +498,6 @@ function loadList(){
         '<td><div class="action-btns">'+actions+'</div></td>'+
       '</tr>');
     });
-    $('#stat-total').text(cntTotal);
-    $('#stat-completed').text(cntCompleted);
-    $('#stat-running').text(cntRunning);
-    $('#stat-errors').text(cntErrors);
-    if(cntRunning>0) startListPolling(); else stopListPolling();
   });
 }
 

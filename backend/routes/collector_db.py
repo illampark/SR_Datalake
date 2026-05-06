@@ -1,7 +1,7 @@
 from datetime import datetime
 from copy import deepcopy
 from flask import Blueprint, request, jsonify
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm.attributes import flag_modified
 from backend.database import SessionLocal
 from backend.models.collector import DbConnector, DbTag
@@ -37,12 +37,18 @@ def list_connectors():
         size = request.args.get("size", 50, type=int)
         status_filter = request.args.get("status", "")
         dbtype_filter = request.args.get("dbType", "")
+        search = (request.args.get("q") or "").strip()
 
         q = db.query(DbConnector)
         if status_filter:
             q = q.filter(DbConnector.status == status_filter)
         if dbtype_filter:
             q = q.filter(DbConnector.db_type == dbtype_filter)
+        if search:
+            like = f"%{search}%"
+            q = q.filter(or_(DbConnector.name.ilike(like),
+                             DbConnector.description.ilike(like),
+                             DbConnector.host.ilike(like)))
 
         total = q.count()
         rows = q.order_by(DbConnector.id).offset((page - 1) * size).limit(size).all()

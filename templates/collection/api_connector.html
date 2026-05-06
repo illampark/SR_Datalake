@@ -228,7 +228,8 @@ function renderPaging(total) {
 function loadConnectors() {
   var params = { page: _curPage, size: _pageSize };
   var st = $('#filter-status').val(); if (st) params.status = st;
-  var search = ($('#filter-search').val() || '').trim().toLowerCase();
+  var search = ($('#filter-search').val() || '').trim();
+  if (search) params.q = search;
 
   $.getJSON(API, params, function(r) {
     if (!r.success) return;
@@ -236,14 +237,6 @@ function loadConnectors() {
     var $tb = $('#connector-tbody').empty();
     var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
     renderPaging(total);
-
-    if (search) {
-      items = items.filter(function(c) {
-        return c.name.toLowerCase().indexOf(search) !== -1 ||
-               (c.description || '').toLowerCase().indexOf(search) !== -1 ||
-               (c.baseUrl || '').toLowerCase().indexOf(search) !== -1;
-      });
-    }
 
     if (!items.length) {
       $tb.html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px">' + __t('page.opcua.no_connectors') + '</td></tr>');

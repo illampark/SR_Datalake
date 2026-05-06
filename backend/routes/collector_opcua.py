@@ -1,6 +1,6 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import OpcuaConnector, OpcuaTag
 from backend.services import benthos_manager as bm
@@ -33,10 +33,15 @@ def list_connectors():
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", 50, type=int)
         status_filter = request.args.get("status", "")
+        search = (request.args.get("q") or "").strip()
 
         q = db.query(OpcuaConnector)
         if status_filter:
             q = q.filter(OpcuaConnector.status == status_filter)
+        if search:
+            like = f"%{search}%"
+            q = q.filter(or_(OpcuaConnector.name.ilike(like),
+                             OpcuaConnector.description.ilike(like)))
 
         total = q.count()
         rows = q.order_by(OpcuaConnector.id).offset((page - 1) * size).limit(size).all()

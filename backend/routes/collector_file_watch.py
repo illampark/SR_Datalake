@@ -1,6 +1,6 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import FileCollector
 from backend.services import file_scanner as fs
@@ -58,10 +58,15 @@ def list_collectors():
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", 50, type=int)
         status_filter = request.args.get("status", "")
+        search = (request.args.get("q") or "").strip()
 
         q = db.query(FileCollector)
         if status_filter:
             q = q.filter(FileCollector.status == status_filter)
+        if search:
+            like = f"%{search}%"
+            q = q.filter(or_(FileCollector.name.ilike(like),
+                             FileCollector.description.ilike(like)))
 
         total = q.count()
         rows = q.order_by(FileCollector.id).offset((page - 1) * size).limit(size).all()

@@ -194,21 +194,14 @@ function renderPaging(total) {
 function loadConnectors() {
   var params = { page: _curPage, size: _pageSize };
   var st = $('#filter-status').val(); if (st) params.status = st;
-  var search = ($('#filter-search').val() || '').trim().toLowerCase();
+  var search = ($('#filter-search').val() || '').trim();
+  if (search) params.q = search;
 
   $.getJSON(API, params, function(r) {
     if (!r.success) return;
     var items = r.data;
     var $tb = $('#connector-tbody').empty();
     var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
-
-    // Client-side search filter (current page only)
-    if (search) {
-      items = items.filter(function(c) {
-        return c.name.toLowerCase().indexOf(search) !== -1 ||
-               (c.description || '').toLowerCase().indexOf(search) !== -1;
-      });
-    }
     renderPaging(total);
 
     if (!items.length) {

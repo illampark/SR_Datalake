@@ -18,6 +18,7 @@ Import Collector — 오프라인 데이터 가져오기 API
 import os
 import logging
 from flask import Blueprint, request, jsonify
+from sqlalchemy import or_, func
 from backend.database import SessionLocal
 from backend.models.collector import ImportCollector
 
@@ -122,10 +123,15 @@ def list_imports():
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", 50, type=int)
         status_filter = request.args.get("status", "")
+        search = (request.args.get("q") or "").strip()
 
         q = db.query(ImportCollector)
         if status_filter:
             q = q.filter(ImportCollector.status == status_filter)
+        if search:
+            like = f"%{search}%"
+            q = q.filter(or_(ImportCollector.name.ilike(like),
+                             ImportCollector.description.ilike(like)))
 
         total = q.count()
         items = q.order_by(ImportCollector.created_at.desc())\
@@ -136,6 +142,30 @@ def list_imports():
     except Exception as e:
         logger.error(f"IMP-001 error: {e}")
         return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════
+# IMP-013: 집계 통계 (상단 카드용 — 페이지네이션과 무관하게 전체 기준)
+# ═══════════════════════════════════════════
+@import_bp.route("/summary", methods=["GET"])
+def summary():
+    db = _db()
+    try:
+        total = db.query(func.count(ImportCollector.id)).scalar() or 0
+        completed = db.query(func.count(ImportCollector.id))\
+            .filter(ImportCollector.status == "completed").scalar() or 0
+        running = db.query(func.count(ImportCollector.id))\
+            .filter(ImportCollector.status == "running").scalar() or 0
+        errors = db.query(func.count(ImportCollector.id))\
+            .filter(ImportCollector.status == "error").scalar() or 0
+        return _ok({
+            "total": int(total),
+            "completed": int(completed),
+            "running": int(running),
+            "errors": int(errors),
+        })
     finally:
         db.close()
 
