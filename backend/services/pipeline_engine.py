@@ -472,7 +472,7 @@ def run_file_source(pipeline_id):
     def _stream_csv_records(resp, encoding, delimiter, skip_header):
         def _line_iter():
             buf = b""
-            for chunk in resp.stream(8 * 1024 * 1024):
+            for chunk in resp.stream(1 * 1024 * 1024):
                 if not isinstance(chunk, (bytes, bytearray)):
                     continue
                 buf += chunk
