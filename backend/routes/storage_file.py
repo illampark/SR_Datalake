@@ -66,7 +66,7 @@ FILE_TYPE_MAP = {
     ".png": "image", ".jpg": "image", ".jpeg": "image",
     ".gif": "image", ".bmp": "image", ".svg": "image",
     ".pdf": "doc", ".doc": "doc", ".docx": "doc",
-    ".xls": "excel", ".xlsx": "excel",
+    ".xls": "excel", ".xlsx": "excel", ".xlsm": "excel",
     ".ppt": "doc", ".pptx": "doc", ".txt": "doc",
     ".tar": "backup", ".gz": "backup", ".zip": "backup",
     ".bak": "backup", ".7z": "backup", ".rar": "backup",
@@ -443,7 +443,7 @@ def preview_file():
                 "rawUrl": raw_url,
             })
 
-        if ext == ".xlsx":
+        if ext in (".xlsx", ".xlsm"):
             sheet = request.args.get("sheet") or ""
             max_rows = request.args.get("maxRows", 100, type=int)
             try:
