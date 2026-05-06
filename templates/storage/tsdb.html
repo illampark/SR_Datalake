@@ -156,6 +156,10 @@ var currentInstance = null;
 var usageChart = null;
 var API = '/api/storage/tsdb';
 
+// ── helpers ──
+function escHtml(s) { return $('<span>').text(s == null ? '' : s).html(); }
+function escAttr(s) { return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 $(function() {
   loadCurrentInstance();
 });
@@ -202,11 +206,24 @@ function loadDataSummary() {
       h += '<td class="mono fs-12">' + (it.last_ts ? it.last_ts.replace('T', ' ').substring(0, 19) : '-') + '</td>';
       h += '<td class="text-center">' + label + '</td>';
       h += '<td class="text-center">';
-      h += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.tsdb.btn_delete_data') + '" onclick="openDeleteDataModal(' + (it.pipeline_id || 'null') + ', ' + JSON.stringify(it.measurement || '') + ', ' + (it.rows || 0) + ')"><i class="fas fa-trash text-danger"></i></button>';
+      h += '<button class="btn btn-outline btn-sm btn-icon ds-del-btn"' +
+           ' data-pid="' + (it.pipeline_id != null ? it.pipeline_id : '') + '"' +
+           ' data-meas="' + escAttr(it.measurement || '') + '"' +
+           ' data-rows="' + (it.rows || 0) + '"' +
+           ' title="' + escAttr(__t('page.tsdb.btn_delete_data')) + '">' +
+           '<i class="fas fa-trash text-danger"></i></button>';
       h += '</td>';
       h += '</tr>';
     }
     $('#data-summary-body').html(h);
+    // 행별 핸들러 — data-attr 로 안전 전달
+    $('#data-summary-body .ds-del-btn').off('click').on('click', function() {
+      var $b = $(this);
+      var pid = $b.data('pid');
+      var meas = $b.data('meas') || '';
+      var rows = parseInt($b.data('rows')) || 0;
+      openDeleteDataModal(pid === '' ? null : pid, meas, rows);
+    });
   });
 }
 
@@ -228,8 +245,20 @@ function openDeleteDataModal(pipelineId, measurement, rows) {
              '<input type="text" id="del-confirm-input" class="form-control mono" placeholder="' + escHtml(expectedConfirm) + '" oninput="_updateDelDataBtnState(\'' + escHtml(expectedConfirm) + '\')">' +
              '</div>';
   var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
-               '<button id="del-data-btn" class="btn btn-danger" disabled onclick="_executeDeleteData(' + (pipelineId || 'null') + ', ' + JSON.stringify(measurement || '') + ', ' + rows + ')"><i class="fas fa-trash"></i> ' + __t('page.tsdb.delete_execute') + '</button>';
+               '<button id="del-data-btn" class="btn btn-danger" disabled' +
+                       ' data-pid="' + (pipelineId != null ? pipelineId : '') + '"' +
+                       ' data-meas="' + escAttr(measurement || '') + '"' +
+                       ' data-rows="' + rows + '">' +
+                 '<i class="fas fa-trash"></i> ' + __t('page.tsdb.delete_execute') + '</button>';
   openModal(__t('page.tsdb.modal_delete_data_title'), body, footer);
+  // 모달 footer 의 실행 버튼 핸들러 — data-attr 로 안전 전달
+  $('#del-data-btn').off('click').on('click', function() {
+    var $b = $(this);
+    var pid = $b.data('pid');
+    var meas = $b.data('meas') || '';
+    var n = parseInt($b.data('rows')) || 0;
+    _executeDeleteData(pid === '' ? null : pid, meas, n);
+  });
 }
 
 function _updateDelDataBtnState(expected) {
