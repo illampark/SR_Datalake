@@ -964,6 +964,8 @@
       "drop_zone_hint": "팔레트에서 노드를 드래그하여 추가",
       "data_source_binding": "데이터 소스 바인딩",
       "btn_add_binding": "바인딩 추가",
+      "binding_helper_text": "소스 노드를 추가하면 자동으로 바인딩이 생성됩니다. 같은 커넥터에 추가 태그 패턴을 매핑하려는 경우에만 수동으로 [바인딩 추가]를 사용하세요.",
+      "binding_advanced_hint": "고급: 동일 커넥터의 추가 태그 패턴 매핑",
       "th_connector_type": "커넥터 유형",
       "th_connector": "커넥터",
       "th_tag_filter": "태그 필터",

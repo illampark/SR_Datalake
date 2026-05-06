@@ -130,27 +130,43 @@
         </div>
       </div>
     </div>
-    <!-- Bindings Section -->
-    <div class="card mt-16" id="bindingsCard" style="display:none;">
-      <div class="card-header">
-        <h3><i class="fas fa-link"></i> {{ t('page.builder.data_source_binding') }}</h3>
-        <button class="btn btn-outline btn-sm" onclick="openAddBindingModal()"><i class="fas fa-plus"></i> {{ t('page.builder.btn_add_binding') }}</button>
+    <!-- Bindings Section (collapsed by default — auto-managed via source nodes) -->
+    <div class="card card-collapsible collapsed mt-16" id="bindingsCard" style="display:none;">
+      <div class="card-header" onclick="toggleCollapse(this)">
+        <h3>
+          <i class="fas fa-link"></i>
+          {{ t('page.builder.data_source_binding') }}
+          <span class="text-muted fs-12" id="bindingsCount" style="font-weight:normal;margin-left:6px;"></span>
+          <i class="fas fa-chevron-down collapse-icon"></i>
+        </h3>
+        <div onclick="event.stopPropagation()">
+          <button class="btn btn-outline btn-sm" onclick="openAddBindingModal()" title="{{ t('page.builder.binding_advanced_hint') }}">
+            <i class="fas fa-plus"></i> {{ t('page.builder.btn_add_binding') }}
+          </button>
+        </div>
       </div>
-      <div class="card-body p-0">
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>{{ t('page.builder.th_connector_type') }}</th>
-                <th>{{ t('page.builder.th_connector') }}</th>
-                <th>{{ t('page.builder.th_tag_filter') }}</th>
-                <th style="width:60px">{{ t('common.actions') }}</th>
-              </tr>
-            </thead>
-            <tbody id="bindingsTbody">
-              <tr><td colspan="4" class="text-center text-muted" style="padding:20px">{{ t('page.builder.binding_empty') }}</td></tr>
-            </tbody>
-          </table>
+      <div class="card-collapse-body">
+        <div class="card-body p-12" style="background:var(--bg-secondary);border-bottom:1px solid var(--border);">
+          <div class="fs-12 text-muted">
+            <i class="fas fa-info-circle"></i> {{ t('page.builder.binding_helper_text') }}
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>{{ t('page.builder.th_connector_type') }}</th>
+                  <th>{{ t('page.builder.th_connector') }}</th>
+                  <th>{{ t('page.builder.th_tag_filter') }}</th>
+                  <th style="width:60px">{{ t('common.actions') }}</th>
+                </tr>
+              </thead>
+              <tbody id="bindingsTbody">
+                <tr><td colspan="4" class="text-center text-muted" style="padding:20px">{{ t('page.builder.binding_empty') }}</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -547,12 +563,20 @@ function renderSteps() {
   });
 }
 
+// ── Collapsible card toggle ──
+function toggleCollapse(headerEl) {
+  $(headerEl).closest('.card-collapsible').toggleClass('collapsed');
+}
+
 // ── Render Bindings ──
 function renderBindings() {
   var $card = $('#bindingsCard');
   var $tbody = $('#bindingsTbody');
   $card.show();
   $tbody.empty();
+
+  // count summary in header (visible even when collapsed)
+  $('#bindingsCount').text(currentBindings.length ? '(' + currentBindings.length + ')' : '');
 
   if (!currentBindings.length) {
     $tbody.html('<tr><td colspan="4" class="text-center text-muted" style="padding:20px">' +

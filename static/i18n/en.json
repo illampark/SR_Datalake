@@ -964,6 +964,8 @@
       "drop_zone_hint": "Drag nodes from the palette to add",
       "data_source_binding": "Data Source Binding",
       "btn_add_binding": "Add Binding",
+      "binding_helper_text": "Bindings are created automatically when you add a source node. Use [Add Binding] manually only to map additional tag patterns of the same connector.",
+      "binding_advanced_hint": "Advanced: map additional tag patterns of the same connector",
       "th_connector_type": "Connector Type",
       "th_connector": "Connector",
       "th_tag_filter": "Tag Filter",

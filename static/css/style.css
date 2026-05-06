@@ -364,6 +364,15 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .tag-blue { background: var(--c-primary-bg); color: var(--c-primary); }
 .tag-green { background: var(--c-success-bg); color: #16a34a; }
 
+/* ── Collapsible Card (reusable) ── */
+.card-collapsible .card-header { cursor: pointer; user-select: none; }
+.card-collapsible .card-header .collapse-icon {
+  transition: transform 0.2s ease;
+  font-size: 12px; color: var(--text-muted); margin-left: 8px;
+}
+.card-collapsible.collapsed .card-header .collapse-icon { transform: rotate(-90deg); }
+.card-collapsible.collapsed .card-collapse-body { display: none; }
+
 /* ── Topology / Health Map ── */
 .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .health-node {

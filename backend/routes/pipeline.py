@@ -103,11 +103,29 @@ def get_pipeline(pid):
 
 
 # PIP-003: POST /api/pipeline — 생성
+def _require_source_step(steps):
+    """파이프라인은 최소 1개의 소스 노드(*_source)를 가져야 한다.
+
+    Option C 아키텍처: 노드(필수) ↔ 바인딩(자동 매핑). 노드 없는 파이프라인은
+    런타임에 데이터가 흐를 곳이 없으므로 저장 단계에서 차단한다.
+    """
+    has_source = any(
+        (s.get("moduleType") or "").endswith("_source") for s in (steps or [])
+    )
+    if not has_source:
+        return ("최소 1개 이상의 소스 노드가 필요합니다. 팔레트에서 소스(*_source) 노드를 추가하세요.",
+                "NO_SOURCE_STEP")
+    return None
+
+
 @pipeline_bp.route("", methods=["POST"])
 def create_pipeline():
     db = _db()
     try:
         body = request.get_json(force=True)
+        err = _require_source_step(body.get("steps"))
+        if err:
+            return _err(err[0], err[1])
         p = Pipeline(
             name=body.get("name", ""),
             description=body.get("description", ""),
@@ -171,6 +189,11 @@ def update_pipeline(pid):
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        # steps 가 함께 전달될 때만 검증 (메타 only 업데이트는 통과)
+        if "steps" in body:
+            err = _require_source_step(body["steps"])
+            if err:
+                return _err(err[0], err[1])
         for js_key, col in {"name": "name", "description": "description", "enabled": "enabled"}.items():
             if js_key in body:
                 setattr(p, col, body[js_key])
