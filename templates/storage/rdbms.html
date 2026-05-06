@@ -211,6 +211,9 @@ function loadTables(id) {
       h += '<td class="mono fs-12">' + (t.last_updated ? t.last_updated.replace('T', ' ').substring(0, 19) : '-') + '</td>';
       h += '<td>';
       h += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.rdbms.btn_view_schema') + '" onclick="viewTableSchema(\'' + escAttr(t.table_name) + '\')"><i class="fas fa-eye"></i></button> ';
+      {% if is_admin %}
+      h += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.rdbms.btn_delete_table') + '" onclick="openDeleteTableModal(\'' + escAttr(t.table_name) + '\')"><i class="fas fa-trash text-danger"></i></button>';
+      {% endif %}
       h += '</td>';
       h += '</tr>';
     }
@@ -464,6 +467,139 @@ function viewTableSchema(tableName) {
     $('#modal-body').html(h);
   }).fail(function() {
     $('#modal-body').html('<p class="text-danger"><i class="fas fa-exclamation-circle"></i> ' + __t('page.rdbms.schema_cannot_load') + '</p>');
+  });
+}
+
+// ── Delete table — 영향 분석 모달 + 강한 확인 ──
+function openDeleteTableModal(tableName) {
+  if (!currentInst) { showToast(__t('page.rdbms.toast_no_instance'), 'warning'); return; }
+
+  var loading = '<p class="text-muted"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.rdbms.delete_loading_usage') + '</p>';
+  openModal(__t('page.rdbms.modal_delete_table_title') + ' — ' + tableName, loading, null, 'modal-lg');
+
+  $.getJSON(API + '/' + currentInst.id + '/tables/' + encodeURIComponent(tableName) + '/usage', function(res) {
+    if (!res.success) {
+      $('#modal-body').html('<p class="text-danger"><i class="fas fa-exclamation-circle"></i> ' + escHtml(res.error ? res.error.message : __t('page.rdbms.delete_usage_failed')) + '</p>');
+      return;
+    }
+    _renderDeleteTableModal(tableName, res.data);
+  }).fail(function() {
+    $('#modal-body').html('<p class="text-danger"><i class="fas fa-exclamation-circle"></i> ' + __t('page.rdbms.delete_usage_failed') + '</p>');
+  });
+}
+
+function _renderDeleteTableModal(tableName, info) {
+  var rows = '';
+  rows += '<tr><th class="text-right">' + __t('page.rdbms.usage_table') + '</th><td class="mono">' + escHtml(tableName) + '</td></tr>';
+  rows += '<tr><th class="text-right">' + __t('page.rdbms.usage_rows') + '</th><td class="mono">' + (info.row_count || 0).toLocaleString() + '</td></tr>';
+  rows += '<tr><th class="text-right">' + __t('page.rdbms.usage_size') + '</th><td class="mono">' + escHtml(info.size_display || '-') + '</td></tr>';
+  // catalog
+  var cat = (info.in_catalog || []);
+  rows += '<tr><th class="text-right">' + __t('page.rdbms.usage_catalog') + '</th><td>' +
+          (cat.length === 0 ? '<span class="text-muted">' + __t('page.rdbms.usage_none') + '</span>' :
+           cat.map(function(c){return '#' + c.id + ' ' + escHtml(c.name);}).join('<br>')) + '</td></tr>';
+  // pipelines
+  var pipes = (info.used_in_pipelines || []);
+  rows += '<tr><th class="text-right">' + __t('page.rdbms.usage_pipelines') + '</th><td>' +
+          (pipes.length === 0 ? '<span class="text-muted">' + __t('page.rdbms.usage_none') + '</span>' :
+           pipes.map(function(p){return '#' + p.id + ' ' + escHtml(p.name) + ' (step ' + p.step_order + ')';}).join('<br>')) + '</td></tr>';
+  // FK
+  var fks = (info.fk_referenced_by || []);
+  rows += '<tr><th class="text-right">' + __t('page.rdbms.usage_fk') + '</th><td>' +
+          (fks.length === 0 ? '<span class="text-muted">' + __t('page.rdbms.usage_none') + '</span>' :
+           fks.map(escHtml).join('<br>')) + '</td></tr>';
+
+  var sysWarn = '';
+  if (info.is_system_table) {
+    sysWarn = '<div class="alert alert-danger" style="margin-bottom:12px;"><i class="fas fa-shield-alt"></i> <strong>' +
+              __t('page.rdbms.delete_system_protected') + '</strong></div>';
+  }
+
+  var runningWarn = '';
+  if ((info.pipeline_running || []).length > 0) {
+    runningWarn = '<div class="alert alert-warning" style="margin-bottom:12px;"><i class="fas fa-exclamation-triangle"></i> ' +
+                  __t('page.rdbms.delete_pipeline_running') + '</div>';
+  }
+
+  var hasFk = fks.length > 0;
+  var canProceed = !info.is_system_table;
+
+  var optionsHtml = '';
+  if (canProceed) {
+    optionsHtml = '<div class="form-group">' +
+                  '<label><input type="radio" name="del-mode" value="drop" checked> ' + __t('page.rdbms.delete_mode_drop') + '</label>&nbsp;&nbsp;' +
+                  '<label><input type="radio" name="del-mode" value="truncate"> ' + __t('page.rdbms.delete_mode_truncate') + '</label>' +
+                  '</div>' +
+                  '<div class="form-group"><label>' +
+                  '<input type="checkbox" id="del-cleanup-catalog" checked> ' + __t('page.rdbms.delete_cleanup_catalog') + '</label></div>' +
+                  '<div class="form-group"><label>' +
+                  '<input type="checkbox" id="del-cascade"' + (hasFk ? '' : ' disabled') + '> ' +
+                  __t('page.rdbms.delete_cascade') +
+                  (hasFk ? '' : ' <span class="text-muted">(' + __t('page.rdbms.delete_cascade_none') + ')</span>') +
+                  '</label></div>' +
+                  '<div class="alert alert-warning" style="margin:12px 0;">' +
+                  '<i class="fas fa-exclamation-triangle"></i> ' + __t('page.rdbms.delete_warn_irreversible') +
+                  '</div>' +
+                  '<div class="form-group">' +
+                  '<label class="form-label"><strong>' + __t('page.rdbms.delete_confirm_label').replace('{name}', '<span class="mono">' + escHtml(tableName) + '</span>') + '</strong></label>' +
+                  '<input type="text" id="del-confirm-input" class="form-control mono" placeholder="' + escAttr(tableName) + '" oninput="_updateDeleteBtnState(\'' + escAttr(tableName) + '\')">' +
+                  '</div>';
+  }
+
+  var body = sysWarn + runningWarn +
+             '<div class="table-wrapper"><table class="table-zebra">' +
+             '<tbody>' + rows + '</tbody></table></div>' +
+             optionsHtml;
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>';
+  if (canProceed) {
+    footer += '<button id="del-execute-btn" class="btn btn-danger" disabled onclick="_executeDeleteTable(\'' + escAttr(tableName) + '\')"><i class="fas fa-trash"></i> ' + __t('page.rdbms.delete_execute') + '</button>';
+  }
+  $('#modal-body').html(body);
+  $('#modal-footer').html(footer);
+}
+
+function _updateDeleteBtnState(tableName) {
+  var v = $('#del-confirm-input').val() || '';
+  $('#del-execute-btn').prop('disabled', v !== tableName);
+}
+
+function _executeDeleteTable(tableName) {
+  if (!currentInst) return;
+  var mode = $('input[name=del-mode]:checked').val() || 'drop';
+  var cascade = $('#del-cascade').is(':checked');
+  var cleanupCatalog = $('#del-cleanup-catalog').is(':checked');
+  var confirm = $('#del-confirm-input').val() || '';
+  if (confirm !== tableName) { showToast(__t('page.rdbms.delete_confirm_mismatch'), 'error'); return; }
+
+  $('#del-execute-btn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.rdbms.delete_executing'));
+
+  $.ajax({
+    url: API + '/' + currentInst.id + '/tables/' + encodeURIComponent(tableName),
+    method: 'DELETE',
+    contentType: 'application/json',
+    data: JSON.stringify({mode: mode, cascade: cascade, cleanup_catalog: cleanupCatalog, confirm: confirm}),
+    success: function(res) {
+      if (res.success) {
+        var msg = (mode === 'drop' ? __t('page.rdbms.toast_table_dropped') : __t('page.rdbms.toast_table_truncated'))
+                  .replace('{name}', tableName);
+        if (res.data && res.data.catalog_cleaned > 0) {
+          msg += ' (' + __t('page.rdbms.toast_catalog_cleaned').replace('{n}', res.data.catalog_cleaned) + ')';
+        }
+        showToast(msg, 'success');
+        closeModal();
+        loadTables(currentInst.id);
+      } else {
+        showToast((res.error && res.error.message) || __t('common.error'), 'error');
+        $('#del-execute-btn').prop('disabled', false).html('<i class="fas fa-trash"></i> ' + __t('page.rdbms.delete_execute'));
+      }
+    },
+    error: function(xhr) {
+      var msg = __t('common.error');
+      try { var b = JSON.parse(xhr.responseText); if (b.error) msg = b.error.message; } catch(e) {}
+      showToast(msg, 'error');
+      $('#del-execute-btn').prop('disabled', false).html('<i class="fas fa-trash"></i> ' + __t('page.rdbms.delete_execute'));
+    }
   });
 }
 

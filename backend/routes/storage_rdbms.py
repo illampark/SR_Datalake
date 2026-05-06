@@ -1,10 +1,42 @@
+import logging
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from sqlalchemy import func
+from sqlalchemy import func, text as _sql_text
 from backend.database import SessionLocal
 from backend.models.storage import RdbmsConfig
 
+logger = logging.getLogger(__name__)
+
 rdbms_bp = Blueprint("storage_rdbms", __name__, url_prefix="/api/storage/rdbms")
+
+
+# ──────────────────────────────────────────────
+# 시스템 운영에 필수인 SDL 코어 테이블 — DROP/TRUNCATE 차단 화이트리스트
+# ──────────────────────────────────────────────
+SYSTEM_PROTECTED_TABLES = frozenset({
+    # 사용자/인증/감사
+    "app_user", "login_history", "audit_log", "admin_setting", "notice",
+    # 커넥터·태그
+    "opcua_connector", "opcua_tag", "opcda_connector", "opcda_tag",
+    "modbus_connector", "modbus_tag", "mqtt_connector", "mqtt_tag",
+    "api_connector", "api_endpoint", "file_collector",
+    "db_connector", "db_tag", "import_collector",
+    # 파이프라인·모듈
+    "pipeline", "pipeline_step", "pipeline_binding",
+    "normalize_rule", "filter_rule", "anomaly_config", "aggregate_config",
+    "enrich_config", "script_config", "unit_conversion",
+    # 데이터·메타
+    "data_catalog", "catalog_search_tag", "data_lineage", "data_recipe",
+    "tag_metadata", "aggregated_data", "warm_aggregated_data",
+    "downsampling_policy", "time_series_data",
+    # 스토리지·정책
+    "tsdb_config", "rdbms_config", "file_cleanup_policy",
+    "retention_policy", "retention_execution_log",
+    # 알람·게이트웨이·시스템
+    "alarm_rule", "alarm_channel", "alarm_event",
+    "api_key", "api_access_log",
+    "backup_history", "system_log", "external_connection",
+})
 
 
 def _ok(data=None, meta=None):
@@ -460,6 +492,258 @@ def get_table_schema(rdbms_id, table_name):
         return _ok({"table_name": table_name, "columns": columns})
     finally:
         db.close()
+
+
+# ──────────────────────────────────────────────
+# GET /api/storage/rdbms/<id>/tables/<name>/usage  — 삭제 영향 분석
+# ──────────────────────────────────────────────
+@rdbms_bp.route("/<int:rdbms_id>/tables/<table_name>/usage", methods=["GET"])
+def get_table_usage(rdbms_id, table_name):
+    """테이블 삭제 전 영향 범위 조회.
+
+    응답 필드:
+      is_system_table : SDL 코어 테이블 여부 (True 면 삭제 차단 대상)
+      row_count, size_bytes, size_display
+      in_catalog       : data_catalog 등록 항목 (id, name)
+      used_in_pipelines: pipeline_step.config 의 tableName 매칭 (id, name, step_order)
+      fk_referenced_by : 다른 테이블이 이 테이블을 FK 로 참조 중 (참조 테이블 목록)
+      pipeline_running : sink 로 사용 중인 파이프라인 중 current_run_id != '' 인 것
+    """
+    db = _db()
+    try:
+        row = db.query(RdbmsConfig).get(rdbms_id)
+        if not row:
+            return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        is_system = table_name.lower() in SYSTEM_PROTECTED_TABLES
+
+        # 1) 테이블 통계 (RDBMS 인스턴스의 PG 에서)
+        row_count = 0
+        size_bytes = 0
+        fk_referenced_by = []
+        try:
+            conn = _pg_connect(row)
+            cur = conn.cursor()
+            schema = row.schema_name or "public"
+            cur.execute("""
+                SELECT
+                    c.reltuples::bigint AS row_estimate,
+                    pg_total_relation_size(c.oid) AS total_bytes
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'r';
+            """, (schema, table_name))
+            r = cur.fetchone()
+            if r:
+                row_count = max(r[0] or 0, 0)
+                size_bytes = r[1] or 0
+
+            # FK 참조 — 이 테이블을 참조하는 다른 테이블
+            cur.execute("""
+                SELECT DISTINCT n2.nspname || '.' || c2.relname AS referencing
+                FROM pg_constraint con
+                JOIN pg_class c1 ON c1.oid = con.confrelid
+                JOIN pg_namespace n1 ON n1.oid = c1.relnamespace
+                JOIN pg_class c2 ON c2.oid = con.conrelid
+                JOIN pg_namespace n2 ON n2.oid = c2.relnamespace
+                WHERE con.contype = 'f'
+                  AND n1.nspname = %s AND c1.relname = %s;
+            """, (schema, table_name))
+            fk_referenced_by = [r[0] for r in cur.fetchall()]
+
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.warning("usage stat fetch error: %s", e)
+
+        # 2) 카탈로그 등록 여부 — access_url 의 끝이 /tableName 인 행
+        in_catalog = []
+        try:
+            res = db.execute(_sql_text("""
+                SELECT id, name FROM data_catalog
+                WHERE access_url LIKE :pat
+                  AND sink_type IN ('internal_rdbms_sink', 'external_rdbms_sink')
+            """), {"pat": f"%/{table_name}"})
+            in_catalog = [{"id": r[0], "name": r[1]} for r in res.fetchall()]
+        except Exception as e:
+            logger.warning("catalog lookup error: %s", e)
+
+        # 3) 파이프라인 sink 등록 여부 — pipeline_step.config->>'tableName'
+        used_in_pipelines = []
+        pipeline_running = []
+        try:
+            res = db.execute(_sql_text("""
+                SELECT ps.pipeline_id, p.name, ps.step_order, p.current_run_id
+                FROM pipeline_step ps
+                JOIN pipeline p ON p.id = ps.pipeline_id
+                WHERE ps.module_type IN ('internal_rdbms_sink', 'external_rdbms_sink')
+                  AND (ps.config->>'tableName') = :tn
+            """), {"tn": table_name})
+            for pid, pname, sord, run_id in res.fetchall():
+                entry = {"id": pid, "name": pname, "step_order": sord}
+                used_in_pipelines.append(entry)
+                if run_id and str(run_id).strip():
+                    pipeline_running.append(entry)
+        except Exception as e:
+            logger.warning("pipeline lookup error: %s", e)
+
+        return _ok({
+            "table_name": table_name,
+            "is_system_table": is_system,
+            "row_count": row_count,
+            "size_bytes": size_bytes,
+            "size_display": _fmt_bytes(size_bytes),
+            "in_catalog": in_catalog,
+            "used_in_pipelines": used_in_pipelines,
+            "pipeline_running": pipeline_running,
+            "fk_referenced_by": fk_referenced_by,
+        })
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────
+# DELETE /api/storage/rdbms/<id>/tables/<name>  — 테이블 삭제/비우기
+# ──────────────────────────────────────────────
+@rdbms_bp.route("/<int:rdbms_id>/tables/<table_name>", methods=["DELETE"])
+def delete_table(rdbms_id, table_name):
+    """테이블 DROP 또는 TRUNCATE.
+
+    Body:
+      mode            : "drop" (default) | "truncate"
+      cascade         : bool (default False)
+      cleanup_catalog : bool (default True) — data_catalog 행 함께 삭제
+      confirm         : 사용자가 입력한 테이블명 (정확히 일치해야 진행)
+    """
+    body = request.get_json(silent=True) or {}
+    mode = (body.get("mode") or "drop").lower()
+    cascade = bool(body.get("cascade", False))
+    cleanup_catalog = bool(body.get("cleanup_catalog", True))
+    confirm = (body.get("confirm") or "").strip()
+
+    if mode not in ("drop", "truncate"):
+        return _err("mode 는 'drop' 또는 'truncate' 여야 합니다.", "VALIDATION")
+    if confirm != table_name:
+        return _err("확인용 테이블명이 일치하지 않습니다.", "CONFIRM_MISMATCH")
+
+    # 시스템 테이블 보호
+    if table_name.lower() in SYSTEM_PROTECTED_TABLES:
+        return _err(
+            f"'{table_name}' 은 SDL 시스템 테이블이라 삭제할 수 없습니다.",
+            "SYSTEM_PROTECTED", 403,
+        )
+
+    # information_schema / pg_catalog 등 시스템 schema 차단 (안전망)
+    db = _db()
+    try:
+        row = db.query(RdbmsConfig).get(rdbms_id)
+        if not row:
+            return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        schema = row.schema_name or "public"
+        if schema.lower() in ("information_schema", "pg_catalog", "pg_toast"):
+            return _err("시스템 schema 의 테이블은 삭제할 수 없습니다.", "SYSTEM_PROTECTED", 403)
+
+        # 진행 중 파이프라인 sink 로 등록되어 있으면 거부
+        running_pipes = []
+        try:
+            res = db.execute(_sql_text("""
+                SELECT p.id, p.name FROM pipeline p
+                JOIN pipeline_step ps ON ps.pipeline_id = p.id
+                WHERE ps.module_type IN ('internal_rdbms_sink', 'external_rdbms_sink')
+                  AND (ps.config->>'tableName') = :tn
+                  AND COALESCE(p.current_run_id,'') <> ''
+            """), {"tn": table_name})
+            running_pipes = [{"id": r[0], "name": r[1]} for r in res.fetchall()]
+        except Exception:
+            pass
+        if running_pipes:
+            return _err(
+                "이 테이블을 sink 로 사용 중인 파이프라인이 실행 중입니다. 정지 후 다시 시도하세요.",
+                "PIPELINE_RUNNING", 409,
+            )
+
+        # 실제 DROP/TRUNCATE — psycopg2 sql.Identifier 로 안전 quoting
+        import psycopg2
+        from psycopg2 import sql as _sql
+        conn = _pg_connect(row)
+        try:
+            conn.autocommit = False
+            cur = conn.cursor()
+            full = _sql.Identifier(schema, table_name)
+            if mode == "drop":
+                stmt = _sql.SQL("DROP TABLE IF EXISTS {}{}").format(
+                    full,
+                    _sql.SQL(" CASCADE") if cascade else _sql.SQL(""),
+                )
+            else:  # truncate
+                stmt = _sql.SQL("TRUNCATE TABLE {}{}").format(
+                    full,
+                    _sql.SQL(" CASCADE") if cascade else _sql.SQL(""),
+                )
+            cur.execute(stmt)
+            conn.commit()
+            cur.close()
+        except psycopg2.Error as e:
+            conn.rollback()
+            return _err(f"테이블 {mode} 실패: {e}", "SQL_ERROR", 500)
+        finally:
+            conn.close()
+
+        # 카탈로그 정리
+        catalog_cleaned = 0
+        if cleanup_catalog and mode == "drop":
+            try:
+                res = db.execute(_sql_text("""
+                    DELETE FROM data_catalog
+                    WHERE access_url LIKE :pat
+                      AND sink_type IN ('internal_rdbms_sink', 'external_rdbms_sink')
+                """), {"pat": f"%/{table_name}"})
+                catalog_cleaned = res.rowcount or 0
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning("catalog cleanup error: %s", e)
+
+        # 감사 로그
+        try:
+            from flask import session, g
+            uname = session.get("username") or ("api-key" if getattr(g, "api_key_authenticated", False) else "unknown")
+            db.execute(_sql_text("""
+                INSERT INTO audit_log (timestamp, username, action_type, action, target_type, target_name, ip_address, result, detail)
+                VALUES (NOW(), :u, 'storage.rdbms.table_'||:m, :a, 'rdbms_table', :tn, :ip, 'success', cast(:detail as json))
+            """), {
+                "u": uname, "m": mode,
+                "a": f"RDBMS table {mode.upper()}",
+                "tn": f"{schema}.{table_name}",
+                "ip": (request.remote_addr or ""),
+                "detail": _audit_detail(rdbms_id, mode, cascade, cleanup_catalog, catalog_cleaned),
+            })
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("audit log write error: %s", e)
+
+        return _ok({
+            "table_name": table_name,
+            "mode": mode,
+            "cascade": cascade,
+            "cleanup_catalog": cleanup_catalog,
+            "catalog_cleaned": catalog_cleaned,
+        })
+    finally:
+        db.close()
+
+
+def _audit_detail(rdbms_id, mode, cascade, cleanup_catalog, catalog_cleaned):
+    """감사 로그 detail JSON 직렬화."""
+    import json as _json
+    return _json.dumps({
+        "rdbms_id": rdbms_id,
+        "mode": mode,
+        "cascade": cascade,
+        "cleanup_catalog": cleanup_catalog,
+        "catalog_cleaned": catalog_cleaned,
+    }, ensure_ascii=False)
 
 
 # ──────────────────────────────────────────────
