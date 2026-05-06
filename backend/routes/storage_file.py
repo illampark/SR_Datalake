@@ -1,6 +1,7 @@
 import logging
 import os
 import io
+import psutil
 from datetime import datetime
 from flask import Blueprint, request, jsonify, send_file
 from minio.error import S3Error
@@ -43,6 +44,20 @@ def _fmt_bytes(b):
             return f"{b:.1f} {unit}"
         b /= 1024
     return f"{b:.1f} PB"
+
+
+_DISK_PATH_CANDIDATES = (
+    "/app/static/uploads",   # bind mount target (DATA_ROOT/sdl-uploads)
+    "/data",                 # host data dir (스테이징 등)
+    "/",                     # 최후 fallback
+)
+
+
+def _resolve_disk_path():
+    for p in _DISK_PATH_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return "/"
 
 
 FILE_TYPE_MAP = {
@@ -106,9 +121,22 @@ def get_storage_status():
                 "object_count": bcount,
             })
 
-        total_gb = float(request.args.get("capacityGB", 460))
         used_gb = total_size / (1024 ** 3)
-        avail_gb = max(total_gb - used_gb, 0)
+
+        cap_override = request.args.get("capacityGB")
+        if cap_override is not None:
+            try:
+                total_gb = float(cap_override)
+                avail_gb = max(total_gb - used_gb, 0)
+                disk_path = None
+            except (TypeError, ValueError):
+                cap_override = None
+        if cap_override is None:
+            disk_path = _resolve_disk_path()
+            disk = psutil.disk_usage(disk_path)
+            total_gb = disk.total / (1024 ** 3)
+            avail_gb = disk.free / (1024 ** 3)
+
         pct = round((used_gb / total_gb) * 100, 1) if total_gb > 0 else 0
 
         return _ok({
@@ -121,6 +149,7 @@ def get_storage_status():
             "storageType": "MinIO S3",
             "endpoint": cfg["endpoint"],
             "status": "connected",
+            "diskPath": disk_path,
             "snapshot_at": datetime.utcnow().isoformat(),
         })
     except Exception as e:
