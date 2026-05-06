@@ -142,6 +142,24 @@ def update_tag_metadata(tid):
 # ──────────────────────────────────────────────
 # META-003: GET /api/metadata/tags/summary — 커넥터 타입별 요약
 # ──────────────────────────────────────────────
+@metadata_bp.route("/availability", methods=["GET"])
+def metadata_availability():
+    """가벼운 카운트 — 태그/계보 기능 노출 여부 결정용 (페이지 부트스트랩 1회 호출).
+
+    현재 운영 흐름이 batch import 중심이라 publish_raw 경로가 거의 없어
+    tag_metadata / data_lineage 가 비어 있을 수 있다. 빈 상태일 때 UI 가
+    버튼/패널을 비활성화 하도록 클라이언트가 이 값으로 판정.
+    """
+    db = _db()
+    try:
+        return _ok({
+            "tagMetadataCount": db.query(TagMetadata).count(),
+            "lineageCount": db.query(DataLineage).count(),
+        })
+    finally:
+        db.close()
+
+
 @metadata_bp.route("/tags/summary", methods=["GET"])
 def tag_summary():
     db = _db()

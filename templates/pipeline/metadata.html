@@ -14,6 +14,17 @@
 {% endblock %}
 
 {% block content %}
+<!-- Empty-state notice (shown when no tag_metadata / data_lineage exists) -->
+<div id="metaEmptyBanner" class="card mb-16" style="display:none;border-left:4px solid var(--c-warning);">
+  <div class="card-body" style="display:flex;align-items:center;gap:12px;padding:14px 18px;">
+    <i class="fas fa-circle-info" style="font-size:20px;color:var(--c-warning);"></i>
+    <div class="fs-13 text-muted">
+      <strong>{{ t('page.metadata.empty_banner_title') }}</strong><br>
+      {{ t('page.metadata.empty_banner_body') }}
+    </div>
+  </div>
+</div>
+
 <!-- Stats Cards -->
 <div class="stat-grid">
   <div class="stat-card">
@@ -188,6 +199,13 @@
 var currentTagPage = 1;
 var currentLineagePage = 1;
 var PAGE_SIZE = 20;
+
+// 메타데이터/계보가 모두 비어있으면 상단 안내 배너 노출
+window.onMetaAvailability = function (m) {
+  if ((m.tagMetadataCount || 0) === 0 && (m.lineageCount || 0) === 0) {
+    $('#metaEmptyBanner').show();
+  }
+};
 
 // ── Connector type helpers ──
 var connectorIcons = {

@@ -461,6 +461,27 @@
   loadAlarms();
   setInterval(loadAlarms, 30000);
 
+  /* ══════════ METADATA / LINEAGE AVAILABILITY ══════════ */
+  // 태그 단위 거버넌스 기능 (횡단 태그 검색 / 계보) 의 데이터가 비어 있으면
+  // 사용자 혼란 차단을 위해 관련 버튼을 비활성화.
+  window.__sdlMeta = { tagMetadataCount: null, lineageCount: null };
+  $.getJSON('/api/metadata/availability', function (r) {
+    if (!r || !r.success || !r.data) return;
+    window.__sdlMeta.tagMetadataCount = r.data.tagMetadataCount || 0;
+    window.__sdlMeta.lineageCount = r.data.lineageCount || 0;
+    if (window.__sdlMeta.tagMetadataCount === 0) {
+      $('button[onclick*="crossSearchPanel"]').each(function () {
+        $(this).prop('disabled', true)
+          .attr('title', __t('common.cross_search_unavailable_hint'))
+          .css({ opacity: 0.5, cursor: 'not-allowed' });
+      });
+    }
+    // 페이지별 후처리 훅
+    if (typeof window.onMetaAvailability === 'function') {
+      window.onMetaAvailability(window.__sdlMeta);
+    }
+  });
+
   $('#alarm-bell').on('click', function(e) {
     e.stopPropagation();
     closeAllDropdowns();
