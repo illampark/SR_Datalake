@@ -359,8 +359,70 @@ def _update_pipeline_error(pipeline_id, error_msg):
 
 
 
+def _resume_load(pipeline_id):
+    """파이프라인의 resume_state 불러오기. 없으면 빈 dict."""
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        row = ss.execute(_t("SELECT resume_state FROM pipeline WHERE id=:p"),
+                         {"p": pipeline_id}).fetchone()
+        return (row[0] if row and row[0] else {}) or {}
+    except Exception as e:
+        logger.warning("resume_state load failed pid=%s: %s", pipeline_id, e)
+        return {}
+    finally:
+        ss.close()
+
+
+def _resume_save(pipeline_id, state):
+    """resume_state 저장 — 진행 중간 또는 정지 직전 호출."""
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        ss.execute(_t("UPDATE pipeline SET resume_state = cast(:s as json) WHERE id=:p"),
+                   {"s": json.dumps(state, ensure_ascii=False), "p": pipeline_id})
+        ss.commit()
+    except Exception as e:
+        ss.rollback()
+        logger.warning("resume_state save failed pid=%s: %s", pipeline_id, e)
+    finally:
+        ss.close()
+
+
+def _resume_clear(pipeline_id):
+    """파이프라인이 정상 완료됐을 때 resume_state 비우기."""
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        ss.execute(_t("UPDATE pipeline SET resume_state = NULL WHERE id=:p"),
+                   {"p": pipeline_id})
+        ss.commit()
+    except Exception:
+        ss.rollback()
+    finally:
+        ss.close()
+
+
+def _is_stop_requested(pipeline_id):
+    """현재 pipeline.status 가 'stopped' 면 외부에서 정지 요청한 것."""
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        st = ss.execute(_t("SELECT status FROM pipeline WHERE id=:p"),
+                        {"p": pipeline_id}).scalar()
+        return (str(st or "").lower() == "stopped")
+    except Exception:
+        return False
+    finally:
+        ss.close()
+
+
 def run_file_source(pipeline_id):
-    """파일 소스 파이프라인 즉시 실행 — DB lock + 스트리밍 + 진행률 commit.
+    """파일 소스 파이프라인 즉시 실행 — DB lock + 스트리밍 + 진행률 commit + 재개(resume).
 
     DB 의 current_run_id 를 atomic UPDATE 로 set 하여 동일 파이프라인의
     동시 실행을 차단한다 (24h TTL 로 crash 후 stale lock 자동 해제).
@@ -652,21 +714,50 @@ def run_file_source(pipeline_id):
             skip_header = c.skip_header
             import_type = (c.import_type or "csv").lower()
 
+            # ── 재개 상태 복원 ──
+            _resume_state = _resume_load(pipeline_id)
+            _processed_objects = set(_resume_state.get("processed_objects") or [])
+            _resume_object = _resume_state.get("current_object") or None
+            _resume_record_idx = int(_resume_state.get("current_record_idx") or 0)
+            _resume_processed = int(_resume_state.get("processed_count_at_save") or 0)
+            _resume_errors = int(_resume_state.get("error_count_at_save") or 0)
+            _resume_dropped = int(_resume_state.get("dropped_count_at_save") or 0)
+
+            if _processed_objects or _resume_object:
+                logger.info(
+                    "file-source pipeline=%s 재개 — completed_files=%d, resume_in='%s' record_idx=%d",
+                    pipeline_id, len(_processed_objects), _resume_object, _resume_record_idx,
+                )
+
             logger.info(
-                "file-source pipeline=%s 시작 — files=%d, format=%s, sinks=%d, run_id=%s",
-                pipeline_id, len(objects), import_type, len(sink_steps), run_id,
+                "file-source pipeline=%s 시작 — files=%d (skip=%d), format=%s, sinks=%d, run_id=%s",
+                pipeline_id, len(objects), len(_processed_objects), import_type, len(sink_steps), run_id,
             )
 
-            _commit_progress(0, 0, 0)
-            _reset_step_progress()
-
-            total_processed = 0
-            total_errors = 0
-            total_dropped = 0
+            # 카운터: 처음 시작이면 0, 재개면 직전 저장값에서 이어감
+            total_processed = _resume_processed
+            total_errors = _resume_errors
+            total_dropped = _resume_dropped
             last_commit_at = _time.time()
-            last_commit_count = 0
+            last_commit_count = total_processed
+
+            # 재개 시작 시 누적 카운터 즉시 반영
+            if _resume_processed or _resume_errors or _resume_dropped:
+                _commit_progress(total_processed, total_errors, total_dropped)
+            else:
+                _commit_progress(0, 0, 0)
+                _reset_step_progress()
+
+            cancelled = False
 
             for fi, obj in enumerate(objects):
+                # 이미 완료된 파일 skip
+                if obj.object_name in _processed_objects:
+                    logger.info("file-source pipeline=%s skip already-processed: %s",
+                                pipeline_id, obj.object_name)
+                    continue
+                if cancelled:
+                    break
                 try:
                     _ext = obj.object_name.rsplit(".", 1)[-1].lower() if "." in obj.object_name else ""
                     _detected = _EXT_TO_IMPORT_TYPE.get(_ext)
@@ -688,8 +779,17 @@ def run_file_source(pipeline_id):
                                 resp, encoding, delimiter, skip_header,
                             )
 
+                        # 재개 대상 파일이면 첫 N record skip
+                        skip_records = _resume_record_idx if obj.object_name == _resume_object else 0
+                        if skip_records:
+                            logger.info("file-source pipeline=%s resume %s @ record %d",
+                                        pipeline_id, obj.object_name, skip_records)
                         file_record_count = 0
+                        skipped = 0
                         for rec in records_iter:
+                            if skipped < skip_records:
+                                skipped += 1
+                                continue
                             msg = {
                                 "value": rec,
                                 "source": {
@@ -756,11 +856,33 @@ def run_file_source(pipeline_id):
                                 _commit_step_progress(step_stats)
                                 last_commit_count = total_processed
                                 last_commit_at = now
+                                # 재개 상태 저장 (현재 파일 + 진행 record idx)
+                                _resume_save(pipeline_id, {
+                                    "processed_objects": list(_processed_objects),
+                                    "current_object": obj.object_name,
+                                    "current_record_idx": skip_records + file_record_count,
+                                    "processed_count_at_save": total_processed,
+                                    "error_count_at_save": total_errors,
+                                    "dropped_count_at_save": total_dropped,
+                                })
+                                # 외부에서 정지 요청? — 안전하게 break
+                                if _is_stop_requested(pipeline_id):
+                                    logger.info(
+                                        "file-source pipeline=%s STOP 요청 감지 — 안전 정지 (file=%s record_idx=%d)",
+                                        pipeline_id, obj.object_name,
+                                        skip_records + file_record_count,
+                                    )
+                                    cancelled = True
+                                    break
                     finally:
                         try:
                             resp.close(); resp.release_conn()
                         except Exception:
                             pass
+
+                    if cancelled:
+                        # 정지 요청 — break out without marking file as completed
+                        break
 
                     logger.info(
                         "file-source pipeline=%s file=%s done — rows=%d (cumulative processed=%d)",
@@ -769,6 +891,18 @@ def run_file_source(pipeline_id):
                     _commit_progress(total_processed, total_errors, total_dropped)
                     last_commit_count = total_processed
                     last_commit_at = _time.time()
+                    # 파일 정상 완료 → processed_objects 추가, 현재 파일 offset 리셋
+                    _processed_objects.add(obj.object_name)
+                    _resume_object = None
+                    _resume_record_idx = 0
+                    _resume_save(pipeline_id, {
+                        "processed_objects": list(_processed_objects),
+                        "current_object": None,
+                        "current_record_idx": 0,
+                        "processed_count_at_save": total_processed,
+                        "error_count_at_save": total_errors,
+                        "dropped_count_at_save": total_dropped,
+                    })
                 except Exception as e:
                     total_errors += 1
                     logger.warning("파일 %s 처리 실패: %s", obj.object_name, e)
@@ -780,6 +914,24 @@ def run_file_source(pipeline_id):
 
             _commit_progress(total_processed, total_errors, total_dropped)
             _commit_step_progress(step_stats)
+
+            if cancelled:
+                # 정지 요청 — resume_state 보존, 다음 실행 때 이어감
+                logger.info(
+                    "file-source pipeline=%s 정지됨 — files_done=%d processed=%d (다음 실행 시 재개)",
+                    pipeline_id, len(_processed_objects), total_processed,
+                )
+                return {
+                    "ok": True,
+                    "cancelled": True,
+                    "files_done": len(_processed_objects),
+                    "processed": total_processed,
+                    "dropped": total_dropped,
+                    "errors": total_errors,
+                }
+
+            # 정상 완료 — resume_state 비우기
+            _resume_clear(pipeline_id)
 
             logger.info(
                 "file-source pipeline=%s 완료 — files=%d processed=%d dropped=%d errors=%d",
