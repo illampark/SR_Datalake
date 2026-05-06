@@ -56,6 +56,30 @@ function openModal(title, bodyHtml, footerHtml, cls) {
   $('#modal-overlay').removeClass('hidden');
 }
 function closeModal() { $('#modal-overlay').addClass('hidden'); }
+
+// 모달 외부 클릭으로 닫기 (모든 .modal-overlay 공통).
+//
+// 브라우저는 mousedown 과 mouseup 의 target 이 다르면 둘의 공통 조상에서
+// click 이벤트를 발생시킨다. 사용자가 모달 안의 input 에서 좌클릭으로 텍스트
+// 드래그를 시작해 외부 (오버레이) 까지 끌고 가서 놓으면 click.target=오버레이 가
+// 되어 의도치 않게 모달이 닫힌다. 이 페이지에는 인라인 onclick="if(event.target
+// ===this)closeXxx()" 패턴도 여러 군데 있으므로 capture phase 에서 한 번에 차단.
+(function () {
+  document.addEventListener('mousedown', function (e) {
+    var ovr = e.target.closest && e.target.closest('.modal-overlay');
+    if (ovr) ovr.__mdInside = (e.target !== ovr);
+  }, true);
+  document.addEventListener('click', function (e) {
+    var ovr = e.target.closest && e.target.closest('.modal-overlay');
+    if (ovr && ovr.__mdInside) {
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      ovr.__mdInside = false;
+    }
+  }, true);
+})();
+
+// 기본 #modal-overlay 외부 클릭 = 닫기 (위 capture 가드 통과한 경우만).
 $(document).on('click', '#modal-overlay', function (e) {
   if (e.target === this) closeModal();
 });
