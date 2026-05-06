@@ -546,7 +546,7 @@
       "toast_path_testing": "SFTP 경로 테스트 중…",
       "toast_path_test_fail": "경로 테스트 실패",
       "placeholder_name_example": "예: FILE-LOG-001",
-      "btn_cross_search": "크로스 태그 검색",
+      "btn_cross_search": "횡단 태그 검색",
       "stat_running": "실행 중"
     },
     "import_collector": {
