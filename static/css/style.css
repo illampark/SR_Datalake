@@ -365,7 +365,7 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .tag-green { background: var(--c-success-bg); color: #16a34a; }
 
 /* ── Topology / Health Map ── */
-.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .health-node {
   padding: 16px; border-radius: var(--radius); border: 1px solid var(--border);
   background: var(--card-bg); text-align: center;
