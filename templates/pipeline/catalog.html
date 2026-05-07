@@ -1140,7 +1140,13 @@ function loadCatalogData(page) {
 
   var $tb = $('#data-tbody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.data_querying') + '</td></tr>');
 
-  $.getJSON(API + '/' + _dataCatalogId + '/data', params, function(r) {
+  $.ajax({ url: API + '/' + _dataCatalogId + '/data', data: params, dataType: 'json' })
+    .fail(function(xhr) {
+      var msg = __t('page.catalog.data_query_fail');
+      try { var e = JSON.parse(xhr.responseText); if (e && e.error && e.error.message) msg = e.error.message; } catch (_) {}
+      $tb.html('<tr><td colspan="9" class="text-center text-danger" style="padding:30px">' + escHtml(msg) + '</td></tr>');
+    })
+    .done(function(r) {
     if (!r.success) {
       $tb.html('<tr><td colspan="9" class="text-center text-danger" style="padding:30px">' + escHtml((r.error && r.error.message) || __t('page.catalog.data_query_fail')) + '</td></tr>');
       return;
@@ -1260,9 +1266,6 @@ function loadCatalogData(page) {
     });
 
     renderDataPagination(total, page);
-  }).fail(function(xhr) {
-    var e = xhr.responseJSON;
-    $tb.html('<tr><td colspan="8" class="text-center text-danger" style="padding:30px">' + escHtml((e && e.error && e.error.message) || __t('page.catalog.data_query_fail')) + '</td></tr>');
   });
 }
 

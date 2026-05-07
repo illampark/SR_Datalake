@@ -854,7 +854,16 @@ def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None, w
                 rdbms.schema_name or "public",
                 table_name, page, size, date_from, date_to,
                 filters=filters, where_clause=where_clause)
+    except _OffsetTooLargeError as e:
+        return _err(str(e), "OFFSET_TOO_LARGE", 400)
     except Exception as e:
+        # PostgreSQL statement_timeout → SQLSTATE 57014 (psycopg2 QueryCanceledError)
+        msg = str(e)
+        if "57014" in msg or "canceling statement" in msg.lower() or "statement timeout" in msg.lower():
+            return _err(
+                "조회가 30초 안에 완료되지 못했습니다. 기간/조건 필터(WHERE)로 범위를 좁혀주세요.",
+                "QUERY_TIMEOUT", 504,
+            )
         _log.error("RDBMS 싱크 조회 실패 (rdbms=%d, table=%s): %s", rdbms_id, table_name, e)
         return _err("외부 DB 연결/조회에 실패했습니다.", "RDBMS_ERROR")
 
@@ -886,6 +895,11 @@ def _rdbms_read_mysql(host, port, database, username, password,
     )
     try:
         cur = conn.cursor()
+        # MySQL/MariaDB 에서도 동일한 SELECT timeout — 60s 프록시 타임아웃 전에 컷오프
+        try:
+            cur.execute(f"SET SESSION MAX_EXECUTION_TIME = {_RDBMS_STATEMENT_TIMEOUT_MS}")
+        except Exception:
+            pass  # MariaDB 5.x 등 미지원 버전은 무시
 
         # 날짜 필터 (collected_at 컬럼이 있는 경우)
         where = ""
@@ -915,11 +929,33 @@ def _rdbms_read_mysql(host, port, database, username, password,
         cur.execute(f"SELECT COUNT(*) as cnt FROM `{table_name}`{where}", params)
         total = cur.fetchone()["cnt"]
 
-        # 데이터 조회
-        offset = (page - 1) * size
-        cur.execute(f"SELECT * FROM `{table_name}`{where} ORDER BY id DESC LIMIT %s OFFSET %s",
-                    params + [size, offset])
-        rows = cur.fetchall()
+        # OFFSET 페이지네이션 가드 (PG 와 동일 패턴 — 마지막 페이지 ASC 플립 + 100K cap)
+        forward_offset = (page - 1) * size
+        forward_count = max(0, min(size, total - forward_offset))
+        if forward_count <= 0:
+            return [], [], total
+
+        ascending = forward_offset > total / 2
+        if ascending:
+            effective_offset = total - forward_offset - forward_count
+            order = "ASC"
+        else:
+            effective_offset = forward_offset
+            order = "DESC"
+
+        if effective_offset > _PAGINATION_OFFSET_CAP:
+            raise _OffsetTooLargeError(
+                f"이 카탈로그는 {total:,} 건이라 {page} 페이지는 OFFSET {effective_offset:,} 가 필요합니다. "
+                f"기간/조건 필터(WHERE)로 범위를 좁혀주세요."
+            )
+
+        cur.execute(
+            f"SELECT * FROM `{table_name}`{where} ORDER BY id {order} LIMIT %s OFFSET %s",
+            params + [forward_count, effective_offset],
+        )
+        rows = list(cur.fetchall())
+        if ascending:
+            rows.reverse()
 
         columns = list(rows[0].keys()) if rows else []
         items = []
@@ -929,6 +965,14 @@ def _rdbms_read_mysql(host, port, database, username, password,
         return columns, items, total
     finally:
         conn.close()
+
+
+_PAGINATION_OFFSET_CAP = 100_000  # 그 이상 깊이는 OFFSET 비용이 비현실적 — 필터 권장
+_RDBMS_STATEMENT_TIMEOUT_MS = 30_000
+
+
+class _OffsetTooLargeError(Exception):
+    """OFFSET cap 초과 — _query_pipeline_rdbms 에서 친화적 에러로 변환."""
 
 
 def _rdbms_read_pg(host, port, database, username, password,
@@ -943,6 +987,8 @@ def _rdbms_read_pg(host, port, database, username, password,
     )
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # OFFSET 폭주 시 nginx 60s 프록시 타임아웃 전에 명확한 에러 — 502 방지
+        cur.execute(f"SET statement_timeout = {_RDBMS_STATEMENT_TIMEOUT_MS}")
         full_table = f'"{schema}"."{table_name}"' if schema else f'"{table_name}"'
 
         conditions = []
@@ -1021,11 +1067,37 @@ def _rdbms_read_pg(host, port, database, username, password,
         cur.execute(f"SELECT COUNT(*) as cnt FROM {full_table}{where}", params)
         total = cur.fetchone()["cnt"]
 
-        # 데이터 조회
-        offset = (page - 1) * size
-        cur.execute(f"SELECT * FROM {full_table}{where} ORDER BY id DESC LIMIT %s OFFSET %s",
-                    params + [size, offset])
+        # ── OFFSET 페이지네이션 가드 ──
+        # 1) 마지막 페이지 boundary: forward offset > total/2 이면 ASC 로 뒤집어 가져온 후 reverse
+        #    (ORDER BY id DESC 결과의 N번째 ≡ ORDER BY id ASC 결과의 (total - N + 1)번째)
+        # 2) 양방향 모두 100K 를 넘으면 거부 — 그 이상은 OFFSET 으로 못 풂. WHERE 필터 사용 안내.
+        forward_offset = (page - 1) * size
+        forward_count = max(0, min(size, total - forward_offset))
+        if forward_count <= 0:
+            return [], [], total
+
+        ascending = forward_offset > total / 2
+        if ascending:
+            backward_offset = total - forward_offset - forward_count
+            effective_offset = backward_offset
+            order = "ASC"
+        else:
+            effective_offset = forward_offset
+            order = "DESC"
+
+        if effective_offset > _PAGINATION_OFFSET_CAP:
+            raise _OffsetTooLargeError(
+                f"이 카탈로그는 {total:,} 건이라 {page} 페이지는 OFFSET {effective_offset:,} 가 필요합니다. "
+                f"기간/조건 필터(WHERE)로 범위를 좁혀주세요."
+            )
+
+        cur.execute(
+            f"SELECT * FROM {full_table}{where} ORDER BY id {order} LIMIT %s OFFSET %s",
+            params + [forward_count, effective_offset],
+        )
         rows = cur.fetchall()
+        if ascending:
+            rows = list(reversed(rows))
 
         columns = list(rows[0].keys()) if rows else []
         items = []
