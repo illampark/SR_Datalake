@@ -1139,7 +1139,8 @@ def preview_catalog_export(cid):
         if c.connector_type == "pipeline" and c.sink_type == "internal_tsdb_sink":
             q = _build_pipeline_tsdb_query(db, c, date_from, date_to)
             sample = q.limit(100).all()
-            row_count = q.with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+            # COUNT(*) + ORDER BY 는 PostgreSQL 에서 GROUP BY 오류 → ORDER BY 제거 후 카운트
+            row_count = q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
             cols = ["timestamp", "measurement", "tag_name", "value", "value_str",
                     "data_type", "unit", "quality"]
             sample_dicts = [_pipe_tsdb_row_to_dict(r) for r in sample]
@@ -1164,7 +1165,7 @@ def preview_catalog_export(cid):
         # 기본: TimeSeriesData
         q, columns, is_connector_level = _build_timeseries_query(db, c, date_from, date_to)
         sample = q.limit(100).all()
-        row_count = q.with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+        row_count = q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
         sample_dicts = [_ts_row_to_dict(r, is_connector_level) for r in sample]
         avg = _avg_row_bytes(sample_dicts, columns)
         est_bytes = row_count * avg

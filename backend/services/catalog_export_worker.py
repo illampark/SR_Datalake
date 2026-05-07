@@ -402,7 +402,13 @@ def _select_row_iterator(db, catalog, req):
 
 
 def _estimate_rows(db, catalog, req):
-    """진행률 계산용 추정 행수. 실패하면 0 반환."""
+    """진행률 계산용 추정 행수. 실패하면 0 반환.
+
+    카운트 쿼리는 별도 세션에서 실행한다 — PostgreSQL 에서 ORDER BY 가 붙은 query 의
+    카운트가 실패하면 호출 세션이 InFailedSqlTransaction 으로 오염되기 때문.
+    """
+    from backend.database import SessionLocal
+    db2 = SessionLocal()
     try:
         from sqlalchemy import func
         from backend.models.storage import TimeSeriesData
@@ -412,8 +418,8 @@ def _estimate_rows(db, catalog, req):
         date_to = req.date_to.isoformat() if req.date_to else ""
 
         if catalog.connector_type == "pipeline" and catalog.sink_type == "internal_tsdb_sink":
-            q = catalog_routes._build_pipeline_tsdb_query(db, catalog, date_from, date_to)
-            return q.with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+            q = catalog_routes._build_pipeline_tsdb_query(db2, catalog, date_from, date_to)
+            return q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
 
         if catalog.connector_type == "pipeline" and catalog.sink_type == "internal_rdbms_sink":
             # 외부 DB 카운트는 비용 ↑ — preview 가 미리 했더라도 worker 시점에 다시 부르긴 무거움.
@@ -421,10 +427,16 @@ def _estimate_rows(db, catalog, req):
             return 0
 
         if catalog.connector_type not in ("file", "recipe"):
-            q, _, _ = catalog_routes._build_timeseries_query(db, catalog, date_from, date_to)
-            return q.with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+            q, _, _ = catalog_routes._build_timeseries_query(db2, catalog, date_from, date_to)
+            return q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
     except Exception as e:
         logger.warning("estimate_rows 실패 [%s]: %s", req.request_id, e)
+        try:
+            db2.rollback()
+        except Exception:
+            pass
+    finally:
+        db2.close()
     return 0
 
 
