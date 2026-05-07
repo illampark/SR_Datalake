@@ -1043,6 +1043,10 @@ function openDataPanel(catalogId, connectorType, sinkType) {
     $('#data-from, #data-to').closest('.form-group').show();
     $('#data-from').closest('.form-group').find('.form-label').text(__t('page.catalog.file_date_from'));
     $('#data-to').closest('.form-group').find('.form-label').text(__t('page.catalog.file_date_to'));
+    // 파일 카탈로그는 mod date 기본 필터를 두지 않음 — import/마이그레이션 파일은 보통
+    // 한 번 올려두고 오래 두기 때문에 7일 필터에 걸려 0개로 보이는 함정 방지.
+    // 사용자가 직접 날짜를 입력하면 그때만 필터가 적용됨.
+    $('#data-from, #data-to').val('');
   } else if (_dataSinkType === 'internal_rdbms_sink') {
     $('#data-panel-title').html('<i class="fas fa-table"></i> ' + __t('page.catalog.rdbms_data_title'));
     $('#btn-export-csv, #btn-export-json, #btn-show-api').show();
