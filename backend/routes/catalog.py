@@ -1237,7 +1237,7 @@ def queue_catalog_export_async(cid):
 
         default_name = (
             body.get("name")
-            or f"{c.title or c.name or 'catalog'} ({datetime.utcnow().strftime('%Y-%m-%d %H:%M')})"
+            or f"{c.name or f'catalog_{c.id}'} ({datetime.utcnow().strftime('%Y-%m-%d %H:%M')})"
         )
 
         ds = DatasetRequest(
