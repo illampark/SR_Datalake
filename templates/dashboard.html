@@ -9,11 +9,17 @@
 {% endblock %}
 
 {% block page_actions %}
-<label class="form-check-inline fs-12 mr-12" style="cursor:pointer;">
-  <input type="checkbox" id="chk-auto-refresh" checked onchange="toggleAutoRefresh()"> {{ t('page.dashboard.label_auto_refresh') }}
-</label>
-<button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
-<button class="btn btn-primary btn-sm" onclick="openQuickAction()"><i class="fas fa-bolt"></i> {{ t('page.dashboard.btn_quick_action') }}</button>
+<div class="d-flex align-center gap-8">
+  <span class="fs-12 text-muted">{{ t('page.dashboard.last_updated_label') }} <span id="last-updated">-</span></span>
+  <select class="form-select" id="refresh-interval" style="width:auto;min-width:130px;padding:5px 10px;font-size:12px;">
+    <option value="0">{{ t('page.dashboard.auto_refresh_off') }}</option>
+    <option value="5000">{{ t('page.dashboard.auto_refresh_5s') }}</option>
+    <option value="10000">{{ t('page.dashboard.auto_refresh_10s') }}</option>
+    <option value="30000" selected>{{ t('page.dashboard.auto_refresh_30s') }}</option>
+  </select>
+  <button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+  <button class="btn btn-primary btn-sm" onclick="openQuickAction()"><i class="fas fa-bolt"></i> {{ t('page.dashboard.btn_quick_action') }}</button>
+</div>
 {% endblock %}
 
 {% block content %}
@@ -205,7 +211,7 @@ var _userRole = '{{ session.get("role", "") }}';
 $(function() {
   loadAll();
   loadNotices();
-  startAutoRefresh();
+  setupRefresh();
   // admin이면 작성 버튼 표시
   if (_userRole === 'admin') {
     $('#btn-notice-write').show();
@@ -222,6 +228,7 @@ function loadAll() {
     renderCollectedStats(d.connectors);
     renderConnectorTypeChart(d.connectors);
     renderRecentErrors(d.performance.recentErrors);
+    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
   });
   $.getJSON('/api/alarm/events', { size: 8 }, function(res) {
     if (!res.success) return;
@@ -430,18 +437,16 @@ function renderRecentErrors(errors) {
   $('#error-tbody').html(html);
 }
 
-/* ═══════════ 자동 새로고침 ═══════════ */
-function toggleAutoRefresh() {
-  if ($('#chk-auto-refresh').is(':checked')) { startAutoRefresh(); }
-  else { stopAutoRefresh(); }
+/* ═══════════ 자동 새로고침 (운영 대시보드와 동일 패턴) ═══════════ */
+function setupRefresh() {
+  var ms = parseInt($('#refresh-interval').val());
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
 }
-function startAutoRefresh() {
-  stopAutoRefresh();
-  _refreshTimer = setInterval(loadAll, 30000);
-}
-function stopAutoRefresh() {
+$(document).on('change', '#refresh-interval', function() {
   if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
-}
+  var ms = parseInt(this.value);
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+});
 
 /* ═══════════ 빠른 실행 ═══════════ */
 function openQuickAction() {
