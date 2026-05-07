@@ -104,6 +104,53 @@ def _estimate_seconds(row_count, avg_bytes):
     total_mb = (row_count * avg_bytes) / (1024 * 1024)
     return max(1, int(total_mb / 100))
 
+
+# RDBMS 카탈로그 데이터셋 범위 조정용 raw WHERE 절 입력 — 키워드 기반 검증.
+# read-only 한정으로 운영(sink RDBMS 계정은 SELECT 권한만 권장)되더라도, 자명한 위협
+# (스택 statement, DML/DDL, 주석을 통한 우회) 만큼은 입력 단계에서 차단.
+_WHERE_MAX_LEN = 2000
+_WHERE_BLOCKED_TOKENS = (
+    ";", "--", "/*", "*/",
+)
+import re as _re_where  # noqa: E402
+
+# 단어 경계 기반 — `update_at` 같은 컬럼명과 구분 위해 \b 사용
+_WHERE_BLOCKED_KEYWORDS = _re_where.compile(
+    r"\b(?:UPDATE|INSERT|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|"
+    r"MERGE|COPY|EXEC|EXECUTE|CALL|INTO|VACUUM|ANALYZE|REINDEX|"
+    r"DECLARE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b",
+    _re_where.IGNORECASE,
+)
+
+
+def _validate_where_clause(s):
+    """raw WHERE 입력 검증. 통과: (True, ""), 실패: (False, error_message)."""
+    if not s:
+        return True, ""
+    s = s.strip()
+    if not s:
+        return True, ""
+    if len(s) > _WHERE_MAX_LEN:
+        return False, f"WHERE 절은 {_WHERE_MAX_LEN}자 이하여야 합니다."
+    for tok in _WHERE_BLOCKED_TOKENS:
+        if tok in s:
+            return False, f"허용되지 않은 토큰이 포함되어 있습니다: {tok!r}"
+    m = _WHERE_BLOCKED_KEYWORDS.search(s)
+    if m:
+        return False, f"허용되지 않은 SQL 키워드가 포함되어 있습니다: {m.group(0).upper()}"
+    # 괄호 균형
+    depth = 0
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return False, "괄호가 맞지 않습니다."
+    if depth != 0:
+        return False, "괄호가 맞지 않습니다."
+    return True, ""
+
 catalog_bp = Blueprint("catalog", __name__, url_prefix="/api/catalog")
 
 
@@ -752,7 +799,7 @@ def _get_pipeline_sink_config(db, pipeline_id, sink_type):
     return step.config if step else {}
 
 
-def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None):
+def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None, where_clause=""):
     """RDBMS 싱크 — 외부 DB에서 직접 조회"""
     from backend.models.storage import RdbmsConfig
     import logging
@@ -798,13 +845,15 @@ def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None):
             columns, items, total = _rdbms_read_mysql(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
-                table_name, page, size, date_from, date_to, filters)
+                table_name, page, size, date_from, date_to,
+                where_clause=where_clause)
         else:
             columns, items, total = _rdbms_read_pg(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
                 rdbms.schema_name or "public",
-                table_name, page, size, date_from, date_to, filters)
+                table_name, page, size, date_from, date_to,
+                filters=filters, where_clause=where_clause)
     except Exception as e:
         _log.error("RDBMS 싱크 조회 실패 (rdbms=%d, table=%s): %s", rdbms_id, table_name, e)
         return _err("외부 DB 연결/조회에 실패했습니다.", "RDBMS_ERROR")
@@ -827,7 +876,7 @@ def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None):
 
 
 def _rdbms_read_mysql(host, port, database, username, password,
-                       table_name, page, size, date_from, date_to):
+                       table_name, page, size, date_from, date_to, where_clause=""):
     import pymysql
     conn = pymysql.connect(
         host=host, port=port, database=database,
@@ -858,6 +907,9 @@ def _rdbms_read_mysql(host, port, database, username, password,
                     pass
                 params.append(dt_to)
             where = " WHERE " + " AND ".join(conditions)
+        if where_clause:
+            where = (where + " AND ") if where else " WHERE "
+            where += f"({where_clause})"
 
         # 총 건수
         cur.execute(f"SELECT COUNT(*) as cnt FROM `{table_name}`{where}", params)
@@ -880,7 +932,8 @@ def _rdbms_read_mysql(host, port, database, username, password,
 
 
 def _rdbms_read_pg(host, port, database, username, password,
-                    schema, table_name, page, size, date_from, date_to, filters=None):
+                    schema, table_name, page, size, date_from, date_to, filters=None,
+                    where_clause=""):
     import psycopg2
     import psycopg2.extras
     conn = psycopg2.connect(
@@ -960,6 +1013,8 @@ def _rdbms_read_pg(host, port, database, username, password,
                     conditions.append(f'"{col}"::text {op} %s')
                     params.append(val)
 
+        if where_clause:
+            conditions.append(f"({where_clause})")
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
         # 총 건수
@@ -1019,13 +1074,19 @@ def query_catalog_data(cid):
                 rdbms_filters = json.loads(filters_raw)
             except (json.JSONDecodeError, TypeError):
                 pass
+        where_clause = (request.args.get("where", "") or "").strip()
+        if where_clause:
+            ok, msg = _validate_where_clause(where_clause)
+            if not ok:
+                return _err(msg, "INVALID_WHERE")
 
         # 싱크 타입별 라우팅 (pipeline, import 공통)
         if c.sink_type and c.connector_type in ("pipeline", "import"):
             if c.sink_type == "internal_tsdb_sink":
                 return _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min)
             elif c.sink_type == "internal_rdbms_sink":
-                return _query_pipeline_rdbms(db, c, page, size, date_from, date_to, rdbms_filters)
+                return _query_pipeline_rdbms(db, c, page, size, date_from, date_to, rdbms_filters,
+                                             where_clause=where_clause)
             elif c.sink_type == "internal_file_sink":
                 return _query_pipeline_files(c)
 
@@ -1130,10 +1191,15 @@ def preview_catalog_export(cid):
 
         date_from = request.args.get("from", "")
         date_to = request.args.get("to", "")
+        where_clause = (request.args.get("where", "") or "").strip()
+        if where_clause:
+            ok, msg = _validate_where_clause(where_clause)
+            if not ok:
+                return _err(msg, "INVALID_WHERE")
 
         # 파이프라인 RDBMS sink — 외부 DB 카운트 + 샘플
         if c.connector_type == "pipeline" and c.sink_type == "internal_rdbms_sink":
-            return _preview_rdbms(db, c, date_from, date_to)
+            return _preview_rdbms(db, c, date_from, date_to, where_clause)
 
         # 파이프라인 TSDB sink — TimeSeriesData 카운트
         if c.connector_type == "pipeline" and c.sink_type == "internal_tsdb_sink":
@@ -1221,6 +1287,14 @@ def queue_catalog_export_async(cid):
             except ValueError:
                 return _err("dateTo 형식이 올바르지 않습니다.", "VALIDATION")
 
+        where_clause = (body.get("where") or "").strip()
+        if where_clause:
+            if c.sink_type != "internal_rdbms_sink":
+                return _err("WHERE 절 입력은 RDBMS 싱크 카탈로그에서만 사용할 수 있습니다.", "VALIDATION")
+            ok, msg = _validate_where_clause(where_clause)
+            if not ok:
+                return _err(msg, "INVALID_WHERE")
+
         # request_id 생성: ds-YYYYMMDD-NNN
         today_str = datetime.utcnow().strftime("%Y%m%d")
         prefix = f"ds-{today_str}-"
@@ -1247,6 +1321,7 @@ def queue_catalog_export_async(cid):
             description=body.get("description", ""),
             requested_by=session.get("username", "anonymous"),
             catalog_id=cid,
+            where_clause=where_clause,
             date_from=date_from,
             date_to=date_to,
             format=fmt,
@@ -1269,7 +1344,7 @@ def queue_catalog_export_async(cid):
         db.close()
 
 
-def _preview_rdbms(db, c, date_from, date_to):
+def _preview_rdbms(db, c, date_from, date_to, where_clause=""):
     """외부 RDBMS sink 견적 — count + sample."""
     from backend.models.storage import RdbmsConfig
     cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_rdbms_sink")
@@ -1287,13 +1362,13 @@ def _preview_rdbms(db, c, date_from, date_to):
             cols, items, total = _rdbms_read_mysql(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
-                table_name, 1, 100, date_from, date_to)
+                table_name, 1, 100, date_from, date_to, where_clause)
         else:
             cols, items, total = _rdbms_read_pg(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
                 rdbms.schema_name or "public",
-                table_name, 1, 100, date_from, date_to)
+                table_name, 1, 100, date_from, date_to, None, where_clause)
     except Exception as e:
         return _err(f"외부 DB 견적 실패: {e}", "RDBMS_ERROR")
 
@@ -1498,10 +1573,11 @@ def _export_pipeline_tsdb(db, c, date_from, date_to, fmt):
 
 
 def _rdbms_stream_pg(host, port, database, username, password, schema,
-                      table_name, date_from, date_to, limit=0):
+                      table_name, date_from, date_to, limit=0, where_clause=""):
     """PostgreSQL named server-side cursor 로 row 스트리밍.
 
     yield (columns: list[str], None) 처음 1회 → 이후 yield (None, row_dict) 반복.
+    where_clause: 검증된 raw WHERE 본문(앞 'WHERE' 제외). 날짜 조건과 AND 로 결합.
     """
     import psycopg2
     import psycopg2.extras
@@ -1545,6 +1621,8 @@ def _rdbms_stream_pg(host, port, database, username, password, schema,
                 params.append(dt.isoformat())
             except ValueError:
                 pass
+        if where_clause:
+            conditions.append(f"({where_clause})")
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         sql = f'SELECT * FROM {full_table}{where}'
         if date_col:
@@ -1584,7 +1662,7 @@ def _rdbms_stream_pg(host, port, database, username, password, schema,
 
 
 def _rdbms_stream_mysql(host, port, database, username, password,
-                         table_name, date_from, date_to, limit=0):
+                         table_name, date_from, date_to, limit=0, where_clause=""):
     """MySQL/MariaDB SSCursor 로 row 스트리밍."""
     import pymysql
     import pymysql.cursors
@@ -1614,6 +1692,9 @@ def _rdbms_stream_mysql(host, port, database, username, password,
                     pass
             if conds:
                 where = " WHERE " + " AND ".join(conds)
+        if where_clause:
+            where = (where + " AND ") if where else " WHERE "
+            where += f"({where_clause})"
         sql = f"SELECT * FROM `{table_name}`{where}"
         if limit and limit > 0:
             sql += f" LIMIT {int(limit)}"
@@ -1663,6 +1744,12 @@ def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
     if not limit and _EXPORT_SAFETY_CAP > 0:
         limit = _EXPORT_SAFETY_CAP
 
+    where_clause = (request.args.get("where", "") or "").strip()
+    if where_clause:
+        ok, msg = _validate_where_clause(where_clause)
+        if not ok:
+            return _err(msg, "INVALID_WHERE")
+
     db_type = (rdbms.db_type or "").lower()
     fname_prefix = f"pipeline_{c.pipeline_id}_{table_name}"
 
@@ -1671,14 +1758,14 @@ def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
             yield from _rdbms_stream_mysql(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
-                table_name, date_from, date_to, limit,
+                table_name, date_from, date_to, limit, where_clause,
             )
         else:
             yield from _rdbms_stream_pg(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
                 rdbms.schema_name or "public",
-                table_name, date_from, date_to, limit,
+                table_name, date_from, date_to, limit, where_clause,
             )
 
     if fmt == "json":

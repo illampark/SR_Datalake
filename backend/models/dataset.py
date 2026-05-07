@@ -19,6 +19,8 @@ class DatasetRequest(Base):
 
     # 단일 카탈로그 export — Tier 2 비동기 카탈로그 다운로드용. 기존 다중 태그 export 와는 배타적.
     catalog_id = Column(Integer, nullable=True)
+    # RDBMS sink 용 raw WHERE 본문 (검증 후 저장). 다른 카탈로그 유형에선 미사용.
+    where_clause = Column(Text, default="")
 
     # 조회 조건
     tags = Column(JSON, default=[])                                 # ["tag1", "tag2", ...]
@@ -64,6 +66,7 @@ class DatasetRequest(Base):
             "description": self.description,
             "requestedBy": self.requested_by,
             "catalogId": self.catalog_id,
+            "whereClause": self.where_clause or "",
             "tags": self.tags or [],
             "connectorTypes": self.connector_types or [],
             "connectorIds": self.connector_ids or [],

@@ -189,6 +189,19 @@
       </div>
       <div id="rdbms-filter-tags" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
     </div>
+    <!-- RDBMS Custom WHERE — RDBMS sink 한정. 키워드/세미콜론 차단된 raw WHERE 본문. -->
+    <div id="rdbms-where-panel" style="display:none;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <label class="form-label fs-11" style="margin:0;font-weight:600;">
+          <i class="fas fa-filter"></i> {{ t('page.catalog.rdbms_where_label') }}
+        </label>
+        <span class="text-muted fs-11">{{ t('page.catalog.rdbms_where_hint') }}</span>
+        <span id="rdbms-where-error" class="text-danger fs-11" style="margin-left:auto;"></span>
+      </div>
+      <textarea id="rdbms-where-input" class="form-control" rows="2"
+                placeholder="{{ t('page.catalog.rdbms_where_placeholder') }}"
+                style="font-family:'Source Code Pro',monospace;font-size:12px;resize:vertical;"></textarea>
+    </div>
     <!-- Stats Summary -->
     <div id="data-stats" style="display:none;margin-bottom:16px;">
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">
@@ -1007,6 +1020,9 @@ var _rdbmsColumns = [];  // 컬럼 목록 캐시
 
 function openDataPanel(catalogId, connectorType, sinkType) {
   $('#rdbms-filter-panel').hide();
+  $('#rdbms-where-panel').hide();
+  $('#rdbms-where-input').val('');
+  $('#rdbms-where-error').text('');
   _dataCatalogId = catalogId;
   _dataConnectorType = connectorType;
   _dataSinkType = sinkType || '';
@@ -1036,6 +1052,7 @@ function openDataPanel(catalogId, connectorType, sinkType) {
     _rdbmsFilters = [];
     $('#rdbms-filter-tags').empty();
     $('#rdbms-filter-panel').show();
+    $('#rdbms-where-panel').show();
     _loadRdbmsColumns(catalogId);
   } else {
     $('#data-panel-title').html('<i class="fas fa-database"></i> ' + __t('page.catalog.file_ts_data_title'));
@@ -1114,6 +1131,12 @@ function loadCatalogData(page) {
   // RDBMS 필터 전달
   if (_rdbmsFilters.length) params.filters = JSON.stringify(_rdbmsFilters);
   if (to) params.to = to;
+  var whereClause = _getRdbmsWhere();
+  if (whereClause !== null) {
+    if (whereClause) params.where = whereClause;
+  } else {
+    return;  // validation 실패 — 사용자가 textarea 위 에러 메시지를 읽고 수정해야 함
+  }
 
   var $tb = $('#data-tbody').html('<tr><td colspan="9" class="text-center text-muted" style="padding:30px"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.data_querying') + '</td></tr>');
 
@@ -1542,16 +1565,47 @@ function _fmtSeconds(s) {
   return (s / 3600).toFixed(1) + '시간';
 }
 
+// RDBMS WHERE 입력 client-side 검증 — 통과 시 trim된 문자열, 미입력은 "", 실패는 null 반환.
+// 백엔드 _validate_where_clause 와 동일한 규칙을 가볍게 미러링.
+var _WHERE_BLOCKED_TOKENS = [';', '--', '/*', '*/'];
+var _WHERE_BLOCKED_KEYWORDS = /\b(?:UPDATE|INSERT|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|MERGE|COPY|EXEC|EXECUTE|CALL|INTO|VACUUM|ANALYZE|REINDEX|DECLARE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/i;
+function _getRdbmsWhere() {
+  var $err = $('#rdbms-where-error');
+  $err.text('');
+  if (_dataSinkType !== 'internal_rdbms_sink') return '';
+  var s = ($('#rdbms-where-input').val() || '').trim();
+  if (!s) return '';
+  if (s.length > 2000) { $err.text(__t('page.catalog.rdbms_where_err_long')); return null; }
+  for (var i = 0; i < _WHERE_BLOCKED_TOKENS.length; i++) {
+    if (s.indexOf(_WHERE_BLOCKED_TOKENS[i]) !== -1) {
+      $err.text(__t('page.catalog.rdbms_where_err_token').replace('{tok}', _WHERE_BLOCKED_TOKENS[i]));
+      return null;
+    }
+  }
+  var m = _WHERE_BLOCKED_KEYWORDS.exec(s);
+  if (m) { $err.text(__t('page.catalog.rdbms_where_err_keyword').replace('{kw}', m[0].toUpperCase())); return null; }
+  var depth = 0;
+  for (var j = 0; j < s.length; j++) {
+    if (s[j] === '(') depth++;
+    else if (s[j] === ')') { depth--; if (depth < 0) { $err.text(__t('page.catalog.rdbms_where_err_paren')); return null; } }
+  }
+  if (depth !== 0) { $err.text(__t('page.catalog.rdbms_where_err_paren')); return null; }
+  return s;
+}
+
 // 다운로드 견적 → 모달 → 시작
 var ASYNC_THRESHOLD_BYTES = 1 * 1024 * 1024 * 1024; // 1GB 초과 시 비동기 권장
 
 function exportData(format) {
   if (!_dataCatalogId) return;
+  var whereClause = _getRdbmsWhere();
+  if (whereClause === null) return;  // 검증 실패 — 메시지 이미 표시됨
   var from = $('#data-from').val();
   var to = $('#data-to').val();
   var qp = ['format=' + format];
   if (from) qp.push('from=' + from);
   if (to) qp.push('to=' + to);
+  if (whereClause) qp.push('where=' + encodeURIComponent(whereClause));
   var qs = qp.join('&');
   var previewQs = qp.filter(function (p) { return !p.startsWith('format='); }).join('&');
 
@@ -1629,11 +1683,14 @@ function _doExportDownload(qs) {
 
 function _doExportAsync(format) {
   if (!_dataCatalogId) return;
+  var whereClause = _getRdbmsWhere();
+  if (whereClause === null) return;
   var from = $('#data-from').val();
   var to = $('#data-to').val();
   var payload = { format: format };
   if (from) payload.dateFrom = from + 'T00:00:00';
   if (to) payload.dateTo = to + 'T23:59:59';
+  if (whereClause) payload.where = whereClause;
 
   $('#ep-async-btn,#ep-download-btn').prop('disabled', true);
   $.ajax({

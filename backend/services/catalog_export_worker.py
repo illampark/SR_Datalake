@@ -345,6 +345,7 @@ def _select_row_iterator(db, catalog, req):
         if not rdbms:
             return None, None
         db_type = (rdbms.db_type or "").lower()
+        where_clause = (req.where_clause or "").strip()
 
         cols_holder = {"cols": None}
 
@@ -353,14 +354,14 @@ def _select_row_iterator(db, catalog, req):
                 stream = catalog_routes._rdbms_stream_mysql(
                     rdbms.host, rdbms.port, rdbms.database_name,
                     rdbms.username or "", rdbms.password or "",
-                    table_name, date_from, date_to, 0,
+                    table_name, date_from, date_to, 0, where_clause,
                 )
             else:
                 stream = catalog_routes._rdbms_stream_pg(
                     rdbms.host, rdbms.port, rdbms.database_name,
                     rdbms.username or "", rdbms.password or "",
                     rdbms.schema_name or "public",
-                    table_name, date_from, date_to, 0,
+                    table_name, date_from, date_to, 0, where_clause,
                 )
             for cols_or_none, row in stream:
                 if cols_or_none is not None:

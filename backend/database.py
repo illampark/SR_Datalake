@@ -43,6 +43,7 @@ def _migrate_add_columns():
         ("pipeline_step", "last_processed_at", "TIMESTAMP", "NULL"),
         # DatasetRequest — Tier 2 단일 카탈로그 비동기 export 연결
         ("dataset_request", "catalog_id", "INTEGER", "NULL"),
+        ("dataset_request", "where_clause", "TEXT", "''"),
     ]
     with engine.begin() as conn:
         for table, col, col_type, default in _additions:
