@@ -168,6 +168,17 @@ def _scheduler_loop(stop_event):
                     except Exception as e:
                         logger.error("Scheduled cold expiry failed: %s", e)
 
+            # Catalog async export retention — 매 시간 정각에 실행
+            now = datetime.now()
+            export_key = now.strftime("%Y-%m-%d %H")
+            if now.minute < 2 and _last_executed.get("catalog_export_retention") != export_key:
+                _last_executed["catalog_export_retention"] = export_key
+                try:
+                    from backend.services import catalog_export_worker
+                    catalog_export_worker.cleanup_expired_exports()
+                except Exception as e:
+                    logger.error("catalog_export retention cleanup failed: %s", e)
+
         except Exception as e:
             logger.error("Scheduler loop error: %s", e)
 

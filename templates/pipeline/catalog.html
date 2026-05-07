@@ -1543,6 +1543,8 @@ function _fmtSeconds(s) {
 }
 
 // 다운로드 견적 → 모달 → 시작
+var ASYNC_THRESHOLD_BYTES = 1 * 1024 * 1024 * 1024; // 1GB 초과 시 비동기 권장
+
 function exportData(format) {
   if (!_dataCatalogId) return;
   var from = $('#data-from').val();
@@ -1567,12 +1569,18 @@ function exportData(format) {
     '  <div id="ep-warning" style="display:none;margin-top:12px;padding:10px 12px;background:#fff3cd;border-left:3px solid #f0ad4e;font-size:12px;">' +
     '    <i class="fas fa-triangle-exclamation"></i> <span id="ep-warning-text"></span>' +
     '  </div>' +
+    '  <div style="margin-top:10px;text-align:right;">' +
+    '    <a href="javascript:void(0)" onclick="openExportHistory()" style="font-size:12px;">' +
+            '<i class="fas fa-clock-rotate-left"></i> ' + __t('page.catalog.export_history_link') + '</a>' +
+    '  </div>' +
     '</div>';
 
   var footer =
     '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-secondary" id="ep-async-btn" style="display:none;" onclick="_doExportAsync(\'' + format + '\')">' +
+      '<i class="fas fa-cloud-arrow-up"></i> ' + __t('page.catalog.export_start_async') + '</button>' +
     '<button class="btn btn-primary" id="ep-download-btn" disabled onclick="_doExportDownload(\'' + qs + '\')">' +
-    '<i class="fas fa-download"></i> ' + __t('page.catalog.export_start') + '</button>';
+      '<i class="fas fa-download"></i> ' + __t('page.catalog.export_start') + '</button>';
 
   openModal(__t('page.catalog.export_modal_title'), body, footer);
 
@@ -1589,16 +1597,26 @@ function exportData(format) {
     $('#ep-rows').text(Number(rows).toLocaleString() + __t('common.ea'));
     $('#ep-size').text(_fmtBytes(bytes));
     $('#ep-time').text(_fmtSeconds(d.estimatedSeconds));
+    var asyncRecommended = (d.recommendation === 'async-future') || (bytes >= ASYNC_THRESHOLD_BYTES);
     if (rows === 0) {
       $('#ep-warning').show();
       $('#ep-warning-text').text(__t('page.catalog.export_warn_zero'));
-    } else if (bytes >= 1 * 1024 * 1024 * 1024) {
+    } else if (asyncRecommended) {
       $('#ep-warning').show();
-      $('#ep-warning-text').text(__t('page.catalog.export_warn_large'));
+      $('#ep-warning-text').text(__t('page.catalog.export_warn_large_async'));
     }
     $('#export-preview-loading').hide();
     $('#export-preview-result').show();
-    $('#ep-download-btn').prop('disabled', rows === 0);
+
+    if (rows > 0 && asyncRecommended) {
+      // 비동기 권장 — 비동기 버튼을 primary 로 강조
+      $('#ep-async-btn').show().removeClass('btn-secondary').addClass('btn-primary');
+      $('#ep-download-btn').prop('disabled', false)
+        .removeClass('btn-primary').addClass('btn-outline');
+    } else {
+      $('#ep-async-btn').show();   // 항상 비동기 옵션 노출 (수동 선택 가능)
+      $('#ep-download-btn').prop('disabled', rows === 0);
+    }
   });
 }
 
@@ -1607,6 +1625,151 @@ function _doExportDownload(qs) {
   closeModal();
   // 새 창으로 띄워 페이지 이탈 없이 다운로드 — 큰 파일 받는 동안 다른 작업 가능
   window.location.href = API + '/' + _dataCatalogId + '/data/export?' + qs;
+}
+
+function _doExportAsync(format) {
+  if (!_dataCatalogId) return;
+  var from = $('#data-from').val();
+  var to = $('#data-to').val();
+  var payload = { format: format };
+  if (from) payload.dateFrom = from + 'T00:00:00';
+  if (to) payload.dateTo = to + 'T23:59:59';
+
+  $('#ep-async-btn,#ep-download-btn').prop('disabled', true);
+  $.ajax({
+    url: API + '/' + _dataCatalogId + '/data/export/async',
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify(payload),
+  }).done(function (r) {
+    if (!r || !r.success || !r.data || !r.data.requestId) {
+      alert(__t('page.catalog.export_async_failed') + ': ' + ((r && r.error && r.error.message) || ''));
+      $('#ep-async-btn,#ep-download-btn').prop('disabled', false);
+      return;
+    }
+    closeModal();
+    _openExportStatusModal(r.data.requestId);
+  }).fail(function (xhr) {
+    var msg = '';
+    try { msg = xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.message; } catch (e) {}
+    alert(__t('page.catalog.export_async_failed') + ': ' + (msg || xhr.statusText));
+    $('#ep-async-btn,#ep-download-btn').prop('disabled', false);
+  });
+}
+
+var _exportStatusTimer = null;
+
+function _openExportStatusModal(requestId) {
+  var body =
+    '<div id="exp-status-area" style="font-size:13px;">' +
+    '  <div class="text-muted"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.export_status_loading') + '</div>' +
+    '</div>';
+  var footer =
+    '<button class="btn btn-outline" onclick="_stopExportStatusPolling();closeModal()">' + __t('common.close') + '</button>' +
+    '<button class="btn btn-primary" id="exp-dl-btn" disabled onclick="_downloadExportRequest(\'' + requestId + '\')">' +
+      '<i class="fas fa-download"></i> ' + __t('page.catalog.export_download_when_ready') + '</button>';
+  openModal(__t('page.catalog.export_async_title'), body, footer);
+  _pollExportStatus(requestId);
+}
+
+function _pollExportStatus(requestId) {
+  _stopExportStatusPolling();
+  var tick = function () {
+    $.getJSON('/api/catalog/export/' + encodeURIComponent(requestId), function (r) {
+      if (!r || !r.success || !r.data) return;
+      var d = r.data;
+      var pct = d.progress || 0;
+      var statusKey = 'page.catalog.export_status_' + d.status;
+      var statusLabel = __t(statusKey);
+      if (statusLabel === statusKey) statusLabel = d.status;
+      var html =
+        '<table class="table-key-value" style="width:100%;font-size:13px;">' +
+        '  <tr><th style="width:35%;text-align:left;padding:6px 8px;">' + __t('page.catalog.export_request_id') + '</th><td class="mono">' + escHtml(d.requestId) + '</td></tr>' +
+        '  <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.export_status') + '</th><td><span class="badge-sm">' + escHtml(statusLabel) + '</span></td></tr>' +
+        '  <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.export_progress') + '</th><td>' +
+        '    <div style="background:#eee;border-radius:4px;height:14px;overflow:hidden;">' +
+        '      <div style="background:#4f8cff;height:100%;width:' + pct + '%;transition:width .4s;"></div>' +
+        '    </div>' +
+        '    <div style="font-size:11px;margin-top:3px;">' + pct + '%</div>' +
+        '  </td></tr>' +
+        '  <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.export_rows_written') + '</th><td class="mono">' + Number(d.totalRows || 0).toLocaleString() + '</td></tr>' +
+        (d.fileSizeBytes ? '  <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.export_file_size') + '</th><td class="mono">' + _fmtBytes(d.fileSizeBytes) + '</td></tr>' : '') +
+        (d.errorMessage ? '  <tr><th style="text-align:left;padding:6px 8px;">' + __t('common.error') + '</th><td class="text-danger" style="font-size:12px;word-break:break-word;">' + escHtml(d.errorMessage) + '</td></tr>' : '') +
+        '</table>';
+      $('#exp-status-area').html(html);
+      if (d.status === 'ready') {
+        $('#exp-dl-btn').prop('disabled', false);
+        _stopExportStatusPolling();
+      } else if (d.status === 'failed' || d.status === 'expired') {
+        $('#exp-dl-btn').prop('disabled', true);
+        _stopExportStatusPolling();
+      }
+    });
+  };
+  tick();
+  _exportStatusTimer = setInterval(tick, 3000);
+}
+
+function _stopExportStatusPolling() {
+  if (_exportStatusTimer) {
+    clearInterval(_exportStatusTimer);
+    _exportStatusTimer = null;
+  }
+}
+
+function _downloadExportRequest(requestId) {
+  window.location.href = '/api/catalog/export/' + encodeURIComponent(requestId) + '/download';
+}
+
+function openExportHistory() {
+  var body = '<div id="exp-hist-area" class="text-muted text-center" style="padding:18px;">' +
+             '<i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.export_status_loading') + '</div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>';
+  openModal(__t('page.catalog.export_history_title'), body, footer);
+  $.getJSON('/api/catalog/export?size=20', function (r) {
+    if (!r || !r.success || !r.data) {
+      $('#exp-hist-area').html('<div class="text-danger">' + __t('page.catalog.export_estimate_failed') + '</div>');
+      return;
+    }
+    var items = (r.data.items || []).filter(function (it) {
+      return !_dataCatalogId || it.catalogId === _dataCatalogId;
+    });
+    if (!items.length) {
+      $('#exp-hist-area').html('<div class="text-muted text-center" style="padding:18px;">' + __t('page.catalog.export_history_empty') + '</div>');
+      return;
+    }
+    var html = '<table class="table" style="width:100%;font-size:12px;">' +
+      '<thead><tr>' +
+      '<th>' + __t('page.catalog.export_request_id') + '</th>' +
+      '<th>' + __t('page.catalog.export_status') + '</th>' +
+      '<th>' + __t('page.catalog.export_rows_written') + '</th>' +
+      '<th>' + __t('page.catalog.export_file_size') + '</th>' +
+      '<th>' + __t('common.created_at') + '</th>' +
+      '<th></th>' +
+      '</tr></thead><tbody>';
+    items.forEach(function (it) {
+      var statusKey = 'page.catalog.export_status_' + it.status;
+      var statusLabel = __t(statusKey);
+      if (statusLabel === statusKey) statusLabel = it.status;
+      var actions = '';
+      if (it.status === 'ready') {
+        actions += '<button class="btn btn-sm btn-outline" onclick="_downloadExportRequest(\'' + it.requestId + '\')"><i class="fas fa-download"></i></button> ';
+      }
+      if (it.status === 'queued' || it.status === 'processing') {
+        actions += '<button class="btn btn-sm btn-outline" onclick="closeModal();_openExportStatusModal(\'' + it.requestId + '\')"><i class="fas fa-eye"></i></button>';
+      }
+      html += '<tr>' +
+        '<td class="mono">' + escHtml(it.requestId) + '</td>' +
+        '<td>' + escHtml(statusLabel) + '</td>' +
+        '<td class="mono">' + Number(it.totalRows || 0).toLocaleString() + '</td>' +
+        '<td class="mono">' + _fmtBytes(it.fileSizeBytes || 0) + '</td>' +
+        '<td>' + escHtml((it.createdAt || '').replace('T', ' ').slice(0, 19)) + '</td>' +
+        '<td>' + actions + '</td>' +
+      '</tr>';
+    });
+    html += '</tbody></table>';
+    $('#exp-hist-area').html(html);
+  });
 }
 
 function toggleDataApiInfo() {

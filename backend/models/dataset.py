@@ -17,6 +17,9 @@ class DatasetRequest(Base):
     description = Column(Text, default="")
     requested_by = Column(String(100), default="")                  # 요청자 username
 
+    # 단일 카탈로그 export — Tier 2 비동기 카탈로그 다운로드용. 기존 다중 태그 export 와는 배타적.
+    catalog_id = Column(Integer, nullable=True)
+
     # 조회 조건
     tags = Column(JSON, default=[])                                 # ["tag1", "tag2", ...]
     connector_types = Column(JSON, default=[])                      # ["opcua", "modbus", ...]
@@ -60,6 +63,7 @@ class DatasetRequest(Base):
             "name": self.name,
             "description": self.description,
             "requestedBy": self.requested_by,
+            "catalogId": self.catalog_id,
             "tags": self.tags or [],
             "connectorTypes": self.connector_types or [],
             "connectorIds": self.connector_ids or [],

@@ -1179,6 +1179,95 @@ def preview_catalog_export(cid):
         db.close()
 
 
+# ──────────────────────────────────────────────
+# CAT-010a: POST /api/catalog/<id>/data/export/async — 비동기 export 큐 등록
+# ──────────────────────────────────────────────
+@catalog_bp.route("/<int:cid>/data/export/async", methods=["POST"])
+def queue_catalog_export_async(cid):
+    """카탈로그 데이터를 백그라운드에서 추출 → MinIO 적재 → 다운로드 가능 상태로 전환.
+
+    body: {format: "csv"|"json", dateFrom?, dateTo?, name?, description?}
+    응답: 생성된 DatasetRequest 정보 (request_id 포함)
+    """
+    from backend.models.dataset import DatasetRequest
+    from backend.services import catalog_export_worker
+
+    db = _db()
+    try:
+        c = db.query(DataCatalog).get(cid)
+        if not c:
+            return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        if c.connector_type == "file":
+            return _err("파일 카탈로그는 비동기 export 대상이 아닙니다.", "USE_FILES_API")
+        if c.connector_type == "recipe":
+            return _err("레시피 카탈로그는 즉시 다운로드를 사용해주세요.", "USE_STREAM")
+
+        body = request.get_json(silent=True) or {}
+        fmt = (body.get("format") or "csv").lower()
+        if fmt not in ("csv", "json"):
+            return _err("format은 csv 또는 json만 지원합니다.", "VALIDATION")
+
+        date_from = None
+        date_to = None
+        if body.get("dateFrom"):
+            try:
+                date_from = datetime.fromisoformat(body["dateFrom"])
+            except ValueError:
+                return _err("dateFrom 형식이 올바르지 않습니다.", "VALIDATION")
+        if body.get("dateTo"):
+            try:
+                date_to = datetime.fromisoformat(body["dateTo"])
+            except ValueError:
+                return _err("dateTo 형식이 올바르지 않습니다.", "VALIDATION")
+
+        # request_id 생성: ds-YYYYMMDD-NNN
+        today_str = datetime.utcnow().strftime("%Y%m%d")
+        prefix = f"ds-{today_str}-"
+        last = (
+            db.query(DatasetRequest)
+            .filter(DatasetRequest.request_id.like(f"{prefix}%"))
+            .order_by(DatasetRequest.id.desc())
+            .first()
+        )
+        try:
+            seq = int(last.request_id.split("-")[-1]) + 1 if last else 1
+        except (ValueError, IndexError):
+            seq = 1
+        request_id = f"{prefix}{seq:03d}"
+
+        default_name = (
+            body.get("name")
+            or f"{c.title or c.name or 'catalog'} ({datetime.utcnow().strftime('%Y-%m-%d %H:%M')})"
+        )
+
+        ds = DatasetRequest(
+            request_id=request_id,
+            name=default_name[:200],
+            description=body.get("description", ""),
+            requested_by=session.get("username", "anonymous"),
+            catalog_id=cid,
+            date_from=date_from,
+            date_to=date_to,
+            format=fmt,
+            include_metadata=False,
+            compression="gzip",   # 항상 gzip — 객체 이름은 .csv.gz / .json.gz
+            status="queued",
+            progress=0,
+            storage_bucket=catalog_export_worker.EXPORT_BUCKET,
+        )
+        db.add(ds)
+        db.commit()
+        db.refresh(ds)
+
+        catalog_export_worker.enqueue(request_id)
+        return _ok(ds.to_dict()), 201
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
 def _preview_rdbms(db, c, date_from, date_to):
     """외부 RDBMS sink 견적 — count + sample."""
     from backend.models.storage import RdbmsConfig
@@ -2672,36 +2761,54 @@ def download_export_file(request_id):
                 download_name=os.path.basename(local_path),
             )
 
-        # MinIO에서 다운로드
-        from minio import Minio
+        # MinIO 에서 스트리밍 다운로드 (수 GB 파일도 메모리에 적재하지 않음)
         from minio.error import S3Error
         from backend.services.minio_client import get_minio_client
         client = get_minio_client(db)
 
         bucket = ds.storage_bucket or "sdl-files"
         try:
-            client.stat_object(bucket, ds.file_name)
+            stat = client.stat_object(bucket, ds.file_name)
         except S3Error:
             return _err(f"파일을 찾을 수 없습니다: {ds.file_name}", "NOT_FOUND", 404)
 
-        response = client.get_object(bucket, ds.file_name)
-        file_data = response.read()
-        response.close()
-        response.release_conn()
-
         download_name = os.path.basename(ds.file_name)
-        ext = download_name.rsplit(".", 1)[-1].lower() if "." in download_name else ""
-        content_type = "application/gzip" if "gz" in ext else (
-            "text/csv" if "csv" in ext else (
-                "application/json" if "json" in ext else "application/octet-stream"
-            )
-        )
+        download_lc = download_name.lower()
+        if download_lc.endswith(".csv.gz") or download_lc.endswith(".json.gz") or download_lc.endswith(".gz"):
+            content_type = "application/gzip"
+        elif download_lc.endswith(".csv"):
+            content_type = "text/csv"
+        elif download_lc.endswith(".json"):
+            content_type = "application/json"
+        else:
+            content_type = "application/octet-stream"
 
-        return send_file(
-            io.BytesIO(file_data),
+        def _stream():
+            resp = client.get_object(bucket, ds.file_name)
+            try:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                try:
+                    resp.close()
+                    resp.release_conn()
+                except Exception:
+                    pass
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        }
+        if stat and getattr(stat, "size", None):
+            headers["Content-Length"] = str(stat.size)
+        return Response(
+            stream_with_context(_stream()),
             mimetype=content_type,
-            as_attachment=True,
-            download_name=download_name,
+            headers=headers,
         )
     except Exception as e:
         return _err(f"다운로드 실패: {e}", "SERVER_ERROR", 500)

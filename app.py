@@ -107,6 +107,13 @@ alarm_engine.start()
 from backend.services.backup_scheduler import start_scheduler as start_backup_scheduler
 start_backup_scheduler()
 
+# Resume any interrupted catalog-export requests after process restart
+from backend.services import catalog_export_worker as _catalog_export_worker
+try:
+    _catalog_export_worker.resume_pending_on_startup()
+except Exception:
+    pass
+
 # Setup DB logging handler (backend.* → PostgreSQL)
 from backend.services.log_handler import setup_db_logging
 setup_db_logging()

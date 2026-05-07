@@ -41,6 +41,8 @@ def _migrate_add_columns():
         ("pipeline_step", "error_count", "INTEGER", "0"),
         ("pipeline_step", "dropped_count", "INTEGER", "0"),
         ("pipeline_step", "last_processed_at", "TIMESTAMP", "NULL"),
+        # DatasetRequest — Tier 2 단일 카탈로그 비동기 export 연결
+        ("dataset_request", "catalog_id", "INTEGER", "NULL"),
     ]
     with engine.begin() as conn:
         for table, col, col_type, default in _additions:
@@ -167,6 +169,7 @@ def init_db():
     import backend.models.backup  # noqa: F401
     import backend.models.gateway  # noqa: F401
     import backend.models.audit  # noqa: F401
+    import backend.models.dataset  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _migrate_add_columns()
     _migrate_sdm_to_sdl()
