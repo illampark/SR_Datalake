@@ -12,7 +12,7 @@
 
 {% block page_actions %}
 <button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').toggle();if($('#crossSearchPanel').is(':visible'))loadCrossSearch()"><i class="fas fa-search-plus"></i> {{ t('page.opcua.btn_cross_search') }}</button>
-<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-outline btn-sm" onclick="manualRefresh()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
 <button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.opcua.btn_add_connector') }}</button>
 {% endblock %}
 
@@ -160,7 +160,7 @@ var statusBadge = {
 
 /* ── Summary ── */
 function loadSummary() {
-  $.getJSON(API + '/summary', function(r) {
+  return $.getJSON(API + '/summary', function(r) {
     if (!r.success) return;
     var d = r.data;
     $('#stat-total').text(fmt(d.totalConnectors));
@@ -197,7 +197,7 @@ function loadConnectors() {
   var search = ($('#filter-search').val() || '').trim();
   if (search) params.q = search;
 
-  $.getJSON(API, params, function(r) {
+  return $.getJSON(API, params, function(r) {
     if (!r.success) return;
     var items = r.data;
     var $tb = $('#connector-tbody').empty();
@@ -478,6 +478,7 @@ function testConnectionDirect() {
 
 /* ── Refresh ── */
 function refreshAll() { loadSummary(); loadConnectors(); }
+function manualRefresh() { _refreshWithToast(loadSummary, loadConnectors); }
 
 /* ── Cross-Connector Tag Search (UC-1, UC-5) ── */
 function loadCrossSearch() {

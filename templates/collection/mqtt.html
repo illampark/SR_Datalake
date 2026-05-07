@@ -12,7 +12,7 @@
 
 {% block page_actions %}
 <button class="btn btn-outline btn-sm" onclick="$('#crossSearchPanel').toggle();if($('#crossSearchPanel').is(':visible'))loadCrossSearch()"><i class="fas fa-search-plus"></i> {{ t('page.opcua.btn_cross_search') }}</button>
-<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-outline btn-sm" onclick="manualRefresh()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
 <button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.mqtt.btn_add_connector') }}</button>
 {% endblock %}
 
@@ -144,7 +144,7 @@ function escAttr(s) { return (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#
 
 // ── Load Summary Stats ──
 function loadSummary() {
-  $.getJSON(API + '/summary', function(res) {
+  return $.getJSON(API + '/summary', function(res) {
     if (!res.success) return;
     var d = res.data;
     $('#stat-total').text(fmtNum(d.totalConnectors));
@@ -184,7 +184,7 @@ function loadConnectors() {
   var status = $('#filter-status').val();
   var url = API + '?page=' + _curPage + (status ? '&status=' + status : '');
 
-  $.getJSON(url, function(res) {
+  return $.getJSON(url, function(res) {
     if (!res.success) return;
     var rows = res.data;
     var $tbody = $('#connector-tbody');
@@ -489,6 +489,7 @@ function refreshAll() {
   loadSummary();
   loadConnectors();
 }
+function manualRefresh() { _refreshWithToast(loadSummary, loadConnectors); }
 
 /* ── Cross-Connector Tag Search (UC-1, UC-5) ── */
 function loadCrossSearch() {

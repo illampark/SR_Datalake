@@ -10,6 +10,7 @@
     "search": "Search",
     "cross_search_unavailable_hint": "Available once tag data is collected (auto-populates when realtime connectors run)",
     "refresh": "Refresh",
+    "refresh_done": "Refreshed",
     "loading": "Loading...",
     "no_data": "No data",
     "status": "Status",

@@ -10,6 +10,7 @@
     "search": "검색",
     "cross_search_unavailable_hint": "태그 데이터가 수집되어야 활용할 수 있습니다 (실시간 커넥터 운영 시 자동 채워짐)",
     "refresh": "새로고침",
+    "refresh_done": "새로고침 완료",
     "loading": "로딩 중...",
     "no_data": "데이터 없음",
     "status": "상태",

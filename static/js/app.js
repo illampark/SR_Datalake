@@ -96,6 +96,20 @@ function confirmAction(msg, callback) {
   $('#confirm-ok').on('click', function () { closeModal(); if (callback) callback(); });
 }
 
+// ── Manual-refresh helper: 사용자 trigger 새로고침 후 모든 AJAX 가 끝나면 토스트 표시.
+// 인자는 jqXHR 를 return 하는 loader 함수들. (자동 polling 등 다른 호출자는 사용 ✗)
+function _refreshWithToast() {
+  var jobs = Array.prototype.slice.call(arguments)
+    .map(function (fn) { return typeof fn === 'function' ? fn() : null; })
+    .filter(function (j) { return j && typeof j.always === 'function'; });
+  var done = function (ok) {
+    var msg = (typeof __t === 'function') ? __t('common.refresh_done') : 'Refreshed';
+    showToast(msg, ok ? 'success' : 'warning');
+  };
+  if (!jobs.length) { done(true); return; }
+  $.when.apply($, jobs).done(function () { done(true); }).fail(function () { done(false); });
+}
+
 // ── Toast notification ──
 function showToast(msg, type) {
   type = type || 'info';

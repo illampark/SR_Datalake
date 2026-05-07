@@ -10,7 +10,7 @@
 {% endblock %}
 
 {% block page_actions %}
-<button class="btn btn-outline btn-sm" onclick="loadList()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<button class="btn btn-outline btn-sm" onclick="manualRefresh()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
 <button class="btn btn-primary btn-sm" onclick="openAddModal()"><i class="fas fa-plus"></i> {{ t('page.import_collector.btn_add') }}</button>
 {% endblock %}
 
@@ -435,8 +435,10 @@ function renderPaging(total) {
   $('#connector-paging').html(html);
 }
 
+function manualRefresh() { _refreshWithToast(loadSummary, loadList); }
+
 function loadSummary(){
-  $.getJSON(API + '/summary', function(r){
+  return $.getJSON(API + '/summary', function(r){
     if(!r.success || !r.data) return;
     $('#stat-total').text(r.data.total);
     $('#stat-completed').text(r.data.completed);
@@ -452,7 +454,7 @@ function loadList(){
   var search = ($('#filter-search').val() || '').trim();
   if (search) params.q = search;
   loadSummary();
-  $.getJSON(API, params, function(r){
+  return $.getJSON(API, params, function(r){
     if(!r.success)return;
     var items=r.data, $tb=$('#import-tbody').empty();
     var total = (r.meta && typeof r.meta.total === 'number') ? r.meta.total : items.length;
