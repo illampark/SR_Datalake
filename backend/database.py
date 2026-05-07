@@ -170,9 +170,24 @@ def init_db():
     import backend.models.gateway  # noqa: F401
     import backend.models.audit  # noqa: F401
     import backend.models.dataset  # noqa: F401
-    Base.metadata.create_all(bind=engine)
-    _migrate_add_columns()
-    _migrate_sdm_to_sdl()
+
+    # 멀티 워커 동시 부팅 시 CREATE TABLE / ALTER TABLE 가 race 하지 않도록
+    # PostgreSQL advisory lock 으로 직렬화. 비-PG 백엔드면 lock 없이 진행.
+    # key 0x53444C5F494E4954 = 'SDL_INIT'
+    is_pg = engine.dialect.name == "postgresql"
+    if is_pg:
+        with engine.begin() as conn:
+            conn.execute(text("SELECT pg_advisory_lock(0x53444C5F494E4954)"))
+            try:
+                Base.metadata.create_all(bind=engine)
+                _migrate_add_columns()
+                _migrate_sdm_to_sdl()
+            finally:
+                conn.execute(text("SELECT pg_advisory_unlock(0x53444C5F494E4954)"))
+    else:
+        Base.metadata.create_all(bind=engine)
+        _migrate_add_columns()
+        _migrate_sdm_to_sdl()
 
     # 기존 커넥터에 대한 커넥터 레벨 카탈로그 일괄 생성
     try:
