@@ -1528,14 +1528,85 @@ function renderDataPagination(total, page) {
   }
 }
 
+function _fmtBytes(n) {
+  if (n == null || n <= 0) return '-';
+  var u = ['B','KB','MB','GB','TB'], i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i === 0 ? 0 : 1) + ' ' + u[i];
+}
+
+function _fmtSeconds(s) {
+  if (!s || s < 1) return '< 1초';
+  if (s < 60) return s + '초';
+  if (s < 3600) return Math.round(s / 60) + '분';
+  return (s / 3600).toFixed(1) + '시간';
+}
+
+// 다운로드 견적 → 모달 → 시작
 function exportData(format) {
   if (!_dataCatalogId) return;
-  var params = 'format=' + format;
   var from = $('#data-from').val();
   var to = $('#data-to').val();
-  if (from) params += '&from=' + from;
-  if (to) params += '&to=' + to;
-  window.location.href = API + '/' + _dataCatalogId + '/data/export?' + params;
+  var qp = ['format=' + format];
+  if (from) qp.push('from=' + from);
+  if (to) qp.push('to=' + to);
+  var qs = qp.join('&');
+  var previewQs = qp.filter(function (p) { return !p.startsWith('format='); }).join('&');
+
+  var body =
+    '<div id="export-preview-loading" class="text-center text-muted" style="padding:24px;">' +
+    '  <i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.export_estimating') +
+    '</div>' +
+    '<div id="export-preview-result" style="display:none;">' +
+    '  <table class="table-key-value" style="width:100%;font-size:13px;">' +
+    '    <tr><th style="width:35%;text-align:left;padding:6px 8px;">' + __t('page.catalog.export_estimated_rows') + '</th><td id="ep-rows" class="mono"></td></tr>' +
+    '    <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.export_estimated_size') + '</th><td id="ep-size" class="mono"></td></tr>' +
+    '    <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.export_estimated_time') + '</th><td id="ep-time" class="mono"></td></tr>' +
+    '    <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.export_format') + '</th><td class="mono">' + format.toUpperCase() + '</td></tr>' +
+    '  </table>' +
+    '  <div id="ep-warning" style="display:none;margin-top:12px;padding:10px 12px;background:#fff3cd;border-left:3px solid #f0ad4e;font-size:12px;">' +
+    '    <i class="fas fa-triangle-exclamation"></i> <span id="ep-warning-text"></span>' +
+    '  </div>' +
+    '</div>';
+
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" id="ep-download-btn" disabled onclick="_doExportDownload(\'' + qs + '\')">' +
+    '<i class="fas fa-download"></i> ' + __t('page.catalog.export_start') + '</button>';
+
+  openModal(__t('page.catalog.export_modal_title'), body, footer);
+
+  // 견적 요청
+  $.getJSON(API + '/' + _dataCatalogId + '/data/export/preview' +
+            (previewQs ? '?' + previewQs : ''), function (r) {
+    if (!r || !r.success || !r.data) {
+      $('#export-preview-loading').html('<div class="text-danger">' + __t('page.catalog.export_estimate_failed') + '</div>');
+      return;
+    }
+    var d = r.data;
+    var rows = d.estimatedRows || 0;
+    var bytes = d.estimatedBytes || 0;
+    $('#ep-rows').text(Number(rows).toLocaleString() + __t('common.ea'));
+    $('#ep-size').text(_fmtBytes(bytes));
+    $('#ep-time').text(_fmtSeconds(d.estimatedSeconds));
+    if (rows === 0) {
+      $('#ep-warning').show();
+      $('#ep-warning-text').text(__t('page.catalog.export_warn_zero'));
+    } else if (bytes >= 1 * 1024 * 1024 * 1024) {
+      $('#ep-warning').show();
+      $('#ep-warning-text').text(__t('page.catalog.export_warn_large'));
+    }
+    $('#export-preview-loading').hide();
+    $('#export-preview-result').show();
+    $('#ep-download-btn').prop('disabled', rows === 0);
+  });
+}
+
+function _doExportDownload(qs) {
+  if (!_dataCatalogId) return;
+  closeModal();
+  // 새 창으로 띄워 페이지 이탈 없이 다운로드 — 큰 파일 받는 동안 다른 작업 가능
+  window.location.href = API + '/' + _dataCatalogId + '/data/export?' + qs;
 }
 
 function toggleDataApiInfo() {

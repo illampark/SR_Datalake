@@ -6,13 +6,103 @@ import json
 import os
 from datetime import datetime, timedelta
 
-from flask import Blueprint, request, jsonify, Response, send_file, session
+from flask import Blueprint, request, jsonify, Response, send_file, session, stream_with_context
 from sqlalchemy import func
 
 from backend.database import SessionLocal
 from backend.models.catalog import DataCatalog, CatalogSearchTag, DataRecipe, AggregatedData
 from backend.models.storage import TimeSeriesData
 from backend.services.system_settings import get_default_page_size
+
+# 대용량 export — 메모리 적재 없이 chunked HTTP 응답으로 흘려보냄.
+# yield_per / server-side cursor 의 fetch 단위. 너무 작으면 RTT 비용, 너무 크면 메모리 ↑.
+_EXPORT_CHUNK_ROWS = 10_000
+
+# 안전 상한 — 사용자가 모르고 1억 행 dump 를 trigger 했을 때 보호용. 0=무제한.
+# 운영 중 더 큰 값이 필요하면 ?limit=N 으로 오버라이드 가능.
+_EXPORT_SAFETY_CAP = 0
+
+
+def _utf8_bom():
+    return "﻿"  # excel 호환
+
+
+def _stream_csv_response(row_generator, fname_prefix):
+    """row_generator: yield 하는 각 항목은 이미 직렬화된 CSV 라인(들)."""
+    return Response(
+        stream_with_context(row_generator),
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{fname_prefix}_'
+                f'{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.csv"'
+            ),
+            # nginx buffering off — chunked 응답을 즉시 흘려보냄
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+def _stream_json_response(record_generator, fname_prefix):
+    """JSON array 를 line 단위 객체로 streaming 출력 (NDJSON 가까움)."""
+    def _gen():
+        yield "["
+        first = True
+        for rec in record_generator:
+            if first:
+                first = False
+            else:
+                yield ","
+            yield json.dumps(rec, ensure_ascii=False, default=str)
+        yield "]"
+    return Response(
+        stream_with_context(_gen()),
+        mimetype="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{fname_prefix}_'
+                f'{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.json"'
+            ),
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
+
+
+def _csv_chunk_writer(rows, columns):
+    """rows: list[dict] or list[list], columns: list[str]. 한 chunk 의 CSV 텍스트 반환."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    for row in rows:
+        if isinstance(row, dict):
+            w.writerow([_csv_safe(row.get(col)) for col in columns])
+        else:
+            w.writerow([_csv_safe(v) for v in row])
+    return buf.getvalue()
+
+
+def _csv_safe(v):
+    """CSV 셀 한 개 — datetime → ISO, None → 빈 문자열."""
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.isoformat()
+    return v
+
+
+def _avg_row_bytes(sample_rows, columns):
+    """샘플 row 기준 평균 row 바이트 추정. 빈 샘플이면 200 가정."""
+    if not sample_rows:
+        return 200
+    chunk = _csv_chunk_writer(sample_rows, columns).encode("utf-8")
+    return max(50, int(len(chunk) / max(1, len(sample_rows))))
+
+
+def _estimate_seconds(row_count, avg_bytes):
+    """경험적 추정 — 100MB/s 처리 가정 + 최소 1초."""
+    total_mb = (row_count * avg_bytes) / (1024 * 1024)
+    return max(1, int(total_mb / 100))
 
 catalog_bp = Blueprint("catalog", __name__, url_prefix="/api/catalog")
 
@@ -1021,6 +1111,114 @@ def query_catalog_data(cid):
 
 
 # ──────────────────────────────────────────────
+# CAT-010p: GET /api/catalog/<id>/data/export/preview — 사전 견적
+# ──────────────────────────────────────────────
+@catalog_bp.route("/<int:cid>/data/export/preview", methods=["GET"])
+def preview_catalog_export(cid):
+    """다운로드 전 견적 (행수, 예상 바이트, 예상 시간) 반환.
+
+    실제 export 와 동일한 필터를 받아 COUNT(*) + 샘플 100건으로 평균 row 크기를
+    계산. 외부 RDBMS 의 경우 동일 쿼리를 한 번 실행하므로 비용 ↑ 가능.
+    """
+    db = _db()
+    try:
+        c = db.query(DataCatalog).get(cid)
+        if not c:
+            return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        if c.connector_type == "file":
+            return _err("파일 카탈로그는 견적 대상이 아닙니다.", "USE_FILES_API")
+
+        date_from = request.args.get("from", "")
+        date_to = request.args.get("to", "")
+
+        # 파이프라인 RDBMS sink — 외부 DB 카운트 + 샘플
+        if c.connector_type == "pipeline" and c.sink_type == "internal_rdbms_sink":
+            return _preview_rdbms(db, c, date_from, date_to)
+
+        # 파이프라인 TSDB sink — TimeSeriesData 카운트
+        if c.connector_type == "pipeline" and c.sink_type == "internal_tsdb_sink":
+            q = _build_pipeline_tsdb_query(db, c, date_from, date_to)
+            sample = q.limit(100).all()
+            row_count = q.with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+            cols = ["timestamp", "measurement", "tag_name", "value", "value_str",
+                    "data_type", "unit", "quality"]
+            sample_dicts = [_pipe_tsdb_row_to_dict(r) for r in sample]
+            avg = _avg_row_bytes(sample_dicts, cols)
+            est_bytes = row_count * avg
+            return _ok({
+                "estimatedRows": row_count,
+                "estimatedBytes": est_bytes,
+                "avgRowBytes": avg,
+                "estimatedSeconds": _estimate_seconds(row_count, avg),
+                "recommendation": "stream" if est_bytes < 1024**3 else "async-future",
+            })
+
+        if c.connector_type == "recipe":
+            return _ok({
+                "estimatedRows": 0, "estimatedBytes": 0,
+                "avgRowBytes": 0, "estimatedSeconds": 1,
+                "recommendation": "stream",
+                "note": "recipe data — 실제 다운로드 시 즉시 완료",
+            })
+
+        # 기본: TimeSeriesData
+        q, columns, is_connector_level = _build_timeseries_query(db, c, date_from, date_to)
+        sample = q.limit(100).all()
+        row_count = q.with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+        sample_dicts = [_ts_row_to_dict(r, is_connector_level) for r in sample]
+        avg = _avg_row_bytes(sample_dicts, columns)
+        est_bytes = row_count * avg
+        return _ok({
+            "estimatedRows": row_count,
+            "estimatedBytes": est_bytes,
+            "avgRowBytes": avg,
+            "estimatedSeconds": _estimate_seconds(row_count, avg),
+            "recommendation": "stream" if est_bytes < 1024**3 else "async-future",
+        })
+    finally:
+        db.close()
+
+
+def _preview_rdbms(db, c, date_from, date_to):
+    """외부 RDBMS sink 견적 — count + sample."""
+    from backend.models.storage import RdbmsConfig
+    cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_rdbms_sink")
+    rdbms_id = cfg.get("rdbmsId", 0)
+    table_name = cfg.get("tableName", "")
+    if not rdbms_id or not table_name:
+        return _err("RDBMS 싱크 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
+    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    if not rdbms:
+        return _err("RDBMS 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
+
+    db_type = (rdbms.db_type or "").lower()
+    try:
+        if "mysql" in db_type or "maria" in db_type:
+            cols, items, total = _rdbms_read_mysql(
+                rdbms.host, rdbms.port, rdbms.database_name,
+                rdbms.username or "", rdbms.password or "",
+                table_name, 1, 100, date_from, date_to)
+        else:
+            cols, items, total = _rdbms_read_pg(
+                rdbms.host, rdbms.port, rdbms.database_name,
+                rdbms.username or "", rdbms.password or "",
+                rdbms.schema_name or "public",
+                table_name, 1, 100, date_from, date_to)
+    except Exception as e:
+        return _err(f"외부 DB 견적 실패: {e}", "RDBMS_ERROR")
+
+    avg = _avg_row_bytes(items, cols)
+    est_bytes = total * avg
+    return _ok({
+        "estimatedRows": total,
+        "estimatedBytes": est_bytes,
+        "avgRowBytes": avg,
+        "estimatedSeconds": _estimate_seconds(total, avg),
+        "recommendation": "stream" if est_bytes < 1024**3 else "async-future",
+    })
+
+
+# ──────────────────────────────────────────────
 # CAT-010: GET /api/catalog/<id>/data/export — CSV 내보내기
 # ──────────────────────────────────────────────
 @catalog_bp.route("/<int:cid>/data/export", methods=["GET"])
@@ -1050,80 +1248,98 @@ def export_catalog_data(cid):
         if c.connector_type == "recipe":
             return _export_recipe_data(db, c, fmt)
 
-        is_connector_level = not c.tag_name
-        q = db.query(TimeSeriesData).filter(
-            TimeSeriesData.connector_type == c.connector_type,
-            TimeSeriesData.connector_id == c.connector_id,
-        )
-        if not is_connector_level:
-            q = q.filter(TimeSeriesData.tag_name == c.tag_name)
-        if date_from:
-            try:
-                q = q.filter(TimeSeriesData.timestamp >= datetime.fromisoformat(date_from))
-            except ValueError:
-                pass
-        if date_to:
-            try:
-                dt_to = datetime.fromisoformat(date_to)
-                if dt_to.hour == 0 and dt_to.minute == 0:
-                    dt_to += timedelta(days=1)
-                q = q.filter(TimeSeriesData.timestamp < dt_to)
-            except ValueError:
-                pass
-
-        rows = q.order_by(TimeSeriesData.timestamp.asc()).limit(50000).all()
-
-        fname_prefix = c.tag_name or f"{c.connector_type}_{c.connector_id}"
-        if fmt == "json":
-            data = [r.to_dict() for r in rows]
-            resp = jsonify(data)
-            resp.headers["Content-Disposition"] = (
-                f'attachment; filename="{fname_prefix}_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.json"'
-            )
-            return resp
-
-        # CSV (default)
-        output = io.StringIO()
-        writer = csv.writer(output)
-        if is_connector_level:
-            writer.writerow(["timestamp", "tag_name", "value", "value_str", "data_type", "unit", "quality", "measurement"])
-        else:
-            writer.writerow(["timestamp", "value", "value_str", "data_type", "unit", "quality", "measurement"])
-        for r in rows:
-            row = [r.timestamp.isoformat() if r.timestamp else ""]
-            if is_connector_level:
-                row.append(r.tag_name or "")
-            row.extend([
-                r.value if r.value is not None else "",
-                r.value_str or "",
-                r.data_type or "",
-                r.unit or "",
-                r.quality if r.quality is not None else "",
-                r.measurement or "",
-            ])
-            writer.writerow(row)
-
-        csv_bytes = output.getvalue().encode("utf-8-sig")
-        return Response(
-            csv_bytes,
-            mimetype="text/csv; charset=utf-8",
-            headers={
-                "Content-Disposition": f'attachment; filename="{fname_prefix}_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.csv"',
-            },
-        )
+        # 기본: TimeSeriesData 스트리밍 export
+        try:
+            limit = int(request.args.get("limit", "0") or 0)
+        except ValueError:
+            limit = 0
+        return _stream_timeseries_export(db, c, date_from, date_to, fmt, limit)
     finally:
         db.close()
+
+
+def _build_timeseries_query(db, c, date_from, date_to):
+    """TimeSeriesData 카탈로그용 쿼리 + (header_columns, row_serializer) 반환."""
+    is_connector_level = not c.tag_name
+    q = db.query(TimeSeriesData).filter(
+        TimeSeriesData.connector_type == c.connector_type,
+        TimeSeriesData.connector_id == c.connector_id,
+    )
+    if not is_connector_level:
+        q = q.filter(TimeSeriesData.tag_name == c.tag_name)
+    if date_from:
+        try:
+            q = q.filter(TimeSeriesData.timestamp >= datetime.fromisoformat(date_from))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.fromisoformat(date_to)
+            if dt_to.hour == 0 and dt_to.minute == 0:
+                dt_to += timedelta(days=1)
+            q = q.filter(TimeSeriesData.timestamp < dt_to)
+        except ValueError:
+            pass
+    q = q.order_by(TimeSeriesData.timestamp.asc())
+    if is_connector_level:
+        columns = ["timestamp", "tag_name", "value", "value_str",
+                   "data_type", "unit", "quality", "measurement"]
+    else:
+        columns = ["timestamp", "value", "value_str",
+                   "data_type", "unit", "quality", "measurement"]
+    return q, columns, is_connector_level
+
+
+def _ts_row_to_dict(r, is_connector_level):
+    d = {
+        "timestamp": r.timestamp.isoformat() if r.timestamp else "",
+        "value": r.value if r.value is not None else "",
+        "value_str": r.value_str or "",
+        "data_type": r.data_type or "",
+        "unit": r.unit or "",
+        "quality": r.quality if r.quality is not None else "",
+        "measurement": r.measurement or "",
+    }
+    if is_connector_level:
+        d["tag_name"] = r.tag_name or ""
+    return d
+
+
+def _stream_timeseries_export(db, c, date_from, date_to, fmt, limit):
+    q, columns, is_connector_level = _build_timeseries_query(db, c, date_from, date_to)
+    if limit and limit > 0:
+        q = q.limit(limit)
+    elif _EXPORT_SAFETY_CAP > 0:
+        q = q.limit(_EXPORT_SAFETY_CAP)
+
+    fname_prefix = c.tag_name or f"{c.connector_type}_{c.connector_id}"
+
+    if fmt == "json":
+        def _json_gen():
+            for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+                yield _ts_row_to_dict(r, is_connector_level)
+        return _stream_json_response(_json_gen(), fname_prefix)
+
+    def _csv_gen():
+        # BOM + header
+        yield _utf8_bom() + ",".join(columns) + "\n"
+        batch = []
+        for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+            batch.append(_ts_row_to_dict(r, is_connector_level))
+            if len(batch) >= _EXPORT_CHUNK_ROWS:
+                yield _csv_chunk_writer(batch, columns)
+                batch = []
+        if batch:
+            yield _csv_chunk_writer(batch, columns)
+    return _stream_csv_response(_csv_gen(), fname_prefix)
 
 
 # ──────────────────────────────────────────────
 # 파이프라인 싱크 내보내기 헬퍼
 # ──────────────────────────────────────────────
 
-def _export_pipeline_tsdb(db, c, date_from, date_to, fmt):
-    """TSDB 싱크 데이터 CSV/JSON 내보내기"""
-    q = db.query(TimeSeriesData).filter(
-        TimeSeriesData.pipeline_id == c.pipeline_id,
-    )
+def _build_pipeline_tsdb_query(db, c, date_from, date_to):
+    q = db.query(TimeSeriesData).filter(TimeSeriesData.pipeline_id == c.pipeline_id)
     if c.tag_name:
         q = q.filter(TimeSeriesData.measurement == c.tag_name)
     if date_from:
@@ -1139,39 +1355,202 @@ def _export_pipeline_tsdb(db, c, date_from, date_to, fmt):
             q = q.filter(TimeSeriesData.timestamp < dt_to)
         except ValueError:
             pass
+    return q.order_by(TimeSeriesData.timestamp.asc())
 
-    rows = q.order_by(TimeSeriesData.timestamp.asc()).limit(50000).all()
+
+def _pipe_tsdb_row_to_dict(r):
+    return {
+        "timestamp": r.timestamp.isoformat() if r.timestamp else "",
+        "measurement": r.measurement or "",
+        "tag_name": r.tag_name or "",
+        "value": r.value if r.value is not None else "",
+        "value_str": r.value_str or "",
+        "data_type": r.data_type or "",
+        "unit": r.unit or "",
+        "quality": r.quality if r.quality is not None else "",
+    }
+
+
+def _export_pipeline_tsdb(db, c, date_from, date_to, fmt):
+    """TSDB 싱크 데이터 CSV/JSON 내보내기 (스트리밍)."""
+    try:
+        limit = int(request.args.get("limit", "0") or 0)
+    except ValueError:
+        limit = 0
+
+    q = _build_pipeline_tsdb_query(db, c, date_from, date_to)
+    if limit and limit > 0:
+        q = q.limit(limit)
+    elif _EXPORT_SAFETY_CAP > 0:
+        q = q.limit(_EXPORT_SAFETY_CAP)
+
+    columns = ["timestamp", "measurement", "tag_name", "value", "value_str",
+               "data_type", "unit", "quality"]
     fname_prefix = f"pipeline_{c.pipeline_id}_{c.tag_name or 'all'}"
 
     if fmt == "json":
-        data = [r.to_dict() for r in rows]
-        resp = jsonify(data)
-        resp.headers["Content-Disposition"] = (
-            f'attachment; filename="{fname_prefix}_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.json"'
-        )
-        return resp
+        def _json_gen():
+            for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+                yield _pipe_tsdb_row_to_dict(r)
+        return _stream_json_response(_json_gen(), fname_prefix)
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["timestamp", "measurement", "tag_name", "value", "value_str", "data_type", "unit", "quality"])
-    for r in rows:
-        writer.writerow([
-            r.timestamp.isoformat() if r.timestamp else "",
-            r.measurement or "", r.tag_name or "",
-            r.value if r.value is not None else "",
-            r.value_str or "", r.data_type or "",
-            r.unit or "", r.quality if r.quality is not None else "",
-        ])
+    def _csv_gen():
+        yield _utf8_bom() + ",".join(columns) + "\n"
+        batch = []
+        for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+            batch.append(_pipe_tsdb_row_to_dict(r))
+            if len(batch) >= _EXPORT_CHUNK_ROWS:
+                yield _csv_chunk_writer(batch, columns)
+                batch = []
+        if batch:
+            yield _csv_chunk_writer(batch, columns)
+    return _stream_csv_response(_csv_gen(), fname_prefix)
 
-    csv_bytes = output.getvalue().encode("utf-8-sig")
-    return Response(
-        csv_bytes, mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{fname_prefix}_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.csv"'},
+
+def _rdbms_stream_pg(host, port, database, username, password, schema,
+                      table_name, date_from, date_to, limit=0):
+    """PostgreSQL named server-side cursor 로 row 스트리밍.
+
+    yield (columns: list[str], None) 처음 1회 → 이후 yield (None, row_dict) 반복.
+    """
+    import psycopg2
+    import psycopg2.extras
+    conn = psycopg2.connect(
+        host=host, port=port, dbname=database or "postgres",
+        user=username, password=password,
+        connect_timeout=10,
     )
+    try:
+        # 날짜 컬럼 자동 감지
+        meta_cur = conn.cursor()
+        date_col = None
+        try:
+            meta_cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+                AND column_name IN ('collected_at','imported_at','created_at','timestamp')
+                ORDER BY CASE column_name
+                    WHEN 'collected_at' THEN 1 WHEN 'imported_at' THEN 2
+                    WHEN 'timestamp' THEN 3 WHEN 'created_at' THEN 4
+                END LIMIT 1
+            """, (schema or "public", table_name))
+            row = meta_cur.fetchone()
+            if row:
+                date_col = row[0]
+        finally:
+            meta_cur.close()
+
+        full_table = f'"{schema}"."{table_name}"' if schema else f'"{table_name}"'
+        conditions = []
+        params = []
+        if date_col and date_from:
+            conditions.append(f'"{date_col}" >= %s')
+            params.append(date_from)
+        if date_col and date_to:
+            try:
+                dt = datetime.fromisoformat(date_to)
+                if dt.hour == 0 and dt.minute == 0:
+                    dt += timedelta(days=1)
+                conditions.append(f'"{date_col}" < %s')
+                params.append(dt.isoformat())
+            except ValueError:
+                pass
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        sql = f'SELECT * FROM {full_table}{where}'
+        if date_col:
+            sql += f' ORDER BY "{date_col}" ASC'
+        if limit and limit > 0:
+            sql += f' LIMIT {int(limit)}'
+
+        # named cursor → server-side, 메모리 안 적재
+        ss_cur = conn.cursor(name="sdl_export_ss",
+                              cursor_factory=psycopg2.extras.RealDictCursor)
+        ss_cur.itersize = _EXPORT_CHUNK_ROWS
+        try:
+            ss_cur.execute(sql, params)
+            columns_emitted = False
+            for r in ss_cur:
+                if not columns_emitted:
+                    yield (list(r.keys()), None)
+                    columns_emitted = True
+                yield (None, dict(r))
+            if not columns_emitted:
+                # 빈 결과 — 컬럼은 information_schema 에서 별도 조회
+                cols_cur = conn.cursor()
+                try:
+                    cols_cur.execute("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = %s
+                        ORDER BY ordinal_position
+                    """, (schema or "public", table_name))
+                    cols = [r[0] for r in cols_cur.fetchall()]
+                finally:
+                    cols_cur.close()
+                yield (cols, None)
+        finally:
+            ss_cur.close()
+    finally:
+        conn.close()
+
+
+def _rdbms_stream_mysql(host, port, database, username, password,
+                         table_name, date_from, date_to, limit=0):
+    """MySQL/MariaDB SSCursor 로 row 스트리밍."""
+    import pymysql
+    import pymysql.cursors
+    conn = pymysql.connect(
+        host=host, port=port, database=database,
+        user=username, password=password,
+        charset="utf8mb4", connect_timeout=10,
+        cursorclass=pymysql.cursors.SSDictCursor,  # server-side
+    )
+    try:
+        # 날짜 필터 — collected_at 가 있을 때만
+        where = ""
+        params = []
+        if date_from or date_to:
+            conds = []
+            if date_from:
+                conds.append("collected_at >= %s")
+                params.append(date_from)
+            if date_to:
+                try:
+                    dt = datetime.fromisoformat(date_to)
+                    if dt.hour == 0 and dt.minute == 0:
+                        dt += timedelta(days=1)
+                    conds.append("collected_at < %s")
+                    params.append(dt.isoformat())
+                except ValueError:
+                    pass
+            if conds:
+                where = " WHERE " + " AND ".join(conds)
+        sql = f"SELECT * FROM `{table_name}`{where}"
+        if limit and limit > 0:
+            sql += f" LIMIT {int(limit)}"
+
+        cur = conn.cursor()
+        try:
+            cur.execute(sql, params)
+            columns_emitted = False
+            while True:
+                rows = cur.fetchmany(_EXPORT_CHUNK_ROWS)
+                if not rows:
+                    break
+                if not columns_emitted:
+                    yield (list(rows[0].keys()), None)
+                    columns_emitted = True
+                for r in rows:
+                    yield (None, dict(r))
+            if not columns_emitted:
+                yield ([], None)
+        finally:
+            cur.close()
+    finally:
+        conn.close()
 
 
 def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
-    """RDBMS 싱크 데이터 CSV/JSON 내보내기"""
+    """RDBMS 싱크 데이터 CSV/JSON 내보내기 (server-side cursor 스트리밍)."""
     from backend.models.storage import RdbmsConfig
     import logging
     _log = logging.getLogger(__name__)
@@ -1187,44 +1566,68 @@ def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
     if not rdbms:
         return _err("RDBMS 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
 
-    db_type = (rdbms.db_type or "").lower()
     try:
-        # 전체 데이터 조회 (최대 50000건)
+        limit = int(request.args.get("limit", "0") or 0)
+    except ValueError:
+        limit = 0
+    if not limit and _EXPORT_SAFETY_CAP > 0:
+        limit = _EXPORT_SAFETY_CAP
+
+    db_type = (rdbms.db_type or "").lower()
+    fname_prefix = f"pipeline_{c.pipeline_id}_{table_name}"
+
+    def _row_iter():
         if "mysql" in db_type or "maria" in db_type:
-            columns, items, _ = _rdbms_read_mysql(
+            yield from _rdbms_stream_mysql(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
-                table_name, 1, 50000, date_from, date_to)
+                table_name, date_from, date_to, limit,
+            )
         else:
-            columns, items, _ = _rdbms_read_pg(
+            yield from _rdbms_stream_pg(
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
                 rdbms.schema_name or "public",
-                table_name, 1, 50000, date_from, date_to)
-    except Exception as e:
-        _log.error("RDBMS 싱크 내보내기 실패: %s", e)
-        return _err("외부 DB 연결/조회에 실패했습니다.", "RDBMS_ERROR")
-
-    fname_prefix = f"pipeline_{c.pipeline_id}_{table_name}"
+                table_name, date_from, date_to, limit,
+            )
 
     if fmt == "json":
-        resp = jsonify(items)
-        resp.headers["Content-Disposition"] = (
-            f'attachment; filename="{fname_prefix}_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.json"'
-        )
-        return resp
+        def _json_gen():
+            try:
+                cols = []
+                for cols_or_none, row in _row_iter():
+                    if cols_or_none is not None:
+                        cols = cols_or_none
+                        continue
+                    yield row
+            except Exception as e:
+                _log.error("RDBMS 싱크 JSON 스트리밍 실패: %s", e)
+        return _stream_json_response(_json_gen(), fname_prefix)
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(columns)
-    for item in items:
-        writer.writerow([str(item.get(col, "")) if item.get(col) is not None else "" for col in columns])
+    def _csv_gen():
+        try:
+            cols = []
+            header_written = False
+            batch = []
+            for cols_or_none, row in _row_iter():
+                if cols_or_none is not None:
+                    cols = cols_or_none
+                    if not header_written:
+                        yield _utf8_bom() + ",".join([str(x) for x in cols]) + "\n"
+                        header_written = True
+                    continue
+                batch.append(row)
+                if len(batch) >= _EXPORT_CHUNK_ROWS:
+                    yield _csv_chunk_writer(batch, cols)
+                    batch = []
+            if not header_written and cols:
+                yield _utf8_bom() + ",".join([str(x) for x in cols]) + "\n"
+            if batch:
+                yield _csv_chunk_writer(batch, cols)
+        except Exception as e:
+            _log.error("RDBMS 싱크 CSV 스트리밍 실패: %s", e)
 
-    csv_bytes = output.getvalue().encode("utf-8-sig")
-    return Response(
-        csv_bytes, mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{fname_prefix}_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}.csv"'},
-    )
+    return _stream_csv_response(_csv_gen(), fname_prefix)
 
 
 def _export_recipe_data(db, c, fmt):
