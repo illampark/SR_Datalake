@@ -118,6 +118,26 @@ services:
     networks:
       - sdl-net
 
+  # ── Modbus TCP simulator (데모/검증용 — 실 디바이스 없이 폴링 테스트) ──
+  # 내부 네트워크 전용 (host port 매핑 없음). sdl-app 에서 modbus-sim:5020 으로 접속.
+  modbus-sim:
+    image: sdl-app:latest
+    container_name: modbus-sim
+    restart: unless-stopped
+    entrypoint: ["python3", "-u", "/app/tools/simulators/modbus_sim.py"]
+    networks:
+      - sdl-net
+
+  # ── OPC-UA simulator (데모/검증용) ──
+  # sdl-app 에서 opc.tcp://opcua-sim:4840/sdl/server/ 로 접속.
+  opcua-sim:
+    image: sdl-app:latest
+    container_name: opcua-sim
+    restart: unless-stopped
+    entrypoint: ["python3", "-u", "/app/tools/simulators/opcua_sim.py"]
+    networks:
+      - sdl-net
+
 # ── Named Volumes: 데이터 스토리지 (엔진과 분리) ──
 volumes:
   pgdata:                    # PostgreSQL 데이터

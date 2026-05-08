@@ -31,6 +31,7 @@ COPY requirements.txt .
 COPY backend/ backend/
 COPY templates/ templates/
 COPY static/ static/
+COPY tools/ tools/
 
 RUN chown -R sdl:sdl /app
 
