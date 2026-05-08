@@ -450,6 +450,103 @@ def _parse_quality(raw):
     return 100
 
 
+def _is_numeric_value(v):
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, (int, float)):
+        return True
+    if isinstance(v, str):
+        try:
+            float(v)
+            return True
+        except (ValueError, TypeError):
+            return False
+    return False
+
+
+def _coerce_numeric(v):
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _stringify_for_tag(v):
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    try:
+        return json.dumps(v, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _auto_dict_mode(raw_value, threshold=0.7):
+    if not raw_value:
+        return "value_str"
+    nums = sum(1 for v in raw_value.values() if _is_numeric_value(v))
+    return "explode" if nums >= len(raw_value) * threshold else "tags"
+
+
+def _explode_rows(raw_value, base_row, explode_cfg):
+    keys = explode_cfg.get("keys") or list(raw_value.keys())
+    aux_keys = set(explode_cfg.get("auxiliary_keys") or [])
+    drop_empty = explode_cfg.get("drop_empty", True)
+
+    aux_tags = {k: _stringify_for_tag(raw_value.get(k))
+                for k in aux_keys if k in raw_value}
+    base_tags = base_row.get("tags") or {}
+
+    rows = []
+    for k in keys:
+        if k in aux_keys or k not in raw_value:
+            continue
+        v = raw_value[k]
+        if drop_empty and (v is None or v == ""):
+            continue
+
+        num = _coerce_numeric(v)
+        row = dict(base_row)
+        row["tag_name"] = str(k)
+        row["value"] = num
+        if num is None:
+            if v is None:
+                row["value_str"] = ""
+            elif isinstance(v, str):
+                row["value_str"] = v
+            else:
+                row["value_str"] = json.dumps(v, ensure_ascii=False, default=str)
+        else:
+            row["value_str"] = ""
+        row["tags"] = {**base_tags, **aux_tags}
+        rows.append(row)
+    return rows
+
+
+def _wide_row(raw_value, base_row, tags_cfg):
+    primary = tags_cfg.get("primary_tag_name") or base_row.get("tag_name") or "row"
+    numeric_field = tags_cfg.get("numeric_field") or ""
+
+    base_tags = base_row.get("tags") or {}
+    dict_tags = {k: _stringify_for_tag(v) for k, v in raw_value.items()}
+
+    num = None
+    if numeric_field and numeric_field in raw_value:
+        num = _coerce_numeric(raw_value[numeric_field])
+
+    row = dict(base_row)
+    row["tag_name"] = str(primary)
+    row["value"] = num
+    row["value_str"] = ""
+    row["tags"] = {**base_tags, **dict_tags}
+    return row
+
+
 def sink_internal_tsdb(message, config):
     """내부 시계열DB 싱크 — TimeSeriesData 테이블에 데이터 기록
 
@@ -459,6 +556,16 @@ def sink_internal_tsdb(message, config):
       measurement: "sensor_data"
       writeMode: "single" | "batch"
       batchSize: 100
+
+      # multi key-value (dict) 처리 모드 — value 가 dict 일 때만 동작
+      dictMode: "explode" | "tags" | "value_str" | "auto"
+        - 미지정: 기존 동작 (str(dict) 를 value_str 에, 'avg' 키만 value 로)
+        - explode: 키별 N행으로 풀어 저장 (long format)
+        - tags:    1행, dict 전체를 tags JSON 컬럼에 저장
+        - value_str: 1행, json.dumps 결과를 value_str 에 저장
+        - auto:    숫자값 비율 70% 이상이면 explode, 아니면 tags
+      explode:  {keys: [], auxiliary_keys: [], drop_empty: true}
+      tagsMode: {primary_tag_name: "row", numeric_field: ""}
     """
     tsdb_id = config.get("tsdbId", 0)
     measurement = config.get("measurement", "sensor_data")
@@ -473,23 +580,6 @@ def sink_internal_tsdb(message, config):
     raw_value = message.get("value")
     data_type = message.get("dataType", "float")
 
-    num_value = None
-    str_value = ""
-    if isinstance(raw_value, (int, float)):
-        num_value = float(raw_value)
-    elif isinstance(raw_value, dict):
-        str_value = str(raw_value)
-        if "avg" in raw_value:
-            num_value = raw_value["avg"]
-    elif isinstance(raw_value, str):
-        str_value = raw_value
-        try:
-            num_value = float(raw_value)
-        except (ValueError, TypeError):
-            pass
-    elif raw_value is not None:
-        str_value = str(raw_value)
-
     ts_str = message.get("timestamp")
     ts = None
     if ts_str:
@@ -500,15 +590,15 @@ def sink_internal_tsdb(message, config):
     if ts is None:
         ts = datetime.utcnow()
 
-    row = {
+    base_row = {
         "tsdb_id": tsdb_id,
         "measurement": measurement,
         "tag_name": tag_name,
         "connector_type": connector_type,
         "connector_id": connector_id,
         "pipeline_id": pipeline_id,
-        "value": num_value,
-        "value_str": str_value,
+        "value": None,
+        "value_str": "",
         "data_type": data_type,
         "unit": message.get("unit", ""),
         "quality": _parse_quality(message.get("quality", 100)),
@@ -517,16 +607,62 @@ def sink_internal_tsdb(message, config):
         "timestamp": ts,
     }
 
+    rows = []
+    if isinstance(raw_value, dict):
+        mode = config.get("dictMode")
+        if mode == "auto":
+            mode = _auto_dict_mode(raw_value)
+
+        if mode == "explode":
+            rows = _explode_rows(raw_value, base_row, config.get("explode") or {})
+        elif mode == "tags":
+            rows = [_wide_row(raw_value, base_row, config.get("tagsMode") or {})]
+        else:
+            # mode in (None, "value_str") — 단일 행
+            row = dict(base_row)
+            row["value"] = raw_value.get("avg") if "avg" in raw_value else None
+            if mode == "value_str":
+                row["value_str"] = json.dumps(raw_value, ensure_ascii=False, default=str)
+            else:
+                row["value_str"] = str(raw_value)  # legacy
+            rows = [row]
+    elif isinstance(raw_value, bool):
+        row = dict(base_row)
+        row["value_str"] = "true" if raw_value else "false"
+        row["value"] = 1.0 if raw_value else 0.0
+        rows = [row]
+    elif isinstance(raw_value, (int, float)):
+        row = dict(base_row)
+        row["value"] = float(raw_value)
+        rows = [row]
+    elif isinstance(raw_value, str):
+        row = dict(base_row)
+        row["value_str"] = raw_value
+        try:
+            row["value"] = float(raw_value)
+        except (ValueError, TypeError):
+            pass
+        rows = [row]
+    elif raw_value is not None:
+        row = dict(base_row)
+        row["value_str"] = str(raw_value)
+        rows = [row]
+    else:
+        rows = [dict(base_row)]
+
+    if not rows:
+        return message  # explode 결과 0건이면 드롭
+
     if write_mode == "batch":
         batch_size = config.get("batchSize", 100)
         cache_key = f"tsdb_sink:{pipeline_id}:{tsdb_id}"
         if cache_key not in _sink_buffers:
             _sink_buffers[cache_key] = []
-        _sink_buffers[cache_key].append(row)
+        _sink_buffers[cache_key].extend(rows)
         if len(_sink_buffers[cache_key]) >= batch_size:
             _flush_tsdb_batch(cache_key)
     else:
-        _write_tsdb_rows([row])
+        _write_tsdb_rows(rows)
 
     return message  # 싱크는 메시지를 패스스루
 

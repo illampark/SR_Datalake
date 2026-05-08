@@ -1425,6 +1425,11 @@ function _sinkFormHtml(moduleType, cfg) {
   var c = cfg || {};
   switch (moduleType) {
     case 'internal_tsdb_sink':
+      var dm = c.dictMode || '';
+      var ex = c.explode || {};
+      var tm = c.tagsMode || {};
+      var showExplode = (dm === 'explode' || dm === 'auto');
+      var showTags = (dm === 'tags' || dm === 'auto');
       return '<div class="form-group">' +
         '<label class="form-label">' + __t('page.builder.sink_tsdb_instance') + ' <span class="text-danger">*</span></label>' +
         '<select class="form-select" id="f-sink-tsdbId">' +
@@ -1444,7 +1449,50 @@ function _sinkFormHtml(moduleType, cfg) {
         '<div class="form-group"><label class="form-label">' + __t('page.builder.sink_batch_size') + '</label>' +
         '<input type="number" class="form-control" id="f-sink-batchSize" value="' + (c.batchSize || 100) + '" min="10" max="10000" step="10">' +
         '<div class="form-hint">' + __t('page.builder.sink_batch_hint') + '</div>' +
-        '</div></div>';
+        '</div></div>' +
+        // ── multi key-value (dict) 처리 모드
+        '<div class="form-group" style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">' +
+        '<label class="form-label">' + __t('page.builder.sink_dict_mode') + '</label>' +
+        '<select class="form-select" id="f-sink-dictMode">' +
+        '<option value=""' + (dm === '' ? ' selected' : '') + '>' + __t('page.builder.sink_dict_mode_default') + '</option>' +
+        '<option value="explode"' + (dm === 'explode' ? ' selected' : '') + '>' + __t('page.builder.sink_dict_mode_explode') + '</option>' +
+        '<option value="tags"' + (dm === 'tags' ? ' selected' : '') + '>' + __t('page.builder.sink_dict_mode_tags') + '</option>' +
+        '<option value="value_str"' + (dm === 'value_str' ? ' selected' : '') + '>' + __t('page.builder.sink_dict_mode_value_str') + '</option>' +
+        '<option value="auto"' + (dm === 'auto' ? ' selected' : '') + '>' + __t('page.builder.sink_dict_mode_auto') + '</option>' +
+        '</select>' +
+        '<div class="form-hint">' + __t('page.builder.sink_dict_mode_hint') + '</div>' +
+        '</div>' +
+        // explode 옵션
+        '<div id="f-sink-explode-grp"' + (showExplode ? '' : ' style="display:none"') + '>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_explode_keys') + '</label>' +
+        '<input type="text" class="form-control" id="f-sink-explode-keys" value="' + escAttr((ex.keys || []).join(', ')) + '" placeholder="TID, VALUE, BAR">' +
+        '<div class="form-hint">' + __t('page.builder.sink_explode_keys_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_explode_aux_keys') + '</label>' +
+        '<input type="text" class="form-control" id="f-sink-explode-aux" value="' + escAttr((ex.auxiliary_keys || []).join(', ')) + '" placeholder="MACHINE, LOT, RECIPE_NM">' +
+        '<div class="form-hint">' + __t('page.builder.sink_explode_aux_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">' +
+        '<input type="checkbox" id="f-sink-explode-drop"' + (ex.drop_empty !== false ? ' checked' : '') + '> ' +
+        __t('page.builder.sink_explode_drop_empty') + '</label>' +
+        '</div>' +
+        '</div>' +
+        // tags 옵션
+        '<div id="f-sink-tags-grp"' + (showTags ? '' : ' style="display:none"') + '>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_tags_primary') + '</label>' +
+        '<input type="text" class="form-control" id="f-sink-tags-primary" value="' + escAttr(tm.primary_tag_name || 'row') + '" placeholder="row">' +
+        '<div class="form-hint">' + __t('page.builder.sink_tags_primary_hint') + '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+        '<label class="form-label">' + __t('page.builder.sink_tags_numeric') + '</label>' +
+        '<input type="text" class="form-control" id="f-sink-tags-numeric" value="' + escAttr(tm.numeric_field || '') + '" placeholder="VALUE">' +
+        '<div class="form-hint">' + __t('page.builder.sink_tags_numeric_hint') + '</div>' +
+        '</div>' +
+        '</div>';
 
     case 'internal_rdbms_sink':
       return '<div class="form-group">' +
@@ -1614,6 +1662,11 @@ function _loadTsdbInstances(selectedId) {
     $('#f-sink-writeMode').off('change').on('change', function() {
       $('#f-sink-batch-grp').toggle($(this).val() === 'batch');
     });
+    $('#f-sink-dictMode').off('change').on('change', function() {
+      var v = $(this).val();
+      $('#f-sink-explode-grp').toggle(v === 'explode' || v === 'auto');
+      $('#f-sink-tags-grp').toggle(v === 'tags' || v === 'auto');
+    });
   }, 50);
 }
 
@@ -1656,13 +1709,34 @@ function _collectSinkConfig(moduleType) {
   switch (moduleType) {
     case 'internal_tsdb_sink':
       var $sel = $('#f-sink-tsdbId');
-      return {
+      var dictMode = $('#f-sink-dictMode').val() || '';
+      var cfgT = {
         tsdbId: parseInt($sel.val()) || 0,
         tsdbName: $sel.find('option:selected').data('name') || '',
         measurement: $('#f-sink-measurement').val().trim(),
         writeMode: $('#f-sink-writeMode').val() || 'single',
         batchSize: parseInt($('#f-sink-batchSize').val()) || 100
       };
+      if (dictMode) {
+        cfgT.dictMode = dictMode;
+        if (dictMode === 'explode' || dictMode === 'auto') {
+          var splitCsv = function(s) {
+            return (s || '').split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+          };
+          cfgT.explode = {
+            keys: splitCsv($('#f-sink-explode-keys').val()),
+            auxiliary_keys: splitCsv($('#f-sink-explode-aux').val()),
+            drop_empty: $('#f-sink-explode-drop').is(':checked')
+          };
+        }
+        if (dictMode === 'tags' || dictMode === 'auto') {
+          cfgT.tagsMode = {
+            primary_tag_name: $('#f-sink-tags-primary').val().trim() || 'row',
+            numeric_field: $('#f-sink-tags-numeric').val().trim() || ''
+          };
+        }
+      }
+      return cfgT;
     case 'internal_rdbms_sink':
       var $rsel = $('#f-sink-rdbmsId');
       return {
