@@ -487,7 +487,7 @@ def _get_data_summary(db, catalog):
                     if src:
                         sources.append(src)
 
-    elif ctype in ("opcua", "opcda", "modbus", "mqtt", "db", "file", "api"):
+    elif ctype in ("opcua", "modbus", "mqtt", "db", "file", "api"):
         if catalog.tag_name:
             sources.append(_summary_tsdb(db, "tag",
                 connector_type=ctype, connector_id=catalog.connector_id,

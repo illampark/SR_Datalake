@@ -15,7 +15,7 @@ from sqlalchemy import func, text
 
 from backend.database import SessionLocal
 from backend.models.collector import (
-    OpcuaConnector, OpcdaConnector, ModbusConnector,
+    OpcuaConnector, ModbusConnector,
     MqttConnector, ApiConnector, FileCollector, DbConnector,
     ImportCollector,
 )
@@ -31,7 +31,6 @@ monitoring_bp = Blueprint("monitoring", __name__, url_prefix="/api/monitoring")
 # 커넥터 타입 설정 (engine_status.py 패턴 재사용)
 _CONN = [
     ("opcua",  OpcuaConnector,  "OPC-UA",  "point_count"),
-    ("opcda",  OpcdaConnector,  "OPC-DA",  "point_count"),
     ("modbus", ModbusConnector, "Modbus",  "point_count"),
     ("mqtt",   MqttConnector,   "MQTT",    "message_count"),
     ("api",    ApiConnector,    "API",     "request_count"),
@@ -366,7 +365,7 @@ def healthcheck_run():
 # ── 헬스체크 개별 함수 ──
 
 _CONN_ICONS = {
-    "opcua": "fa-plug-circle-bolt", "opcda": "fa-plug",
+    "opcua": "fa-plug-circle-bolt",
     "modbus": "fa-microchip", "mqtt": "fa-satellite-dish",
     "api": "fa-code", "file": "fa-file-import", "db": "fa-database",
     "import": "fa-file-arrow-up",

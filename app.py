@@ -25,7 +25,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # ── Backend API Setup ──
 from backend.database import init_db
 from backend.routes import tsdb_bp, rdbms_bp, file_bp, mqtt_bp, db_bp, file_watch_bp, retention_bp
-from backend.routes import opcua_bp, opcda_bp, modbus_bp, api_bp
+from backend.routes import opcua_bp, modbus_bp, api_bp
 from backend.routes import pipeline_bp, metadata_bp, catalog_bp
 from backend.routes import engine_status_bp, engine_batch_bp, engine_buffer_bp, engine_perf_bp
 from backend.routes import integration_bp
@@ -44,7 +44,6 @@ app.register_blueprint(mqtt_bp)
 app.register_blueprint(db_bp)
 app.register_blueprint(file_watch_bp)
 app.register_blueprint(opcua_bp)
-app.register_blueprint(opcda_bp)
 app.register_blueprint(modbus_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(retention_bp)
@@ -233,10 +232,6 @@ def dashboard():
 @app.route("/collection/connectors/opcua")
 def connector_opcua():
     return render_template("collection/opcua.html", active="conn-opcua")
-
-@app.route("/collection/connectors/opcda")
-def connector_opcda():
-    return render_template("collection/opcda.html", active="conn-opcda")
 
 @app.route("/collection/connectors/modbus")
 def connector_modbus():

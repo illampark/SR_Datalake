@@ -6,7 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from backend.database import SessionLocal
 from backend.models.collector import (
-    OpcuaConnector, OpcdaConnector, ModbusConnector,
+    OpcuaConnector, ModbusConnector,
     MqttConnector, ApiConnector, FileCollector, DbConnector,
 )
 from backend.models.pipeline import Pipeline, PipelineStep
@@ -19,7 +19,6 @@ engine_batch_bp = Blueprint("engine_batch", __name__, url_prefix="/api/engine")
 # ── 커넥터 타입 정의 ─────────────────────────
 CONNECTOR_TYPES = [
     ("opcua",  OpcuaConnector,  "OPC-UA"),
-    ("opcda",  OpcdaConnector,  "OPC-DA"),
     ("modbus", ModbusConnector, "Modbus"),
     ("mqtt",   MqttConnector,   "MQTT"),
     ("api",    ApiConnector,    "API"),
@@ -54,7 +53,7 @@ def _err(msg, code="ERROR", status=400):
 # ── 헬퍼 함수 ─────────────────────────
 
 def _get_polling_interval(type_key, model):
-    if type_key in ("opcua", "opcda", "modbus"):
+    if type_key in ("opcua", "modbus"):
         return model.polling_interval
     elif type_key == "file":
         return model.poll_interval
@@ -69,7 +68,7 @@ def _get_polling_interval(type_key, model):
 
 
 def _get_polling_unit(type_key):
-    if type_key in ("opcua", "opcda", "modbus"):
+    if type_key in ("opcua", "modbus"):
         return "ms"
     elif type_key in ("file", "db"):
         return "초"
@@ -152,7 +151,7 @@ def get_batch_settings():
             "pipelines": pipelines,
             "defaults": {
                 "pollingInterval": {
-                    "opcua": 1000, "opcda": 1000, "modbus": 1000,
+                    "opcua": 1000, "modbus": 1000,
                     "file": 30, "db": 60,
                 },
                 "sinkBatchSize": DEFAULT_SINK_BATCH,
@@ -196,7 +195,7 @@ def update_connector_batch(connector_id):
         updated_fields = []
 
         if polling_val is not None:
-            if conn_type in ("opcua", "opcda", "modbus"):
+            if conn_type in ("opcua", "modbus"):
                 row.polling_interval = int(polling_val)
                 updated_fields.append(f"pollingInterval={polling_val}ms")
             elif conn_type == "file":

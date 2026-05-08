@@ -8,7 +8,7 @@ from sqlalchemy import func
 
 from backend.database import SessionLocal
 from backend.models.collector import (
-    OpcuaConnector, OpcdaConnector, ModbusConnector,
+    OpcuaConnector, ModbusConnector,
     MqttConnector, ApiConnector, FileCollector, DbConnector,
 )
 from backend.models.pipeline import Pipeline
@@ -24,7 +24,6 @@ engine_perf_bp = Blueprint("engine_performance", __name__, url_prefix="/api/engi
 # ── 커넥터 타입별 설정 (engine_status.py 패턴 재사용) ──
 CONNECTOR_MODELS = [
     ("opcua",  OpcuaConnector,  "OPC-UA",  "point_count",   "pointCount",   "포인트",    "last_collected_at"),
-    ("opcda",  OpcdaConnector,  "OPC-DA",  "point_count",   "pointCount",   "포인트",    "last_collected_at"),
     ("modbus", ModbusConnector, "Modbus",  "point_count",   "pointCount",   "포인트",    "last_collected_at"),
     ("mqtt",   MqttConnector,   "MQTT",    "message_count", "messageCount", "수신 메시지", "last_message_at"),
     ("api",    ApiConnector,    "API",     "request_count", "requestCount", "요청 수",   "last_called_at"),

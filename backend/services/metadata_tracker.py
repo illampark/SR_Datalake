@@ -174,7 +174,7 @@ def mark_tags_inactive(connector_type, connector_id):
 # ── 카탈로그 자동 생성 ──
 
 _CONNECTOR_LABELS = {
-    "opcua": "OPC-UA", "opcda": "OPC-DA", "modbus": "Modbus",
+    "opcua": "OPC-UA", "modbus": "Modbus",
     "mqtt": "MQTT", "db": "DB", "file": "File", "api": "API",
     "import": "Import",
 }

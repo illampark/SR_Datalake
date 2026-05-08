@@ -17,7 +17,7 @@ class DataCatalog(Base):
     name = Column(String(200), nullable=False)
     description = Column(Text, default="")
     # 계층 구조 (커넥터 기반)
-    connector_type = Column(String(20), nullable=False)      # opcua / opcda / modbus / mqtt / db / file / api
+    connector_type = Column(String(20), nullable=False)      # opcua / modbus / mqtt / db / file / api
     connector_id = Column(Integer, nullable=True)            # 특정 커넥터 인스턴스 (NULL이면 타입 그룹)
     connector_description = Column(Text, default="")         # 커넥터 설명 (비정규화, 동기화)
     tag_name = Column(String(200), default="")               # 특정 태그 (빈 문자열이면 커넥터 그룹)

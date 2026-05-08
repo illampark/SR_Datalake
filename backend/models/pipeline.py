@@ -102,7 +102,7 @@ class PipelineBinding(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     pipeline_id = Column(Integer, ForeignKey("pipeline.id", ondelete="CASCADE"), nullable=False)
-    connector_type = Column(String(20), nullable=False)      # opcua / opcda / modbus / mqtt / db / file / api
+    connector_type = Column(String(20), nullable=False)      # opcua / modbus / mqtt / db / file / api
     connector_id = Column(Integer, nullable=False)            # 해당 커넥터 테이블의 ID
     tag_filter = Column(String(500), default="*")            # 태그 필터 (와일드카드 지원)
     enabled = Column(Boolean, default=True)

@@ -5,7 +5,7 @@ import logging
 from backend.models.catalog import DataCatalog, CatalogSearchTag
 from backend.models.collector import (
     MqttConnector, DbConnector, OpcuaConnector,
-    OpcdaConnector, ModbusConnector, ApiConnector, FileCollector,
+    ModbusConnector, ApiConnector, FileCollector,
 )
 
 logger = logging.getLogger(__name__)
@@ -14,14 +14,13 @@ _MODEL_MAP = {
     "mqtt": MqttConnector,
     "db": DbConnector,
     "opcua": OpcuaConnector,
-    "opcda": OpcdaConnector,
     "modbus": ModbusConnector,
     "api": ApiConnector,
     "file": FileCollector,
 }
 
 _CONNECTOR_LABELS = {
-    "opcua": "OPC-UA", "opcda": "OPC-DA", "modbus": "Modbus",
+    "opcua": "OPC-UA", "modbus": "Modbus",
     "mqtt": "MQTT", "db": "DB", "file": "File", "api": "API",
 }
 

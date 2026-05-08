@@ -1,6 +1,6 @@
 from backend.models.storage import TsdbConfig, DownsamplingPolicy, RdbmsConfig, FileCleanupPolicy, WarmAggregatedData, RetentionPolicy, RetentionExecutionLog, TimeSeriesData  # noqa: F401
 from backend.models.collector import MqttConnector, MqttTag, DbConnector, DbTag, FileCollector  # noqa: F401
-from backend.models.collector import OpcuaConnector, OpcuaTag, OpcdaConnector, OpcdaTag, ModbusConnector, ModbusTag  # noqa: F401
+from backend.models.collector import OpcuaConnector, OpcuaTag, ModbusConnector, ModbusTag  # noqa: F401
 from backend.models.collector import ApiConnector, ApiEndpoint  # noqa: F401
 from backend.models.pipeline import Pipeline, PipelineStep, PipelineBinding, NormalizeRule, UnitConversion, FilterRule, AnomalyConfig  # noqa: F401
 from backend.models.metadata import TagMetadata, DataLineage  # noqa: F401

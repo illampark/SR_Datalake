@@ -257,7 +257,7 @@ def get_lineage(lid):
 # ══════════════════════════════════════════════
 
 _CONNECTOR_LABELS = {
-    "opcua": "OPC-UA", "opcda": "OPC-DA", "modbus": "Modbus",
+    "opcua": "OPC-UA", "modbus": "Modbus",
     "mqtt": "MQTT", "db": "DB", "file": "File", "api": "API",
 }
 

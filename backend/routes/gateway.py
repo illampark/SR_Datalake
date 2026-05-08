@@ -27,7 +27,6 @@ _BP_LABELS = {
     "db_connector": "DB 커넥터",
     "file_watch": "파일 수집기",
     "opcua": "OPC-UA 커넥터",
-    "opcda": "OPC-DA 커넥터",
     "modbus": "Modbus 커넥터",
     "api_connector": "API 커넥터",
     "retention": "보관 정책",

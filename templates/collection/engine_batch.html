@@ -57,7 +57,6 @@
     <select class="form-select" id="filter-type" style="width:auto;min-width:120px;padding:5px 10px;">
       <option value="">{{ t('page.engine_status.filter_all_types') }}</option>
       <option value="opcua">OPC-UA</option>
-      <option value="opcda">OPC-DA</option>
       <option value="modbus">Modbus</option>
       <option value="mqtt">MQTT</option>
       <option value="api">API</option>
@@ -127,7 +126,7 @@ var _data = null;
 
 /* ── Type badge color map ── */
 var TYPE_COLORS = {
-  'opcua': 'tag-blue', 'opcda': 'tag-blue', 'modbus': 'tag-green',
+  'opcua': 'tag-blue', 'modbus': 'tag-green',
   'mqtt': 'tag-green', 'api': 'tag-yellow', 'file': 'tag-cyan', 'db': 'tag-cyan'
 };
 

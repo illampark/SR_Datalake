@@ -18,7 +18,7 @@ SYSTEM_PROTECTED_TABLES = frozenset({
     # 사용자/인증/감사
     "app_user", "login_history", "audit_log", "admin_setting", "notice",
     # 커넥터·태그
-    "opcua_connector", "opcua_tag", "opcda_connector", "opcda_tag",
+    "opcua_connector", "opcua_tag",
     "modbus_connector", "modbus_tag", "mqtt_connector", "mqtt_tag",
     "api_connector", "api_endpoint", "file_collector",
     "db_connector", "db_tag", "import_collector",

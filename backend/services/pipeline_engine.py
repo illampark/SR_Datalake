@@ -45,11 +45,11 @@ def _resolve_connector_name(connector_type, connector_id):
 
     from backend.database import SessionLocal
     from backend.models.collector import (
-        OpcuaConnector, OpcdaConnector, ModbusConnector,
+        OpcuaConnector, ModbusConnector,
         MqttConnector, ApiConnector, FileCollector, DbConnector,
     )
     MODEL_MAP = {
-        "opcua": OpcuaConnector, "opcda": OpcdaConnector,
+        "opcua": OpcuaConnector,
         "modbus": ModbusConnector, "mqtt": MqttConnector,
         "api": ApiConnector, "file": FileCollector, "db": DbConnector,
     }

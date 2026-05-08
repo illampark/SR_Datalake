@@ -71,7 +71,6 @@
       <h4 onclick="togglePalette(this)"><span><i class="fas fa-database"></i> {{ t('page.builder.palette_source_nodes') }}</span><i class="fas fa-chevron-down palette-toggle"></i></h4>
       <div class="palette-body">
         <div class="palette-item" draggable="true" data-module="opcua_source"><i class="fas fa-plug-circle-bolt text-primary"></i> {{ t('page.builder.node_opcua_source') }}</div>
-        <div class="palette-item" draggable="true" data-module="opcda_source"><i class="fas fa-plug text-primary"></i> {{ t('page.builder.node_opcda_source') }}</div>
         <div class="palette-item" draggable="true" data-module="modbus_source"><i class="fas fa-microchip text-primary"></i> {{ t('page.builder.node_modbus_source') }}</div>
         <div class="palette-item" draggable="true" data-module="mqtt_source"><i class="fas fa-satellite-dish text-primary"></i> {{ t('page.builder.node_mqtt_source') }}</div>
         <div class="palette-item" draggable="true" data-module="api_source"><i class="fas fa-code text-primary"></i> {{ t('page.builder.node_api_source') }}</div>
@@ -180,7 +179,6 @@
           <select class="form-select" id="tag-search-type" style="width:auto;min-width:140px;padding:6px 10px;" onchange="loadTagSearch()">
             <option value="">{{ t('page.builder.tag_search_all_connectors') }}</option>
             <option value="opcua">OPC-UA</option>
-            <option value="opcda">OPC-DA</option>
             <option value="modbus">Modbus</option>
             <option value="mqtt">MQTT</option>
             <option value="api">REST API</option>
@@ -267,12 +265,12 @@ var currentSteps = [];
 var currentBindings = [];
 
 var sourceToConnectorType = {
-  'opcua_source': 'opcua', 'opcda_source': 'opcda', 'modbus_source': 'modbus',
+  'opcua_source': 'opcua', 'modbus_source': 'modbus',
   'mqtt_source': 'mqtt', 'api_source': 'api', 'file_source': 'file', 'db_source': 'db',
   'import_source': 'import'
 };
 var connectorTypeLabels = {
-  'opcua': 'OPC-UA', 'opcda': 'OPC-DA', 'modbus': 'Modbus',
+  'opcua': 'OPC-UA', 'modbus': 'Modbus',
   'mqtt': 'MQTT', 'api': 'REST API', 'file': __t('page.builder.tag_search_file'), 'db': 'DB',
   'import': __t('page.builder.node_import_source')
 };
@@ -282,7 +280,7 @@ function escAttr(s) { return (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#
 
 // ── Module type label mapping ──
 var moduleLabels = {
-  'opcua_source': __t('page.builder.node_opcua_source'), 'opcda_source': __t('page.builder.node_opcda_source'), 'modbus_source': __t('page.builder.node_modbus_source'),
+  'opcua_source': __t('page.builder.node_opcua_source'), 'modbus_source': __t('page.builder.node_modbus_source'),
   'mqtt_source': __t('page.builder.node_mqtt_source'), 'api_source': __t('page.builder.node_api_source'), 'file_source': __t('page.builder.node_file_source'), 'db_source': __t('page.builder.node_db_source'),
   'import_source': __t('page.builder.node_import_source'),
   'normalize': __t('page.builder.node_normalize'), 'unit_convert': __t('page.builder.node_unit_convert'), 'filter': __t('page.builder.node_filter'),
@@ -293,7 +291,7 @@ var moduleLabels = {
 };
 
 var moduleIcons = {
-  'opcua_source': 'fa-plug-circle-bolt', 'opcda_source': 'fa-plug', 'modbus_source': 'fa-microchip',
+  'opcua_source': 'fa-plug-circle-bolt', 'modbus_source': 'fa-microchip',
   'mqtt_source': 'fa-satellite-dish', 'api_source': 'fa-code', 'file_source': 'fa-file-import', 'db_source': 'fa-database',
   'import_source': 'fa-cloud-arrow-up',
   'normalize': 'fa-right-left', 'unit_convert': 'fa-ruler-combined', 'filter': 'fa-filter',

@@ -9,7 +9,7 @@ from backend.models.pipeline import (
     AggregateConfig, EnrichConfig, ScriptConfig,
 )
 from backend.models.collector import (
-    OpcuaConnector, OpcdaConnector, ModbusConnector,
+    OpcuaConnector, ModbusConnector,
     MqttConnector, ApiConnector, FileCollector, DbConnector, DbTag,
     ImportCollector,
 )
@@ -35,7 +35,6 @@ def _db():
 
 _CONNECTOR_MODELS = {
     "opcua": OpcuaConnector,
-    "opcda": OpcdaConnector,
     "modbus": ModbusConnector,
     "mqtt": MqttConnector,
     "api": ApiConnector,

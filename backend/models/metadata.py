@@ -14,7 +14,7 @@ class TagMetadata(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     # 태그 식별
     tag_name = Column(String(200), nullable=False)
-    connector_type = Column(String(20), nullable=False)      # opcua / opcda / modbus / mqtt / db / file / api
+    connector_type = Column(String(20), nullable=False)      # opcua / modbus / mqtt / db / file / api
     connector_id = Column(Integer, nullable=False)
     connector_name = Column(String(100), default="")
     # 데이터 프로파일

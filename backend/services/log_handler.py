@@ -25,7 +25,6 @@ _NAME_MAP = {
     "backend.routes.storage_file": "파일스토리지 API",
     "backend.routes.storage_retention": "보관정책 API",
     "backend.routes.collector_opcua": "OPC-UA API",
-    "backend.routes.collector_opcda": "OPC-DA API",
     "backend.routes.collector_modbus": "Modbus API",
     "backend.routes.collector_mqtt": "MQTT API",
     "backend.routes.collector_api": "REST API 커넥터",

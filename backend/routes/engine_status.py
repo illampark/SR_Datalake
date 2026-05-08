@@ -10,7 +10,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify
 from backend.database import SessionLocal
 from backend.models.collector import (
-    OpcuaConnector, OpcdaConnector, ModbusConnector,
+    OpcuaConnector, ModbusConnector,
     MqttConnector, ApiConnector, FileCollector, DbConnector,
 )
 from backend.models.pipeline import Pipeline
@@ -28,7 +28,6 @@ engine_status_bp = Blueprint("engine_status", __name__, url_prefix="/api/engine"
 # (type_key, ModelClass, label, metric_field_in_dict, metric_label)
 CONNECTOR_MODELS = [
     ("opcua",  OpcuaConnector,  "OPC-UA",  "pointCount",   "포인트"),
-    ("opcda",  OpcdaConnector,  "OPC-DA",  "pointCount",   "포인트"),
     ("modbus", ModbusConnector, "Modbus",  "pointCount",   "포인트"),
     ("mqtt",   MqttConnector,   "MQTT",    "messageCount", "수신 메시지"),
     ("api",    ApiConnector,    "API",     "requestCount", "요청 수"),

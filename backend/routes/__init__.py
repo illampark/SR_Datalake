@@ -5,7 +5,6 @@ from backend.routes.collector_mqtt import mqtt_bp  # noqa: F401
 from backend.routes.collector_db import db_bp  # noqa: F401
 from backend.routes.collector_file_watch import file_watch_bp  # noqa: F401
 from backend.routes.collector_opcua import opcua_bp  # noqa: F401
-from backend.routes.collector_opcda import opcda_bp  # noqa: F401
 from backend.routes.collector_modbus import modbus_bp  # noqa: F401
 from backend.routes.collector_api import api_bp  # noqa: F401
 from backend.routes.storage_retention import retention_bp  # noqa: F401
