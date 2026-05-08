@@ -124,9 +124,10 @@ def create_pipeline():
     db = _db()
     try:
         body = request.get_json(force=True)
-        err = _require_source_step(body.get("steps"))
-        if err:
-            return _err(err[0], err[1])
+        # 신규 생성은 draft 로 허용 (소스 노드 검증은 PUT 저장 시점에 적용).
+        # 빌더 UI 가 "빈 파이프라인 생성 → select → 노드 추가 → 저장" 흐름이라
+        # POST 에서 소스를 강제하면 사용자가 노드를 추가할 컨텍스트(selectedPipelineId)를
+        # 만들 수 없어 데드락이 발생함.
         p = Pipeline(
             name=body.get("name", ""),
             description=body.get("description", ""),
