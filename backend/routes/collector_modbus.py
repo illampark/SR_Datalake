@@ -4,6 +4,7 @@ from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import ModbusConnector, ModbusTag
 from backend.services import benthos_manager as bm
+from backend.services import connector_workers
 from backend.services.system_settings import get_default_page_size
 
 modbus_bp = Blueprint("collector_modbus", __name__, url_prefix="/api/connectors/modbus")
@@ -199,11 +200,10 @@ def update_connector(cid):
         db.commit()
         db.refresh(c)
 
-        # If running, update Benthos stream too
+        # If running, restart worker so config changes apply
         if c.status == "running":
-            callback_url = _callback_url()
-            stream_config = bm.build_modbus_stream_config(c, callback_url)
-            bm.update_stream(c.benthos_stream_id(), stream_config)
+            connector_workers.stop_worker("modbus", cid)
+            connector_workers.start_worker("modbus", cid)
 
         return _ok(c.to_dict())
     except Exception as e:
@@ -224,8 +224,7 @@ def delete_connector(cid):
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
-        if c.status == "running":
-            bm.stop_modbus_stream(c)
+        connector_workers.stop_worker("modbus", cid)
 
         # 관련 카탈로그 정리
         from backend.services.catalog_sync import delete_connector_catalogs
@@ -252,20 +251,15 @@ def start_connector(cid):
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
-        if c.status == "running":
+        if c.status == "running" and connector_workers.is_running("modbus", cid):
             return _err("이미 실행 중입니다.", "ALREADY_RUNNING")
 
-        if not bm.is_running():
-            if not bm.start_benthos():
-                return _err("Benthos 프로세스를 시작할 수 없습니다.", "BENTHOS_ERROR", 500)
-
-        callback_url = _callback_url()
-        ok, err = bm.start_modbus_stream(c, callback_url)
+        ok, err = connector_workers.start_worker("modbus", cid)
         if not ok:
             c.status = "error"
-            c.last_error = err or "스트림 생성 실패"
+            c.last_error = err or "워커 시작 실패"
             db.commit()
-            return _err(f"스트림 시작 실패: {err}", "STREAM_ERROR", 500)
+            return _err(f"워커 시작 실패: {err}", "WORKER_ERROR", 500)
 
         c.status = "running"
         c.last_error = ""
@@ -292,7 +286,7 @@ def stop_connector(cid):
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
-        bm.stop_modbus_stream(c)
+        connector_workers.stop_worker("modbus", cid)
         c.status = "stopped"
         db.commit()
         db.refresh(c)
@@ -312,19 +306,14 @@ def restart_connector(cid):
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
-        bm.stop_modbus_stream(c)
+        connector_workers.stop_worker("modbus", cid)
 
-        if not bm.is_running():
-            if not bm.start_benthos():
-                return _err("Benthos 프로세스를 시작할 수 없습니다.", "BENTHOS_ERROR", 500)
-
-        callback_url = _callback_url()
-        ok, err = bm.start_modbus_stream(c, callback_url)
+        ok, err = connector_workers.start_worker("modbus", cid)
         if not ok:
             c.status = "error"
             c.last_error = err or "재시작 실패"
             db.commit()
-            return _err(f"재시작 실패: {err}", "STREAM_ERROR", 500)
+            return _err(f"재시작 실패: {err}", "WORKER_ERROR", 500)
 
         c.status = "running"
         c.last_error = ""
@@ -389,7 +378,6 @@ def connector_status(cid):
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
-        stream = bm.get_modbus_stream_status(c)
         return _ok({
             "id": c.id,
             "name": c.name,
@@ -398,7 +386,7 @@ def connector_status(cid):
             "errorCount": c.error_count,
             "lastCollectedAt": c.last_collected_at.isoformat() if c.last_collected_at else None,
             "lastError": c.last_error,
-            "benthos": stream,
+            "workerAlive": connector_workers.is_running("modbus", cid),
         })
     finally:
         db.close()
