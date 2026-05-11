@@ -33,10 +33,28 @@
     .lang-code { font-size: 10px; font-weight: 600; margin-left: 2px; }
     .lang-option.active { color: var(--primary, #3b82f6); font-weight: 600; }
     .lang-option span { margin-right: 8px; }
+
+    /* ── 페이지 상단 progress bar (공통 인프라) ── */
+    #page-progress {
+      position: fixed; top: 0; left: 0;
+      height: 3px; width: 0;
+      background: linear-gradient(90deg, #3b82f6, #06b6d4);
+      box-shadow: 0 0 8px rgba(59,130,246,0.5);
+      z-index: 9999;
+      transition: width 0.3s ease, opacity 0.2s ease;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #page-progress.show { opacity: 1; }
+    #page-progress.error {
+      background: #dc2626;
+      box-shadow: 0 0 8px rgba(220,38,38,0.5);
+    }
   </style>
   {% block extra_css %}{% endblock %}
 </head>
 <body>
+  <div id="page-progress"></div>
   <!-- Sidebar -->
   <nav id="sidebar">
     <div class="sidebar-header">
@@ -253,6 +271,41 @@
     }
     return (typeof v === 'string') ? v : (fallback || key);
   }
+
+  /* ── 공통 페이지 progress bar (SDL.progressStart / progressEnd) ── */
+  window.SDL = window.SDL || {};
+  SDL._pending = 0;
+  SDL._timer = null;
+  SDL.progressStart = function () {
+    SDL._pending++;
+    var $p = $('#page-progress').removeClass('error').addClass('show').css('width', '30%');
+    if (SDL._timer) clearTimeout(SDL._timer);
+    SDL._timer = setTimeout(function () {
+      if (SDL._pending > 0) $p.css('width', '70%');
+    }, 400);
+  };
+  SDL.progressEnd = function (failed) {
+    SDL._pending = Math.max(0, SDL._pending - 1);
+    if (SDL._pending === 0) {
+      var $p = $('#page-progress');
+      if (failed) $p.addClass('error');
+      $p.css('width', '100%');
+      setTimeout(function () {
+        $p.removeClass('show').css('width', '0');
+      }, 250);
+    }
+  };
+  /* jQuery $.ajax 자동 후킹: 옵션에 noProgress:true 면 제외 */
+  $(document).ajaxSend(function (e, jqxhr, opts) {
+    if (opts && opts.noProgress) return;
+    SDL.progressStart();
+    jqxhr.__sdlProgress = true;
+  });
+  $(document).ajaxComplete(function (e, jqxhr) {
+    if (jqxhr && jqxhr.__sdlProgress) {
+      SDL.progressEnd(jqxhr.status >= 400 || jqxhr.status === 0);
+    }
+  });
   </script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
   <script>

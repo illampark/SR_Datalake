@@ -117,6 +117,7 @@
         <option value="backup">{{ t('page.file_storage.filter_backup') }}</option>
       </select>
       <input class="form-control" type="text" placeholder="{{ t('page.file_storage.placeholder_search') }}" style="width:160px;padding:4px 8px;" id="search-file">
+      <span id="filter-spinner" style="display:none;line-height:32px;color:var(--text-secondary);font-size:12px;"><i class="fas fa-spinner fa-spin"></i></span>
       <button class="btn btn-danger btn-sm" id="btn-delete-selected" disabled onclick="deleteSelectedFiles()" title="{{ t('page.file_storage.btn_delete_selected') }}">
         <i class="fas fa-trash"></i> <span id="btn-delete-selected-label">{{ t('page.file_storage.btn_delete_selected') }}</span>
       </button>
@@ -284,9 +285,26 @@ function loadFiles() {
   if (type) params.type = type;
   if (search) params.search = search;
 
+  // 로딩 표시: 재호출이면 기존 행 흐릿하게 + 필터 영역 spinner,
+  // 초기면 테이블은 이미 spinner 행이 보이므로 추가 처리 불필요
+  var hasRows = $('#file-tbody input[data-file-row]').length > 0;
+  if (hasRows) {
+    $('#file-tbody').css({opacity: 0.5, 'pointer-events': 'none'});
+  }
+  $('#filter-spinner').show();
+  $('#filter-bucket, #filter-filetype, #search-file, #btn-prev, #btn-next').prop('disabled', true);
+
+  function _restoreUi() {
+    $('#file-tbody').css({opacity: 1, 'pointer-events': 'auto'});
+    $('#filter-spinner').hide();
+    $('#filter-bucket, #filter-filetype, #search-file').prop('disabled', false);
+    // prev/next 는 updatePagination 이 다시 세팅
+  }
+
   $.getJSON(API + '/browse', params, function(res) {
     if (!res.success) {
       $('#file-tbody').html('<tr><td colspan="6" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.query_failed') + '</td></tr>');
+      _restoreUi();
       return;
     }
 
@@ -296,6 +314,7 @@ function loadFiles() {
     if (!files || files.length === 0) {
       $('#file-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-folder-open"></i> ' + __t('page.file_storage.no_files') + '</td></tr>');
       updatePagination();
+      _restoreUi();
       return;
     }
 
@@ -325,8 +344,10 @@ function loadFiles() {
     $('#file-tbody').html(html);
     updateBulkDeleteUI();
     updatePagination();
+    _restoreUi();
   }).fail(function() {
     $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
+    _restoreUi();
   });
 }
 
