@@ -106,6 +106,22 @@ class BaseConnectorWorker(threading.Thread):
                            self.connector_type, self.connector_id)
             return
 
+        # 커넥터-레벨 카탈로그 자동 등록 (없으면 생성, 있으면 그대로).
+        # 옛 Benthos callback 시대엔 callback 라우트가 담당했지만, 워커 모델로
+        # 전환한 뒤에는 워커가 직접 보장해야 한다.
+        try:
+            from backend.services.metadata_tracker import ensure_connector_catalog
+            db = SessionLocal()
+            try:
+                c = db.query(self.model).get(self.connector_id)
+                connector_name = c.name if c else ""
+            finally:
+                db.close()
+            ensure_connector_catalog(self.connector_type, self.connector_id, connector_name)
+        except Exception:
+            logger.exception("[%s/%d] ensure_connector_catalog failed",
+                             self.connector_type, self.connector_id)
+
         logger.info("[%s/%d] worker started", self.connector_type, self.connector_id)
         meta_refresh_at = time.time()
 
