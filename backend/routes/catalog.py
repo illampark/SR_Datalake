@@ -774,6 +774,9 @@ def _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min):
                     "connectorType": c.connector_type, "pipelineId": c.pipeline_id},
         "sinkType": "internal_tsdb_sink",
         "isConnectorLevel": False,
+        # 파이프라인 TSDB sink 는 measurement 단위 묶음 → 여러 tag_name 이 섞여 있으므로
+        # 프론트에서 tag 컬럼을 노출해야 한다.
+        "showTagColumn": True,
         "items": [r.to_dict() for r in rows],
         "total": total,
         "page": page,

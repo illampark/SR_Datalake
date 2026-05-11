@@ -1156,6 +1156,8 @@ function loadCatalogData(page) {
     var total = data.total || 0;
     var stats = data.stats || {};
     var isCL = data.isConnectorLevel || false;
+    // tag 컬럼 노출 여부: 백엔드가 showTagColumn 을 명시한 경우 우선, 아니면 isCL (백워드 컴팻)
+    var showTag = (typeof data.showTagColumn === 'boolean') ? data.showTagColumn : isCL;
     var sinkType = data.sinkType || '';
 
     // File 싱크 → 파일 탭으로 자동 전환
@@ -1210,11 +1212,11 @@ function loadCatalogData(page) {
     }
 
     // 기본: 시계열 데이터 테이블
-    var colCount = isCL ? 8 : 7;
+    var colCount = showTag ? 8 : 7;
 
     // Header
     var hdr = '<tr><th style="width:180px;">' + __t('page.catalog.data_ts_header_timestamp') + '</th>';
-    if (isCL) hdr += '<th>' + __t('page.catalog.data_ts_header_tag') + '</th>';
+    if (showTag) hdr += '<th>' + __t('page.catalog.data_ts_header_tag') + '</th>';
     hdr +=
         '<th>' + __t('page.catalog.data_ts_header_value') + '</th>' +
         '<th>' + __t('page.catalog.data_ts_header_value_str') + '</th>' +
@@ -1254,7 +1256,7 @@ function loadCatalogData(page) {
 
     items.forEach(function(d) {
       var row = '<tr><td class="mono fs-12">' + escHtml((d.timestamp || '').replace('T', ' ').slice(0, 19)) + '</td>';
-      if (isCL) row += '<td class="mono fs-12">' + escHtml(d.tagName || '') + '</td>';
+      if (showTag) row += '<td class="mono fs-12">' + escHtml(d.tagName || '') + '</td>';
       row +=
           '<td class="mono fw-600">' + (d.value != null ? d.value : '-') + '</td>' +
           '<td class="mono fs-12">' + escHtml(d.valueStr || '') + '</td>' +
