@@ -2181,6 +2181,8 @@
       "stat_file_count": "File Count",
       "stat_using": "In Use",
       "stat_total_buckets": "Total Across All Buckets",
+      "usage_minio": "MinIO Usage",
+      "usage_local_path": "Local Path Usage",
       "card_usage_by_type": "Usage by File Type",
       "chart_no_files": "No files available to display statistics.",
       "card_storage_info": "Storage Info",

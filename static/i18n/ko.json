@@ -2181,6 +2181,8 @@
       "stat_file_count": "파일 수",
       "stat_using": "사용중",
       "stat_total_buckets": "전체 버킷 합계",
+      "usage_minio": "MinIO 사용량",
+      "usage_local_path": "Local Path 사용량",
       "card_usage_by_type": "파일 유형별 사용량",
       "chart_no_files": "파일이 없어 통계를 표시할 수 없습니다.",
       "card_storage_info": "스토리지 정보",

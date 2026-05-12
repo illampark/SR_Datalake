@@ -9,7 +9,6 @@ from backend.database import SessionLocal
 from backend.models.storage import FileCleanupPolicy
 from backend.config import MINIO_BUCKETS
 from backend.services.minio_client import get_minio_client, get_minio_config
-from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +66,7 @@ FILE_TYPE_MAP = {
     ".png": "image", ".jpg": "image", ".jpeg": "image",
     ".gif": "image", ".bmp": "image", ".svg": "image",
     ".pdf": "doc", ".doc": "doc", ".docx": "doc",
-    ".xls": "excel", ".xlsx": "excel", ".xlsm": "excel",
+    ".xls": "excel", ".xlsx": "excel",
     ".ppt": "doc", ".pptx": "doc", ".txt": "doc",
     ".tar": "backup", ".gz": "backup", ".zip": "backup",
     ".bak": "backup", ".7z": "backup", ".rar": "backup",
@@ -97,61 +96,128 @@ def _classify(filename):
 def get_storage_status():
     db = SessionLocal()
     cfg = get_minio_config(db)
-    db.close()
     try:
-        client = _get_minio()
-        total_size = 0
-        total_objects = 0
+        # ── 1) MinIO 사용량 ──
+        minio_status = "connected"
+        minio_error = None
+        minio_total_size = 0
+        minio_total_objects = 0
         bucket_details = []
+        try:
+            client = _get_minio()
+            for bname in MINIO_BUCKETS:
+                bsize = 0
+                bcount = 0
+                try:
+                    for obj in client.list_objects(bname, recursive=True):
+                        bsize += obj.size
+                        bcount += 1
+                except S3Error:
+                    pass
+                minio_total_size += bsize
+                minio_total_objects += bcount
+                bucket_details.append({
+                    "bucket": bname,
+                    "size_bytes": bsize,
+                    "size_display": _fmt_bytes(bsize),
+                    "object_count": bcount,
+                })
+        except Exception as e:
+            minio_status = "disconnected"
+            minio_error = str(e)
 
-        for bname in MINIO_BUCKETS:
-            bsize = 0
-            bcount = 0
-            try:
-                for obj in client.list_objects(bname, recursive=True):
-                    bsize += obj.size
-                    bcount += 1
-            except S3Error:
-                pass
-            total_size += bsize
-            total_objects += bcount
-            bucket_details.append({
-                "bucket": bname,
-                "size_bytes": bsize,
-                "size_display": _fmt_bytes(bsize),
-                "object_count": bcount,
-            })
+        # ── 2) local_path import_collector 들의 디스크 사용량 ──
+        local_total_size = 0
+        local_total_objects = 0
+        local_paths = []
+        try:
+            from backend.models.collector import ImportCollector
+            ic_rows = (
+                db.query(ImportCollector)
+                  .filter(ImportCollector.source_mode == "local_path")
+                  .all()
+            )
+            for ic in ic_rows:
+                p = ic.local_path or ""
+                if not p or not os.path.isdir(p):
+                    continue
+                lsize = 0
+                lcount = 0
+                for root_dir, _subdirs, fnames in os.walk(p):
+                    for fn in fnames:
+                        try:
+                            st = os.stat(os.path.join(root_dir, fn))
+                            lsize += st.st_size
+                            lcount += 1
+                        except OSError:
+                            continue
+                local_total_size += lsize
+                local_total_objects += lcount
+                local_paths.append({
+                    "collectorId": ic.id,
+                    "collectorName": getattr(ic, "name", "") or f"import #{ic.id}",
+                    "path": p,
+                    "size_bytes": lsize,
+                    "size_display": _fmt_bytes(lsize),
+                    "object_count": lcount,
+                })
+        except Exception as e:
+            logger.warning("local_path 사용량 집계 실패: %s", e)
 
-        used_gb = total_size / (1024 ** 3)
-
+        # ── 3) 디스크 전체 capacity ──
         cap_override = request.args.get("capacityGB")
+        disk_path = None
         if cap_override is not None:
             try:
                 total_gb = float(cap_override)
-                avail_gb = max(total_gb - used_gb, 0)
-                disk_path = None
+                # avail 는 합산 used 기준으로 계산 (아래에서)
             except (TypeError, ValueError):
                 cap_override = None
         if cap_override is None:
             disk_path = _resolve_disk_path()
             disk = psutil.disk_usage(disk_path)
             total_gb = disk.total / (1024 ** 3)
-            avail_gb = disk.free / (1024 ** 3)
 
-        pct = round((used_gb / total_gb) * 100, 1) if total_gb > 0 else 0
+        minio_used_gb = minio_total_size / (1024 ** 3)
+        local_used_gb = local_total_size / (1024 ** 3)
+        total_used_gb = minio_used_gb + local_used_gb
+        avail_gb = max(total_gb - total_used_gb, 0)
+
+        def _pct(used):
+            return round((used / total_gb) * 100, 1) if total_gb > 0 else 0
 
         return _ok({
+            # ── 하위 호환 (기존 stat 카드용 — 합계) ──
             "totalGB": round(total_gb, 2),
-            "usedGB": round(used_gb, 4),
+            "usedGB": round(total_used_gb, 4),
             "availableGB": round(avail_gb, 2),
-            "usagePercent": pct,
-            "totalObjects": total_objects,
+            "usagePercent": _pct(total_used_gb),
+            "totalObjects": minio_total_objects + local_total_objects,
             "buckets": bucket_details,
             "storageType": "MinIO S3",
             "endpoint": cfg["endpoint"],
-            "status": "connected",
+            "status": minio_status,
             "diskPath": disk_path,
             "snapshot_at": datetime.utcnow().isoformat(),
+            # ── 출처별 분리 ──
+            "minio": {
+                "usedGB": round(minio_used_gb, 4),
+                "sizeBytes": minio_total_size,
+                "sizeDisplay": _fmt_bytes(minio_total_size),
+                "objectCount": minio_total_objects,
+                "usagePercent": _pct(minio_used_gb),
+                "status": minio_status,
+                "error": minio_error,
+                "buckets": bucket_details,
+            },
+            "localPath": {
+                "usedGB": round(local_used_gb, 4),
+                "sizeBytes": local_total_size,
+                "sizeDisplay": _fmt_bytes(local_total_size),
+                "objectCount": local_total_objects,
+                "usagePercent": _pct(local_used_gb),
+                "paths": local_paths,
+            },
         })
     except Exception as e:
         return _ok({
@@ -161,7 +227,13 @@ def get_storage_status():
             "status": "disconnected",
             "error_detail": str(e),
             "snapshot_at": datetime.utcnow().isoformat(),
+            "minio": {"usedGB": 0, "sizeBytes": 0, "sizeDisplay": "0.0 B",
+                      "objectCount": 0, "usagePercent": 0, "status": "disconnected", "buckets": []},
+            "localPath": {"usedGB": 0, "sizeBytes": 0, "sizeDisplay": "0.0 B",
+                          "objectCount": 0, "usagePercent": 0, "paths": []},
         })
+    finally:
+        db.close()
 
 
 # ──────────────────────────────────────────────
@@ -176,7 +248,7 @@ def browse_files():
         file_type = request.args.get("type", "")
         search = request.args.get("search", "").lower()
         page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", get_default_page_size(), type=int)
+        size = request.args.get("size", 50, type=int)
 
         items = []
         for obj in client.list_objects(bucket, prefix=path, recursive=True):
@@ -444,7 +516,7 @@ def preview_file():
                 "rawUrl": raw_url,
             })
 
-        if ext in (".xlsx", ".xlsm"):
+        if ext == ".xlsx":
             sheet = request.args.get("sheet") or ""
             max_rows = request.args.get("maxRows", 100, type=int)
             try:

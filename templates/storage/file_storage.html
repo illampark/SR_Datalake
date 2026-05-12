@@ -85,11 +85,20 @@
       </div>
       <div class="mb-8">
         <div class="d-flex align-center" style="justify-content:space-between">
-          <span class="fs-12 text-muted">{{ t('page.file_storage.stat_usage') }}</span>
-          <span id="info-usage-text" class="fs-12 fw-600">- / - (0%)</span>
+          <span class="fs-12 text-muted">{{ t('page.file_storage.usage_minio') }}</span>
+          <span id="info-minio-text" class="fs-12 fw-600">- / - (0%)</span>
         </div>
         <div class="progress mt-8">
-          <div id="info-usage-bar" class="progress-bar green" style="width:0%"></div>
+          <div id="info-minio-bar" class="progress-bar green" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="mb-8">
+        <div class="d-flex align-center" style="justify-content:space-between">
+          <span class="fs-12 text-muted">{{ t('page.file_storage.usage_local_path') }}</span>
+          <span id="info-local-text" class="fs-12 fw-600">- / - (0%)</span>
+        </div>
+        <div class="progress mt-8">
+          <div id="info-local-bar" class="progress-bar green" style="width:0%"></div>
         </div>
       </div>
     </div>
@@ -234,13 +243,22 @@ function loadStatus() {
       $('#info-status').html('<span class="text-danger"><i class="fas fa-circle-xmark"></i> ' + __t('page.file_storage.status_disconnected') + '</span>');
     }
 
-    // Usage bar
-    var usedLabel = d.usedGB >= 1 ? d.usedGB.toFixed(2) + ' GB' : (d.usedGB * 1024).toFixed(1) + ' MB';
+    // ── Usage bars: MinIO / local_path 분리 ──
     var totalLabel = d.totalGB >= 1024 ? (d.totalGB / 1024).toFixed(1) + ' TB' : d.totalGB + ' GB';
-    $('#info-usage-text').text(usedLabel + ' / ' + totalLabel + ' (' + d.usagePercent + '%)');
-
-    var barClass = d.usagePercent >= 80 ? 'red' : d.usagePercent >= 60 ? 'yellow' : 'green';
-    $('#info-usage-bar').attr('class', 'progress-bar ' + barClass).css('width', d.usagePercent + '%');
+    function fmtUsed(gb) {
+      if (gb >= 1024) return (gb / 1024).toFixed(2) + ' TB';
+      if (gb >= 1) return gb.toFixed(2) + ' GB';
+      return (gb * 1024).toFixed(1) + ' MB';
+    }
+    function applyBar(prefix, used, pct) {
+      $('#info-' + prefix + '-text').text(fmtUsed(used) + ' / ' + totalLabel + ' (' + pct + '%)');
+      var cls = pct >= 80 ? 'red' : pct >= 60 ? 'yellow' : 'green';
+      $('#info-' + prefix + '-bar').attr('class', 'progress-bar ' + cls).css('width', pct + '%');
+    }
+    var m = d.minio || {usedGB: 0, usagePercent: 0};
+    var l = d.localPath || {usedGB: 0, usagePercent: 0};
+    applyBar('minio', m.usedGB, m.usagePercent);
+    applyBar('local', l.usedGB, l.usagePercent);
   });
 }
 
