@@ -2021,26 +2021,16 @@ def list_catalog_files(cid):
                     dt_to += timedelta(days=1)
             except ValueError: pass
 
-        dirs = []       # 하위 디렉토리 목록
-        files = []      # 파일 목록
+        dirs = []                  # 현재 레벨 하위 디렉토리
+        current_level_files = []   # 현재 레벨 파일 (검색 시는 매칭 전체)
+        cumulative_files = []      # 전체 카탈로그 (재귀) 매칭
         seen_dirs = set()
+        is_search = bool(search)
 
         try:
-            for obj in client.list_objects(bucket, prefix=current_prefix, recursive=use_recursive):
+            # ── 1) base_prefix 부터 항상 재귀 list — cumulative 통계 ──
+            for obj in client.list_objects(bucket, prefix=base_prefix, recursive=True):
                 obj_name = obj.object_name
-
-                if not use_recursive and obj.is_dir:
-                    # 디렉토리 항목
-                    dir_name = obj_name[len(current_prefix):].rstrip("/")
-                    if dir_name and dir_name not in seen_dirs:
-                        seen_dirs.add(dir_name)
-                        dirs.append({
-                            "name": dir_name,
-                            "type": "directory",
-                            "path": browse_path + dir_name + "/",
-                        })
-                    continue
-
                 filename = os.path.basename(obj_name)
                 if not filename:
                     continue
@@ -2056,7 +2046,7 @@ def list_catalog_files(cid):
                 ext = os.path.splitext(filename)[1].lower()
                 rel_path = obj_name[len(base_prefix):] if obj_name.startswith(base_prefix) else obj_name
 
-                files.append({
+                file_info = {
                     "name": filename,
                     "objectName": obj_name,
                     "bucket": bucket,
@@ -2066,20 +2056,41 @@ def list_catalog_files(cid):
                     "sizeDisplay": _fmt_bytes(obj.size),
                     "path": rel_path,
                     "modifiedAt": obj.last_modified.isoformat() if obj.last_modified else None,
-                })
+                }
+                cumulative_files.append(file_info)
+                # items 선정: 검색 모드면 매칭 전체, 아니면 obj_name 이 current_prefix 의 직접 자식인지 확인
+                if is_search or (obj_name.startswith(current_prefix)
+                                 and "/" not in obj_name[len(current_prefix):]):
+                    current_level_files.append(file_info)
+
+            # ── 2) 현재 레벨 하위 디렉토리 (단일 레벨) ──
+            if not is_search:
+                for obj in client.list_objects(bucket, prefix=current_prefix, recursive=False):
+                    if not obj.is_dir:
+                        continue
+                    dir_name = obj.object_name[len(current_prefix):].rstrip("/")
+                    if dir_name and dir_name not in seen_dirs:
+                        seen_dirs.add(dir_name)
+                        dirs.append({
+                            "name": dir_name,
+                            "type": "directory",
+                            "path": browse_path + dir_name + "/",
+                        })
         except S3Error:
             pass
 
         # 디렉토리 정렬 (이름순) + 파일 정렬 (수정일 역순)
         dirs.sort(key=lambda x: x["name"])
-        files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
+        current_level_files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
 
-        total = len(files)
-        # 전체 파일 누적 크기 (현재 경로 + 검색/날짜 필터 적용 후의 모든 매칭 파일)
-        total_size_bytes = sum(int(f.get("size") or 0) for f in files)
+        total = len(current_level_files)
+        total_size_bytes = sum(int(f.get("size") or 0) for f in current_level_files)
         total_size_display = _fmt_bytes(total_size_bytes)
+        cumulative_total = len(cumulative_files)
+        cumulative_size_bytes = sum(int(f.get("size") or 0) for f in cumulative_files)
+        cumulative_size_display = _fmt_bytes(cumulative_size_bytes)
         start = (page - 1) * size
-        paged_files = files[start:start + size]
+        paged_files = current_level_files[start:start + size]
 
         # 빵크럼 경로 생성
         breadcrumb = [{"name": "root", "path": ""}]
@@ -2096,6 +2107,9 @@ def list_catalog_files(cid):
             "total": total,
             "totalSize": total_size_bytes,
             "totalSizeDisplay": total_size_display,
+            "cumulativeTotal": cumulative_total,
+            "cumulativeSize": cumulative_size_bytes,
+            "cumulativeSizeDisplay": cumulative_size_display,
             "page": page,
             "size": size,
             "currentPath": browse_path,
@@ -2237,14 +2251,15 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
     하여 파일을 수집하고, /files 엔드포인트와 동일한 응답 shape 으로 반환.
     """
     base_path = ic_row.local_path.rstrip("/")
-    current_dir = os.path.join(base_path, browse_path.strip("/")) if browse_path else base_path
+    current_rel = browse_path.strip("/") if browse_path else ""
+    current_dir = os.path.join(base_path, current_rel) if current_rel else base_path
 
-    # 검색이 있으면 재귀, 아니면 현재 디렉토리만
+    # 검색이 있으면 items 도 재귀, 아니면 items 는 현재 레벨만 (디렉토리 탐색 UX 유지)
     is_search = bool(search)
-    use_recursive = is_search
 
     dirs = []
-    files = []
+    current_level_files = []   # 현재 browse_path 의 직접 자식 파일 (검색 시는 전체 매칭)
+    cumulative_files = []      # 전체 카탈로그 (base_path 재귀) 매칭 — 저장 용량 합산용
     seen_dirs = set()
 
     # 날짜 필터 파싱
@@ -2263,30 +2278,8 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
             pass
 
     try:
-        if use_recursive:
-            walker = os.walk(current_dir)
-        else:
-            # 현재 디렉토리만 (단일 레벨)
-            walker = [(current_dir, [], [])]
-            if os.path.isdir(current_dir):
-                with os.scandir(current_dir) as it:
-                    for entry in it:
-                        if entry.is_dir(follow_symlinks=False):
-                            walker[0][1].append(entry.name)
-                        elif entry.is_file(follow_symlinks=False):
-                            walker[0][2].append(entry.name)
-
-        for root_dir, subdirs, fnames in walker:
-            if not use_recursive:
-                # 디렉토리 항목 (single-level 만)
-                for d in subdirs:
-                    if d not in seen_dirs:
-                        seen_dirs.add(d)
-                        dirs.append({
-                            "name": d,
-                            "type": "directory",
-                            "path": (browse_path.rstrip("/") + "/" if browse_path else "") + d + "/",
-                        })
+        # ── 1) 항상 base_path 재귀 walk — cumulative 통계 (전체 카탈로그) ──
+        for root_dir, subdirs, fnames in os.walk(base_path):
             for fn in fnames:
                 fpath = os.path.join(root_dir, fn)
                 try:
@@ -2302,9 +2295,9 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
                     continue
                 ext = os.path.splitext(fn)[1].lower()
                 rel_path = os.path.relpath(fpath, base_path).replace(os.sep, "/")
-                files.append({
+                file_info = {
                     "name": fn,
-                    "objectName": rel_path,    # local 모드에선 bucket 대신 rel path 사용
+                    "objectName": rel_path,
                     "bucket": "(local)",
                     "type": _file_type(ext),
                     "extension": ext,
@@ -2313,19 +2306,45 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
                     "path": rel_path,
                     "modifiedAt": mod_dt.isoformat(),
                     "isLocal": True,
-                })
+                }
+                cumulative_files.append(file_info)
+                # items 선정: 검색 모드면 전체 매칭, 아니면 현재 레벨만
+                file_parent = os.path.dirname(rel_path).replace(os.sep, "/")
+                if is_search or file_parent == current_rel:
+                    current_level_files.append(file_info)
+
+        # ── 2) 현재 레벨 하위 디렉토리 (단일 레벨) ──
+        if not is_search and os.path.isdir(current_dir):
+            try:
+                with os.scandir(current_dir) as it:
+                    for entry in it:
+                        if entry.is_dir(follow_symlinks=False) and entry.name not in seen_dirs:
+                            seen_dirs.add(entry.name)
+                            dirs.append({
+                                "name": entry.name,
+                                "type": "directory",
+                                "path": (browse_path.rstrip("/") + "/" if browse_path else "") + entry.name + "/",
+                            })
+            except OSError:
+                pass
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("local_path 파일 목록 조회 실패: %s", e)
 
     dirs.sort(key=lambda x: x["name"])
-    files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
+    current_level_files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
 
-    total = len(files)
-    total_size_bytes = sum(int(f.get("size") or 0) for f in files)
+    # 현재 레벨 (페이지네이션용)
+    total = len(current_level_files)
+    total_size_bytes = sum(int(f.get("size") or 0) for f in current_level_files)
     total_size_display = _fmt_bytes(total_size_bytes)
+    # 전체 카탈로그 (catalog detail '저장 용량' 행이 사용)
+    cumulative_total = len(cumulative_files)
+    cumulative_size_bytes = sum(int(f.get("size") or 0) for f in cumulative_files)
+    cumulative_size_display = _fmt_bytes(cumulative_size_bytes)
+
     start = (page - 1) * size
-    paged_files = files[start:start + size]
+    paged_files = current_level_files[start:start + size]
 
     breadcrumb = [{"name": "root", "path": ""}]
     if browse_path:
@@ -2338,9 +2357,12 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
     return _ok({
         "directories": dirs,
         "items": paged_files,
-        "total": total,
+        "total": total,                                     # 현재 레벨 매칭 수 (페이지네이션용)
         "totalSize": total_size_bytes,
         "totalSizeDisplay": total_size_display,
+        "cumulativeTotal": cumulative_total,                # 전체 카탈로그 (재귀, 카탈로그 상세 표시용)
+        "cumulativeSize": cumulative_size_bytes,
+        "cumulativeSizeDisplay": cumulative_size_display,
         "page": page,
         "size": size,
         "currentPath": browse_path,

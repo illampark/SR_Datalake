@@ -677,9 +677,9 @@ function showDetail(id) {
         var $cell = $('#detail-total-size');
         if (!$cell.length) return;
         if (r2 && r2.success && r2.data) {
-          var sizeLabel = r2.data.totalSizeDisplay || '0 B';
-          var fileCount = r2.data.total || 0;
-          var bytes = r2.data.totalSize || 0;
+          var sizeLabel = r2.data.cumulativeSizeDisplay || r2.data.totalSizeDisplay || '0 B';
+          var fileCount = (r2.data.cumulativeTotal != null) ? r2.data.cumulativeTotal : (r2.data.total || 0);
+          var bytes = r2.data.cumulativeSize || r2.data.totalSize || 0;
           $cell.html(
             '<i class="fas fa-database" style="margin-right:6px;color:var(--text-secondary);"></i>' +
             '<span class="fw-600">' + escHtml(sizeLabel) + '</span>' +
