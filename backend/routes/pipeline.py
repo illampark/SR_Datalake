@@ -424,6 +424,8 @@ def list_normalize_rules():
 
 
 @pipeline_bp.route("/modules/normalize-rules", methods=["POST"])
+@audit_route("pipeline", "pipeline.module.normalize.create", target_type="normalize_rule",
+             detail_keys=["name", "targetType", "nullStrategy"])
 def create_normalize_rule():
     db = _db()
     try:
@@ -463,6 +465,9 @@ def get_normalize_rule(rid):
 
 
 @pipeline_bp.route("/modules/normalize-rules/<int:rid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.module.normalize.update", target_type="normalize_rule",
+             target_name_kwarg="rid",
+             detail_keys=["name", "targetType", "nullStrategy"])
 def update_normalize_rule(rid):
     db = _db()
     try:
@@ -496,6 +501,8 @@ def update_normalize_rule(rid):
 
 
 @pipeline_bp.route("/modules/normalize-rules/<int:rid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.module.normalize.delete", target_type="normalize_rule",
+             target_name_kwarg="rid")
 def delete_normalize_rule(rid):
     db = _db()
     try:
@@ -524,6 +531,8 @@ def list_unit_conversions():
 
 
 @pipeline_bp.route("/modules/unit-conversions", methods=["POST"])
+@audit_route("pipeline", "pipeline.module.unit.create", target_type="unit_conversion",
+             detail_keys=["name", "sourceUnit", "targetUnit", "formula"])
 def create_unit_conversion():
     db = _db()
     try:
@@ -564,6 +573,9 @@ def get_unit_conversion(rid):
 
 
 @pipeline_bp.route("/modules/unit-conversions/<int:rid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.module.unit.update", target_type="unit_conversion",
+             target_name_kwarg="rid",
+             detail_keys=["name", "sourceUnit", "targetUnit", "formula"])
 def update_unit_conversion(rid):
     db = _db()
     try:
@@ -599,6 +611,8 @@ def update_unit_conversion(rid):
 
 
 @pipeline_bp.route("/modules/unit-conversions/<int:rid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.module.unit.delete", target_type="unit_conversion",
+             target_name_kwarg="rid")
 def delete_unit_conversion(rid):
     db = _db()
     try:
@@ -627,6 +641,8 @@ def list_filter_rules():
 
 
 @pipeline_bp.route("/modules/filter-rules", methods=["POST"])
+@audit_route("pipeline", "pipeline.module.filter.create", target_type="filter_rule",
+             detail_keys=["name", "filterType", "minValue", "maxValue", "deadband"])
 def create_filter_rule():
     db = _db()
     try:
@@ -668,6 +684,9 @@ def get_filter_rule(rid):
 
 
 @pipeline_bp.route("/modules/filter-rules/<int:rid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.module.filter.update", target_type="filter_rule",
+             target_name_kwarg="rid",
+             detail_keys=["name", "filterType", "minValue", "maxValue", "deadband"])
 def update_filter_rule(rid):
     db = _db()
     try:
@@ -705,6 +724,8 @@ def update_filter_rule(rid):
 
 
 @pipeline_bp.route("/modules/filter-rules/<int:rid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.module.filter.delete", target_type="filter_rule",
+             target_name_kwarg="rid")
 def delete_filter_rule(rid):
     db = _db()
     try:
@@ -733,6 +754,8 @@ def list_anomaly_configs():
 
 
 @pipeline_bp.route("/modules/anomaly-configs", methods=["POST"])
+@audit_route("pipeline", "pipeline.module.anomaly.create", target_type="anomaly_config",
+             detail_keys=["name", "method", "threshold", "windowSize"])
 def create_anomaly_config():
     db = _db()
     try:
@@ -773,6 +796,9 @@ def get_anomaly_config(rid):
 
 
 @pipeline_bp.route("/modules/anomaly-configs/<int:rid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.module.anomaly.update", target_type="anomaly_config",
+             target_name_kwarg="rid",
+             detail_keys=["name", "method", "threshold", "windowSize"])
 def update_anomaly_config(rid):
     db = _db()
     try:
@@ -808,6 +834,8 @@ def update_anomaly_config(rid):
 
 
 @pipeline_bp.route("/modules/anomaly-configs/<int:rid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.module.anomaly.delete", target_type="anomaly_config",
+             target_name_kwarg="rid")
 def delete_anomaly_config(rid):
     db = _db()
     try:
@@ -836,6 +864,8 @@ def list_aggregate_configs():
 
 
 @pipeline_bp.route("/modules/aggregate-configs", methods=["POST"])
+@audit_route("pipeline", "pipeline.module.aggregate.create", target_type="aggregate_config",
+             detail_keys=["name", "windowSeconds", "functions"])
 def create_aggregate_config():
     db = _db()
     try:
@@ -874,6 +904,9 @@ def get_aggregate_config(rid):
 
 
 @pipeline_bp.route("/modules/aggregate-configs/<int:rid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.module.aggregate.update", target_type="aggregate_config",
+             target_name_kwarg="rid",
+             detail_keys=["name", "windowSeconds", "functions"])
 def update_aggregate_config(rid):
     db = _db()
     try:
@@ -905,6 +938,8 @@ def update_aggregate_config(rid):
 
 
 @pipeline_bp.route("/modules/aggregate-configs/<int:rid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.module.aggregate.delete", target_type="aggregate_config",
+             target_name_kwarg="rid")
 def delete_aggregate_config(rid):
     db = _db()
     try:
@@ -933,6 +968,8 @@ def list_enrich_configs():
 
 
 @pipeline_bp.route("/modules/enrich-configs", methods=["POST"])
+@audit_route("pipeline", "pipeline.module.enrich.create", target_type="enrich_config",
+             detail_keys=["name", "fields", "lookupTable"])
 def create_enrich_config():
     db = _db()
     try:
@@ -971,6 +1008,9 @@ def get_enrich_config(rid):
 
 
 @pipeline_bp.route("/modules/enrich-configs/<int:rid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.module.enrich.update", target_type="enrich_config",
+             target_name_kwarg="rid",
+             detail_keys=["name", "fields", "lookupTable"])
 def update_enrich_config(rid):
     db = _db()
     try:
@@ -1002,6 +1042,8 @@ def update_enrich_config(rid):
 
 
 @pipeline_bp.route("/modules/enrich-configs/<int:rid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.module.enrich.delete", target_type="enrich_config",
+             target_name_kwarg="rid")
 def delete_enrich_config(rid):
     db = _db()
     try:
@@ -1030,6 +1072,8 @@ def list_script_configs():
 
 
 @pipeline_bp.route("/modules/script-configs", methods=["POST"])
+@audit_route("pipeline", "pipeline.module.script.create", target_type="script_config",
+             detail_keys=["name", "language"])
 def create_script_config():
     db = _db()
     try:
@@ -1069,6 +1113,9 @@ def get_script_config(rid):
 
 
 @pipeline_bp.route("/modules/script-configs/<int:rid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.module.script.update", target_type="script_config",
+             target_name_kwarg="rid",
+             detail_keys=["name", "language"])
 def update_script_config(rid):
     db = _db()
     try:
@@ -1102,6 +1149,8 @@ def update_script_config(rid):
 
 
 @pipeline_bp.route("/modules/script-configs/<int:rid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.module.script.delete", target_type="script_config",
+             target_name_kwarg="rid")
 def delete_script_config(rid):
     db = _db()
     try:

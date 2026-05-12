@@ -345,6 +345,8 @@ def restart_connector(cid):
 # MODBUS-009: POST /api/connectors/modbus/<id>/test — 연결 테스트
 # ──────────────────────────────────────────────
 @modbus_bp.route("/<int:cid>/test", methods=["POST"])
+@audit_route("connector", "connector.modbus.test", target_type="modbus_connector",
+             target_name_kwarg="cid")
 def test_connector(cid):
     db = _db()
     try:
@@ -365,6 +367,8 @@ def test_connector(cid):
 # MODBUS-010: POST /api/connectors/modbus/test-connection — 연결 테스트 (등록 전)
 # ──────────────────────────────────────────────
 @modbus_bp.route("/test-connection", methods=["POST"])
+@audit_route("connector", "connector.modbus.test_connection", target_type="modbus_connector",
+             detail_keys=["modbusType", "host", "port"])
 def test_connection_direct():
     body = request.get_json(force=True)
     modbus_type = body.get("modbusType", "tcp")
@@ -427,6 +431,8 @@ def list_tags(cid):
 # MODBUS-013: POST /api/connectors/modbus/<id>/tags — 태그 등록
 # ──────────────────────────────────────────────
 @modbus_bp.route("/<int:cid>/tags", methods=["POST"])
+@audit_route("connector", "connector.modbus.tag.create", target_type="modbus_tag",
+             detail_keys=["tagName", "slaveId", "functionCode", "registerAddress", "dataType"])
 def create_tag(cid):
     db = _db()
     try:
@@ -467,6 +473,8 @@ def create_tag(cid):
 # MODBUS-014: DELETE /api/connectors/modbus/<id>/tags/<tagId> — 태그 삭제
 # ──────────────────────────────────────────────
 @modbus_bp.route("/<int:cid>/tags/<int:tid>", methods=["DELETE"])
+@audit_route("connector", "connector.modbus.tag.delete", target_type="modbus_tag",
+             target_name_kwarg="tid")
 def delete_tag(cid, tid):
     db = _db()
     try:

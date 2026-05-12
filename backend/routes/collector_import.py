@@ -619,6 +619,8 @@ def stop_import(cid):
 # IMP-012: 재발행 (저장된 원본 → MQTT)
 # ═══════════════════════════════════════════
 @import_bp.route("/<int:cid>/republish", methods=["POST"])
+@audit_route("connector", "connector.import.republish", target_type="import_collector",
+             target_name_kwarg="cid")
 def republish_import(cid):
     db = _db()
     try:

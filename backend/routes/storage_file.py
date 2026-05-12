@@ -351,6 +351,8 @@ def get_cleanup_policy():
 
 
 @file_bp.route("/cleanup-policy", methods=["PUT"])
+@audit_route("storage", "storage.file.cleanup_policy.update", target_type="file_cleanup_policy",
+             detail_keys=["bucket", "retentionDays", "enabled"])
 def update_cleanup_policy():
     db = _db()
     try:

@@ -354,6 +354,8 @@ def restart_connector(cid):
 # DB-009: POST /api/connectors/db/<id>/test — 연결 테스트
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>/test", methods=["POST"])
+@audit_route("connector", "connector.db.test", target_type="db_connector",
+             target_name_kwarg="cid")
 def test_connector(cid):
     db = _db()
     try:
@@ -373,6 +375,8 @@ def test_connector(cid):
 # DB-010: POST /api/connectors/db/test-connection — 연결 테스트 (등록 전)
 # ──────────────────────────────────────────────
 @db_bp.route("/test-connection", methods=["POST"])
+@audit_route("connector", "connector.db.test_connection", target_type="db_connector",
+             detail_keys=["dbType", "host", "port", "database"])
 def test_connection_direct():
     body = request.get_json(force=True)
     db_type = body.get("dbType", "mysql")
@@ -433,6 +437,8 @@ def list_tags(cid):
 # DB-013: POST /api/connectors/db/<id>/tags — 태그(테이블) 등록
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>/tags", methods=["POST"])
+@audit_route("connector", "connector.db.tag.create", target_type="db_tag",
+             detail_keys=["tableName", "tagName", "primaryKey", "dataType"])
 def create_tag(cid):
     db = _db()
     try:
@@ -467,6 +473,8 @@ def create_tag(cid):
 # DB-014: DELETE /api/connectors/db/<id>/tags/<tagId> — 태그 삭제
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>/tags/<int:tid>", methods=["DELETE"])
+@audit_route("connector", "connector.db.tag.delete", target_type="db_tag",
+             target_name_kwarg="tid")
 def delete_tag(cid, tid):
     db = _db()
     try:

@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify, request, session
 
 from backend.database import SessionLocal
 from backend.models.notice import Notice
+from backend.services.audit_logger import audit_route
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ def list_notices():
 
 # ── NOC-002: POST /api/notice ──
 @notice_bp.route("", methods=["POST"])
+@audit_route("notice", "notice.create", target_type="notice",
+             detail_keys=["title", "category", "isPinned", "expiresAt"])
 def create_notice():
     """공지 작성 (admin 전용)"""
     if not _is_admin():
@@ -107,6 +110,9 @@ def get_notice(nid):
 
 # ── NOC-004: PUT /api/notice/<id> ──
 @notice_bp.route("/<int:nid>", methods=["PUT"])
+@audit_route("notice", "notice.update", target_type="notice",
+             target_name_kwarg="nid",
+             detail_keys=["title", "category", "isPinned", "expiresAt"])
 def update_notice(nid):
     """공지 수정 (admin 전용)"""
     if not _is_admin():
@@ -154,6 +160,8 @@ def update_notice(nid):
 
 # ── NOC-005: DELETE /api/notice/<id> ──
 @notice_bp.route("/<int:nid>", methods=["DELETE"])
+@audit_route("notice", "notice.delete", target_type="notice",
+             target_name_kwarg="nid")
 def delete_notice(nid):
     """공지 삭제 (admin 전용)"""
     if not _is_admin():

@@ -5,6 +5,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import func, text as _sql_text
 from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, DownsamplingPolicy
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ def get_instance(tsdb_id):
 # STR-003: POST /api/storage/tsdb  — 인스턴스 등록
 # ──────────────────────────────────────────────
 @tsdb_bp.route("", methods=["POST"])
+@audit_route("storage", "storage.tsdb.config.create", target_type="tsdb_config",
+             detail_keys=["name", "tsdbType", "host", "port", "database", "organization", "bucket"])
 def create_instance():
     db = _db()
     try:
@@ -122,6 +125,9 @@ def create_instance():
 # STR-004: PUT /api/storage/tsdb/<id>  — 설정 수정
 # ──────────────────────────────────────────────
 @tsdb_bp.route("/<int:tsdb_id>", methods=["PUT"])
+@audit_route("storage", "storage.tsdb.config.update", target_type="tsdb_config",
+             target_name_kwarg="tsdb_id",
+             detail_keys=["name", "tsdbType", "host", "port", "database", "organization", "bucket"])
 def update_instance(tsdb_id):
     db = _db()
     try:
@@ -153,6 +159,8 @@ def update_instance(tsdb_id):
 # STR-005: DELETE /api/storage/tsdb/<id>  — 삭제
 # ──────────────────────────────────────────────
 @tsdb_bp.route("/<int:tsdb_id>", methods=["DELETE"])
+@audit_route("storage", "storage.tsdb.config.delete", target_type="tsdb_config",
+             target_name_kwarg="tsdb_id")
 def delete_instance(tsdb_id):
     db = _db()
     try:
@@ -173,6 +181,8 @@ def delete_instance(tsdb_id):
 # STR-006: POST /api/storage/tsdb/<id>/test  — 연결 테스트
 # ──────────────────────────────────────────────
 @tsdb_bp.route("/<int:tsdb_id>/test", methods=["POST"])
+@audit_route("storage", "storage.tsdb.config.test", target_type="tsdb_config",
+             target_name_kwarg="tsdb_id")
 def test_connection(tsdb_id):
     db = _db()
     try:
@@ -325,6 +335,8 @@ def list_downsampling(tsdb_id):
 # STR-009: POST /api/storage/tsdb/<id>/downsampling  — 정책 추가
 # ──────────────────────────────────────────────
 @tsdb_bp.route("/<int:tsdb_id>/downsampling", methods=["POST"])
+@audit_route("storage", "storage.tsdb.downsampling.create", target_type="downsampling_policy",
+             detail_keys=["name", "measurement", "windowSeconds", "aggregateFunction", "enabled"])
 def create_downsampling(tsdb_id):
     db = _db()
     try:
@@ -361,6 +373,8 @@ def create_downsampling(tsdb_id):
 # STR-010: DELETE /api/storage/tsdb/<id>/downsampling/<pid>  — 정책 삭제
 # ──────────────────────────────────────────────
 @tsdb_bp.route("/<int:tsdb_id>/downsampling/<int:policy_id>", methods=["DELETE"])
+@audit_route("storage", "storage.tsdb.downsampling.delete", target_type="downsampling_policy",
+             target_name_kwarg="policy_id")
 def delete_downsampling(tsdb_id, policy_id):
     db = _db()
     try:
@@ -385,6 +399,9 @@ def delete_downsampling(tsdb_id, policy_id):
 # 추가: PUT /api/storage/tsdb/<id>/downsampling/<pid>  — 정책 수정
 # ──────────────────────────────────────────────
 @tsdb_bp.route("/<int:tsdb_id>/downsampling/<int:policy_id>", methods=["PUT"])
+@audit_route("storage", "storage.tsdb.downsampling.update", target_type="downsampling_policy",
+             target_name_kwarg="policy_id",
+             detail_keys=["name", "measurement", "windowSeconds", "aggregateFunction", "enabled"])
 def update_downsampling(tsdb_id, policy_id):
     db = _db()
     try:
@@ -419,6 +436,8 @@ def update_downsampling(tsdb_id, policy_id):
 # 추가: PATCH /api/storage/tsdb/<id>/downsampling/<pid>/toggle  — 정책 상태 토글
 # ──────────────────────────────────────────────
 @tsdb_bp.route("/<int:tsdb_id>/downsampling/<int:policy_id>/toggle", methods=["PATCH"])
+@audit_route("storage", "storage.tsdb.downsampling.toggle", target_type="downsampling_policy",
+             target_name_kwarg="policy_id")
 def toggle_downsampling(tsdb_id, policy_id):
     db = _db()
     try:

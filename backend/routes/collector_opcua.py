@@ -326,6 +326,8 @@ def restart_connector(cid):
 # OPCUA-009: POST /api/connectors/opcua/<id>/test — 연결 테스트
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>/test", methods=["POST"])
+@audit_route("connector", "connector.opcua.test", target_type="opcua_connector",
+             target_name_kwarg="cid")
 def test_connector(cid):
     db = _db()
     try:
@@ -346,6 +348,8 @@ def test_connector(cid):
 # OPCUA-010: POST /api/connectors/opcua/test-connection — 연결 테스트 (등록 전)
 # ──────────────────────────────────────────────
 @opcua_bp.route("/test-connection", methods=["POST"])
+@audit_route("connector", "connector.opcua.test_connection", target_type="opcua_connector",
+             detail_keys=["serverUrl", "securityPolicy", "authType"])
 def test_connection_direct():
     body = request.get_json(force=True)
     server_url = body.get("serverUrl", "opc.tcp://localhost:4840")
@@ -408,6 +412,8 @@ def list_tags(cid):
 # OPCUA-013: POST /api/connectors/opcua/<id>/tags — 태그(노드) 등록
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>/tags", methods=["POST"])
+@audit_route("connector", "connector.opcua.tag.create", target_type="opcua_tag",
+             detail_keys=["tagName", "nodeId", "dataType"])
 def create_tag(cid):
     db = _db()
     try:
@@ -443,6 +449,8 @@ def create_tag(cid):
 # OPCUA-014: DELETE /api/connectors/opcua/<id>/tags/<tagId> — 태그 삭제
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>/tags/<int:tid>", methods=["DELETE"])
+@audit_route("connector", "connector.opcua.tag.delete", target_type="opcua_tag",
+             target_name_kwarg="tid")
 def delete_tag(cid, tid):
     db = _db()
     try:

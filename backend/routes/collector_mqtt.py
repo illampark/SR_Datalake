@@ -335,6 +335,8 @@ def restart_connector(cid):
 # CONN-009: POST /api/connectors/mqtt/<id>/test — 연결 테스트
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/test", methods=["POST"])
+@audit_route("connector", "connector.mqtt.test", target_type="mqtt_connector",
+             target_name_kwarg="cid")
 def test_connector(cid):
     db = _db()
     try:
@@ -402,6 +404,8 @@ def list_tags(cid):
 # CONN-012: POST /api/connectors/mqtt/<id>/tags — 태그 등록
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/tags", methods=["POST"])
+@audit_route("connector", "connector.mqtt.tag.create", target_type="mqtt_tag",
+             detail_keys=["topic", "tagName", "dataType"])
 def create_tag(cid):
     db = _db()
     try:
@@ -437,6 +441,8 @@ def create_tag(cid):
 # CONN-013: DELETE /api/connectors/mqtt/<id>/tags/<tagId> — 태그 삭제
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/tags/<int:tid>", methods=["DELETE"])
+@audit_route("connector", "connector.mqtt.tag.delete", target_type="mqtt_tag",
+             target_name_kwarg="tid")
 def delete_tag(cid, tid):
     db = _db()
     try:

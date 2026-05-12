@@ -315,6 +315,8 @@ def delete_channel(channel_id):
 
 
 @alarm_bp.route("/channels/<int:channel_id>/test", methods=["POST"])
+@audit_route("alarm", "alarm.channel.test", target_type="alarm_channel",
+             target_name_kwarg="channel_id")
 def test_channel(channel_id):
     db = SessionLocal()
     try:
@@ -334,6 +336,7 @@ def test_channel(channel_id):
 # ══════════════════════════════════════════════
 
 @alarm_bp.route("/evaluate", methods=["POST"])
+@audit_route("alarm", "alarm.evaluate", target_type="")
 def manual_evaluate():
     try:
         alarm_engine.evaluate()

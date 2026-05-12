@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import func, text as _sql_text
 from backend.database import SessionLocal
 from backend.models.storage import RdbmsConfig
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,8 @@ def get_instance(rdbms_id):
 # STR-016: POST /api/storage/rdbms  — 인스턴스 등록
 # ──────────────────────────────────────────────
 @rdbms_bp.route("", methods=["POST"])
+@audit_route("storage", "storage.rdbms.config.create", target_type="rdbms_config",
+             detail_keys=["name", "dbType", "host", "port", "database", "schemaName"])
 def create_instance():
     db = _db()
     try:
@@ -158,6 +161,9 @@ def create_instance():
 # PUT /api/storage/rdbms/<id>  — 인스턴스 수정
 # ──────────────────────────────────────────────
 @rdbms_bp.route("/<int:rdbms_id>", methods=["PUT"])
+@audit_route("storage", "storage.rdbms.config.update", target_type="rdbms_config",
+             target_name_kwarg="rdbms_id",
+             detail_keys=["name", "dbType", "host", "port", "database", "schemaName"])
 def update_instance(rdbms_id):
     db = _db()
     try:
@@ -192,6 +198,8 @@ def update_instance(rdbms_id):
 # DELETE /api/storage/rdbms/<id>  — 인스턴스 삭제
 # ──────────────────────────────────────────────
 @rdbms_bp.route("/<int:rdbms_id>", methods=["DELETE"])
+@audit_route("storage", "storage.rdbms.config.delete", target_type="rdbms_config",
+             target_name_kwarg="rdbms_id")
 def delete_instance(rdbms_id):
     db = _db()
     try:
@@ -212,6 +220,8 @@ def delete_instance(rdbms_id):
 # STR-017: POST /api/storage/rdbms/<id>/test  — 연결 테스트
 # ──────────────────────────────────────────────
 @rdbms_bp.route("/<int:rdbms_id>/test", methods=["POST"])
+@audit_route("storage", "storage.rdbms.config.test", target_type="rdbms_config",
+             target_name_kwarg="rdbms_id")
 def test_connection(rdbms_id):
     db = _db()
     try:

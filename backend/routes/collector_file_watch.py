@@ -415,6 +415,8 @@ def restart_collector(cid):
 # FC-009: POST /api/connectors/file/<id>/test — SFTP 경로 검증
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/<int:cid>/test", methods=["POST"])
+@audit_route("connector", "connector.file.test", target_type="file_connector",
+             target_name_kwarg="cid")
 def test_collector(cid):
     db = _db()
     try:
@@ -445,6 +447,8 @@ def test_collector(cid):
 # FC-010: POST /api/connectors/file/test-path — SFTP 경로 검증 (등록 전)
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/test-path", methods=["POST"])
+@audit_route("connector", "connector.file.test_path", target_type="file_connector",
+             detail_keys=["watchPath"])
 def test_path_direct():
     body = request.get_json(force=True)
     watch_path = body.get("watchPath", "").strip()
@@ -474,6 +478,8 @@ def test_path_direct():
 # FC-014: POST /api/connectors/file/test-sftp — SFTP 접속 테스트
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/test-sftp", methods=["POST"])
+@audit_route("connector", "connector.file.test_sftp", target_type="file_connector",
+             detail_keys=["host", "port", "username", "watchPath"])
 def test_sftp():
     body = request.get_json(force=True)
     host = body.get("sftpHost", "localhost").strip()

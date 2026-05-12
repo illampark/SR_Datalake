@@ -369,6 +369,8 @@ def restart_connector(cid):
 # API-009: POST /api/connectors/api/<id>/test — 연결 테스트
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>/test", methods=["POST"])
+@audit_route("connector", "connector.api.test", target_type="api_connector",
+             target_name_kwarg="cid")
 def test_connector(cid):
     db = _db()
     try:
@@ -389,6 +391,8 @@ def test_connector(cid):
 # API-010: POST /api/connectors/api/test-connection — 등록 전 테스트
 # ──────────────────────────────────────────────
 @api_bp.route("/test-connection", methods=["POST"])
+@audit_route("connector", "connector.api.test_connection", target_type="api_connector",
+             detail_keys=["baseUrl", "authType"])
 def test_connection_direct():
     body = request.get_json(force=True)
     base_url = body.get("baseUrl", "")
@@ -454,6 +458,8 @@ def list_endpoints(cid):
 # API-013: POST /api/connectors/api/<id>/endpoints — 엔드포인트 등록
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>/endpoints", methods=["POST"])
+@audit_route("connector", "connector.api.endpoint.create", target_type="api_endpoint",
+             detail_keys=["name", "path", "method", "responsePath"])
 def create_endpoint(cid):
     db = _db()
     try:
@@ -492,6 +498,8 @@ def create_endpoint(cid):
 # API-014: DELETE /api/connectors/api/<id>/endpoints/<eid> — 엔드포인트 삭제
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>/endpoints/<int:eid>", methods=["DELETE"])
+@audit_route("connector", "connector.api.endpoint.delete", target_type="api_endpoint",
+             target_name_kwarg="eid")
 def delete_endpoint(cid, eid):
     db = _db()
     try:
