@@ -138,6 +138,8 @@ def start_pipeline(pipeline_id):
                 "dropped": 0,
                 "started_at": datetime.utcnow().isoformat(),
             },
+            # MQTT-source 주기적 DB commit 타임스탬프 (file-source 는 별도 로직)
+            "_last_commit_ts": time.time(),
         }
 
         if is_file_source:
@@ -275,6 +277,23 @@ def _handle_message(pipeline_id, topic, payload):
         # 통계 갱신
         info["stats"]["processed"] += 1
         elapsed_ms = (time.time() - start_time) * 1000
+
+        # MQTT-source 주기적 DB commit (5초마다 또는 1000건마다)
+        # file-source 는 run_file_source 내부에서 별도로 commit 함
+        if info.get("source_mode") == "mqtt":
+            now_ts = time.time()
+            if (now_ts - info.get("_last_commit_ts", 0)) >= 5.0 \
+                    or info["stats"]["processed"] % 1000 == 0:
+                info["_last_commit_ts"] = now_ts
+                # stop 과의 race 방지: _running_pipelines 에서 빠졌다면 commit X
+                # (stop 이 status='stopped' 로 write 한 직후 race 로 'running' 으로
+                # 되돌리는 사고 방지)
+                if pipeline_id in _running_pipelines:
+                    try:
+                        _update_pipeline_db(pipeline_id, "running", info["stats"])
+                    except Exception as ce:
+                        logger.warning("파이프라인 %s: 주기적 통계 commit 실패 — %s",
+                                       pipeline_id, ce)
 
         # 메타데이터 갱신 (비동기적)
         try:
