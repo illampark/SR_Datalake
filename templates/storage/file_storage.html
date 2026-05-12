@@ -11,7 +11,7 @@
 
 {% block page_actions %}
 <button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
-<button class="btn btn-primary btn-sm" onclick="openUploadModal()"><i class="fas fa-upload"></i> {{ t('page.file_storage.btn_upload_file') }}</button>
+<button class="btn btn-primary btn-sm" id="btn-upload-file" onclick="openUploadModal()"><i class="fas fa-upload"></i> {{ t('page.file_storage.btn_upload_file') }}</button>
 {% endblock %}
 
 {% block content %}
@@ -110,11 +110,16 @@
   <div class="card-header">
     <h3><i class="fas fa-folder-open"></i> {{ t('page.file_storage.card_file_list') }}</h3>
     <div class="d-flex gap-8">
+      <select class="form-select" style="width:auto;min-width:110px;padding:4px 8px;" id="filter-source">
+        <option value="minio">MinIO</option>
+        <option value="local">Local Path</option>
+      </select>
       <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="filter-bucket">
         <option value="sdl-files">sdl-files</option>
         <option value="sdl-archive">sdl-archive</option>
         <option value="sdl-backup">sdl-backup</option>
       </select>
+      <select class="form-select" style="width:auto;min-width:200px;padding:4px 8px;display:none;" id="filter-collector"></select>
       <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="filter-filetype">
         <option value="">{{ t('page.file_storage.filter_all_types') }}</option>
         <option value="log">{{ t('page.file_storage.filter_log') }}</option>
@@ -132,6 +137,7 @@
       </button>
     </div>
   </div>
+  <div id="local-breadcrumb" class="px-16 py-8 fs-12" style="display:none;border-bottom:1px solid var(--border);background:var(--bg-subtle);"></div>
   <div class="card-body p-0">
     <div class="table-wrapper">
       <table>
@@ -193,9 +199,13 @@ var TYPE_LABELS = {
   excel: 'Excel', backup: __t('page.file_storage.filter_backup'), other: '기타'
 };
 
+var currentSource = 'minio';   // 'minio' | 'local'
+var currentLocalPath = '';     // local mode 의 현재 디렉토리 (base 기준 상대)
+
 $(function() {
   loadStatus();
   loadStats();
+  loadLocalCollectors();
   loadFiles();
 
   var searchTimer;
@@ -205,7 +215,75 @@ $(function() {
   });
   $('#filter-filetype').on('change', function() { currentPage = 1; loadFiles(); });
   $('#filter-bucket').on('change', function() { currentPage = 1; loadFiles(); });
+  $('#filter-collector').on('change', function() {
+    currentLocalPath = '';
+    currentPage = 1;
+    loadFiles();
+  });
+  $('#filter-source').on('change', function() {
+    currentSource = $(this).val();
+    currentLocalPath = '';
+    currentPage = 1;
+    selectedFiles = {};
+    applySourceUi();
+    loadFiles();
+  });
 });
+
+/* ── source/collector UI 토글 ── */
+function applySourceUi() {
+  if (currentSource === 'local') {
+    $('#filter-bucket').hide();
+    $('#filter-collector').show();
+    $('#btn-upload-file').hide();
+    $('#local-breadcrumb').show();
+  } else {
+    $('#filter-bucket').show();
+    $('#filter-collector').hide();
+    $('#btn-upload-file').show();
+    $('#local-breadcrumb').hide();
+  }
+}
+
+function loadLocalCollectors() {
+  $.getJSON(API + '/local/collectors', function(res) {
+    if (!res.success) return;
+    var items = (res.data && res.data.items) || [];
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var label = it.name + ' (' + it.fileCount + __t('page.file_storage.total_files_unit_short') + ', ' + it.sizeDisplay + ')';
+      html += '<option value="' + it.id + '">' + escHtml(label) + '</option>';
+    }
+    if (!html) html = '<option value="">' + __t('page.file_storage.no_local_collectors') + '</option>';
+    $('#filter-collector').html(html);
+  });
+}
+
+function browseLocalPath(p) {
+  currentLocalPath = p || '';
+  currentPage = 1;
+  loadFiles();
+}
+
+function renderLocalBreadcrumb(breadcrumb) {
+  if (!breadcrumb || !breadcrumb.length) {
+    $('#local-breadcrumb').empty();
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < breadcrumb.length; i++) {
+    var b = breadcrumb[i];
+    if (i === breadcrumb.length - 1 && i > 0) {
+      html += '<span class="fw-600"><i class="fas fa-folder-open" style="margin-right:4px;color:var(--warning);"></i>' + escHtml(b.name) + '</span>';
+    } else {
+      html += '<a href="javascript:browseLocalPath(\'' + escAttr(b.path) + '\')" style="color:var(--primary);">' +
+        (i === 0 ? '<i class="fas fa-home"></i>' : escHtml(b.name)) + '</a>';
+    }
+    if (i < breadcrumb.length - 1) html += '<span class="text-muted" style="margin:0 6px;">/</span>';
+  }
+  $('#local-breadcrumb').html(html);
+}
 
 /* ── 스토리지 상태 조회 ── */
 function loadStatus() {
@@ -291,33 +369,100 @@ function loadStats() {
 
 /* ── 파일 목록 조회 ── */
 function loadFiles() {
-  var bucket = $('#filter-bucket').val();
   var type = $('#filter-filetype').val();
   var search = $('#search-file').val();
 
-  var params = {
-    bucket: bucket,
-    page: currentPage,
-    size: pageSize
-  };
-  if (type) params.type = type;
-  if (search) params.search = search;
-
-  // 로딩 표시: 재호출이면 기존 행 흐릿하게 + 필터 영역 spinner,
-  // 초기면 테이블은 이미 spinner 행이 보이므로 추가 처리 불필요
   var hasRows = $('#file-tbody input[data-file-row]').length > 0;
-  if (hasRows) {
-    $('#file-tbody').css({opacity: 0.5, 'pointer-events': 'none'});
-  }
+  if (hasRows) $('#file-tbody').css({opacity: 0.5, 'pointer-events': 'none'});
   $('#filter-spinner').show();
-  $('#filter-bucket, #filter-filetype, #search-file, #btn-prev, #btn-next').prop('disabled', true);
+  $('#filter-bucket, #filter-collector, #filter-filetype, #filter-source, #search-file, #btn-prev, #btn-next').prop('disabled', true);
 
   function _restoreUi() {
     $('#file-tbody').css({opacity: 1, 'pointer-events': 'auto'});
     $('#filter-spinner').hide();
-    $('#filter-bucket, #filter-filetype, #search-file').prop('disabled', false);
-    // prev/next 는 updatePagination 이 다시 세팅
+    $('#filter-bucket, #filter-collector, #filter-filetype, #filter-source, #search-file').prop('disabled', false);
   }
+
+  if (currentSource === 'local') {
+    var cid = $('#filter-collector').val();
+    if (!cid) {
+      $('#file-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px 0">' + __t('page.file_storage.select_collector_hint') + '</td></tr>');
+      $('#local-breadcrumb').empty();
+      totalFiles = 0;
+      updatePagination();
+      _restoreUi();
+      return;
+    }
+    var params = { collectorId: cid, page: currentPage, size: pageSize, path: currentLocalPath };
+    if (search) params.search = search;
+    $.getJSON(API + '/local/browse', params, function(res) {
+      if (!res.success) {
+        $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + escHtml((res.error && res.error.message) || __t('page.file_storage.query_failed')) + '</td></tr>');
+        _restoreUi();
+        return;
+      }
+      renderLocalBreadcrumb(res.data.breadcrumb || []);
+      var dirs = res.data.directories || [];
+      var files = (res.data.items || []).filter(function(f) {
+        return !type || f.type === type;
+      });
+      totalFiles = res.data.total || 0;
+      if (dirs.length === 0 && files.length === 0) {
+        $('#file-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding:40px 0"><i class="fas fa-folder-open"></i> ' + __t('page.file_storage.no_files') + '</td></tr>');
+        updatePagination();
+        _restoreUi();
+        return;
+      }
+      var html = '';
+      // 디렉토리 먼저
+      for (var di = 0; di < dirs.length; di++) {
+        var d = dirs[di];
+        html += '<tr style="cursor:pointer" onclick="browseLocalPath(\'' + escAttr(d.path) + '\')">' +
+          '<td></td>' +
+          '<td><i class="fas fa-folder text-warning"></i> ' + escHtml(d.name) + '</td>' +
+          '<td><span class="tag">DIR</span></td>' +
+          '<td class="mono">-</td>' +
+          '<td class="mono fs-12 truncate">' + escHtml(d.path) + '</td>' +
+          '<td class="mono fs-12">-</td>' +
+          '<td></td></tr>';
+      }
+      // 파일
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var icon = FILE_ICONS[f.type] || FILE_ICONS.other;
+        var tagCls = TAG_COLORS[f.type] || '';
+        var label = (TYPE_LABELS[f.type] || f.extension || '').toUpperCase();
+        var modified = fmtLocal(f.modifiedAt);
+        var selKey = 'L:' + cid + ':' + f.path;
+        var checked = selectedFiles[selKey] ? ' checked' : '';
+        html += '<tr>' +
+          '<td style="text-align:center;"><input type="checkbox" data-file-row data-sel-key="' + escAttr(selKey) + '" data-source="local" data-cid="' + cid + '" data-relpath="' + escAttr(f.path) + '" data-name="' + escAttr(f.name) + '" onchange="toggleFileSelection(this)"' + checked + '></td>' +
+          '<td><i class="fas ' + icon + '"></i> ' + escHtml(f.name) + '</td>' +
+          '<td><span class="tag ' + tagCls + '">' + label + '</span></td>' +
+          '<td class="mono">' + f.sizeDisplay + '</td>' +
+          '<td class="mono fs-12 truncate">' + escHtml(f.path) + '</td>' +
+          '<td class="mono fs-12">' + modified + '</td>' +
+          '<td>' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '" onclick="downloadLocalFile(' + cid + ',\'' + escAttr(f.path) + '\')"><i class="fas fa-download"></i></button> ' +
+            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteLocalFile(' + cid + ',\'' + escAttr(f.path) + '\',\'' + escAttr(f.name) + '\')"><i class="fas fa-trash"></i></button>' +
+          '</td></tr>';
+      }
+      $('#file-tbody').html(html);
+      updateBulkDeleteUI();
+      updatePagination();
+      _restoreUi();
+    }).fail(function() {
+      $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
+      _restoreUi();
+    });
+    return;
+  }
+
+  // ── MinIO mode (기존) ──
+  var bucket = $('#filter-bucket').val();
+  var params = { bucket: bucket, page: currentPage, size: pageSize };
+  if (type) params.type = type;
+  if (search) params.search = search;
 
   $.getJSON(API + '/browse', params, function(res) {
     if (!res.success) {
@@ -344,10 +489,10 @@ function loadFiles() {
       var label = (TYPE_LABELS[f.type] || f.extension).toUpperCase();
       var modified = fmtLocal(f.modifiedAt);
 
-      var selKey = f.bucket + ":" + f.objectName;
+      var selKey = 'M:' + f.bucket + ':' + f.objectName;
       var checked = selectedFiles[selKey] ? ' checked' : '';
       html += '<tr>' +
-        '<td style="text-align:center;"><input type="checkbox" data-file-row data-sel-key="' + escAttr(selKey) + '" data-bucket="' + escAttr(f.bucket) + '" data-objname="' + escAttr(f.objectName) + '" data-name="' + escAttr(f.name) + '" onchange="toggleFileSelection(this)"' + checked + '></td>' +
+        '<td style="text-align:center;"><input type="checkbox" data-file-row data-sel-key="' + escAttr(selKey) + '" data-source="minio" data-bucket="' + escAttr(f.bucket) + '" data-objname="' + escAttr(f.objectName) + '" data-name="' + escAttr(f.name) + '" onchange="toggleFileSelection(this)"' + checked + '></td>' +
         '<td><i class="fas ' + icon + '"></i> ' + escHtml(f.name) + '</td>' +
         '<td><span class="tag ' + tagCls + '">' + label + '</span></td>' +
         '<td class="mono">' + f.sizeDisplay + '</td>' +
@@ -366,6 +511,32 @@ function loadFiles() {
   }).fail(function() {
     $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
     _restoreUi();
+  });
+}
+
+/* ── local_path 파일 다운로드/삭제 ── */
+function downloadLocalFile(cid, relPath) {
+  window.location.href = API + '/local/download?collectorId=' + cid + '&path=' + encodeURIComponent(relPath);
+}
+
+function deleteLocalFile(cid, relPath, filename) {
+  var msg = '"' + filename + '" ' + __t('page.file_storage.confirm_delete_local_single');
+  confirmAction(msg, function() {
+    $.ajax({
+      url: API + '/local/delete-batch',
+      type: 'DELETE',
+      contentType: 'application/json',
+      data: JSON.stringify({ collectorId: cid, paths: [relPath] }),
+      success: function(res) {
+        if (res.success) {
+          showToast(filename + __t('page.file_storage.toast_file_deleted'), 'success');
+          refreshAll();
+        } else {
+          showToast((res.error && res.error.message) || __t('page.file_storage.toast_delete_error'), 'error');
+        }
+      },
+      error: function() { showToast(__t('page.file_storage.toast_delete_error'), 'error'); }
+    });
   });
 }
 
@@ -574,16 +745,27 @@ function _showFilePreviewModal(name, data, bucket, objectName) {
 function closeFilePreview() { $('#file-preview-overlay').remove(); }
 
 /* ── 멀티 선택 + 일괄 삭제 ── */
-var selectedFiles = {}; // selKey -> {bucket, objectName, name}
+var selectedFiles = {}; // selKey -> {source, ...}
 
 function toggleFileSelection(el) {
   var key = el.getAttribute('data-sel-key');
+  var src = el.getAttribute('data-source') || 'minio';
   if (el.checked) {
-    selectedFiles[key] = {
-      bucket: el.getAttribute('data-bucket'),
-      objectName: el.getAttribute('data-objname'),
-      name: el.getAttribute('data-name'),
-    };
+    if (src === 'local') {
+      selectedFiles[key] = {
+        source: 'local',
+        collectorId: parseInt(el.getAttribute('data-cid'), 10),
+        relPath: el.getAttribute('data-relpath'),
+        name: el.getAttribute('data-name'),
+      };
+    } else {
+      selectedFiles[key] = {
+        source: 'minio',
+        bucket: el.getAttribute('data-bucket'),
+        objectName: el.getAttribute('data-objname'),
+        name: el.getAttribute('data-name'),
+      };
+    }
   } else {
     delete selectedFiles[key];
   }
@@ -622,28 +804,59 @@ function deleteSelectedFiles() {
   var entries = Object.keys(selectedFiles).map(function(k) { return selectedFiles[k]; });
   if (!entries.length) return;
   var n = entries.length;
-  var msg = __t('page.file_storage.confirm_delete_n_files').replace('{n}', n);
+
+  // 출처별로 분리
+  var minioFiles = entries.filter(function(e) { return e.source !== 'local'; });
+  var localByCid = {};
+  entries.filter(function(e) { return e.source === 'local'; }).forEach(function(e) {
+    if (!localByCid[e.collectorId]) localByCid[e.collectorId] = [];
+    localByCid[e.collectorId].push(e.relPath);
+  });
+
+  var hasLocal = Object.keys(localByCid).length > 0;
+  var msg = hasLocal
+    ? __t('page.file_storage.confirm_delete_n_files_local').replace('{n}', n)
+    : __t('page.file_storage.confirm_delete_n_files').replace('{n}', n);
+
   confirmAction(msg, function() {
-    $.ajax({
-      url: API + '/delete-batch',
-      type: 'DELETE',
-      contentType: 'application/json',
-      data: JSON.stringify({
-        files: entries.map(function(e) { return {bucket: e.bucket, objectName: e.objectName}; }),
-      }),
-      success: function(res) {
-        if (res.success) {
-          var d = res.data || {};
-          var toastMsg = __t('page.file_storage.toast_n_files_deleted').replace('{n}', d.deleted || 0);
-          if (d.failed) toastMsg += ' (' + (d.failed) + ' ' + __t('common.error') + ')';
-          showToast(toastMsg, d.failed ? 'warning' : 'success');
-          selectedFiles = {};
-          refreshAll();
-        } else {
-          showToast((res.error && res.error.message) || __t('page.file_storage.toast_delete_error'), 'error');
+    var deferreds = [];
+    if (minioFiles.length) {
+      deferreds.push($.ajax({
+        url: API + '/delete-batch',
+        type: 'DELETE',
+        contentType: 'application/json',
+        data: JSON.stringify({
+          files: minioFiles.map(function(e) { return {bucket: e.bucket, objectName: e.objectName}; }),
+        }),
+      }));
+    }
+    Object.keys(localByCid).forEach(function(cid) {
+      deferreds.push($.ajax({
+        url: API + '/local/delete-batch',
+        type: 'DELETE',
+        contentType: 'application/json',
+        data: JSON.stringify({ collectorId: parseInt(cid, 10), paths: localByCid[cid] }),
+      }));
+    });
+
+    $.when.apply($, deferreds).always(function() {
+      var totalDeleted = 0;
+      var totalFailed = 0;
+      var results = arguments.length === deferreds.length && deferreds.length > 1
+        ? Array.prototype.slice.call(arguments)
+        : [arguments];
+      results.forEach(function(r) {
+        var payload = (r && r[0]) || r;
+        if (payload && payload.success && payload.data) {
+          totalDeleted += payload.data.deleted || 0;
+          totalFailed += payload.data.failed || 0;
         }
-      },
-      error: function() { showToast(__t('page.file_storage.toast_delete_error'), 'error'); }
+      });
+      var toastMsg = __t('page.file_storage.toast_n_files_deleted').replace('{n}', totalDeleted);
+      if (totalFailed) toastMsg += ' (' + totalFailed + ' ' + __t('common.error') + ')';
+      showToast(toastMsg, totalFailed ? 'warning' : 'success');
+      selectedFiles = {};
+      refreshAll();
     });
   });
 }
@@ -674,6 +887,7 @@ function refreshAll() {
   showToast(__t('page.file_storage.toast_refreshing_storage'), 'info');
   loadStatus();
   loadStats();
+  loadLocalCollectors();
   loadFiles();
 }
 

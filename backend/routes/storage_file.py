@@ -764,3 +764,291 @@ def download_file():
         return _err(f"MinIO 다운로드 오류: {e}", "S3_ERROR", 500)
     except Exception as e:
         return _err(f"다운로드 실패: {e}", "SERVER_ERROR", 500)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Local Path file management — import_collector(source_mode='local_path')
+# 가 가리키는 호스트 파일시스템 경로의 파일을 직접 조회/다운로드/삭제
+# ══════════════════════════════════════════════════════════════════════
+
+def _resolve_collector(db, collector_id):
+    """ImportCollector 조회 + local_path 모드 검증. 실패 시 (None, err_resp)."""
+    from backend.models.collector import ImportCollector
+    ic = db.query(ImportCollector).get(int(collector_id))
+    if not ic:
+        return None, _err("Import Collector를 찾을 수 없습니다.", "NOT_FOUND", 404)
+    if ic.source_mode != "local_path" or not ic.local_path:
+        return None, _err("local_path 모드의 Import Collector가 아닙니다.", "INVALID_MODE", 400)
+    if not os.path.isdir(ic.local_path):
+        return None, _err(f"local_path가 존재하지 않습니다: {ic.local_path}", "PATH_NOT_FOUND", 404)
+    return ic, None
+
+
+def _safe_join(base, rel):
+    """base 디렉토리 안에 머무는 경로만 허용 (path traversal 방지). 위반 시 None."""
+    base_real = os.path.realpath(base)
+    target = os.path.realpath(os.path.join(base, rel or ""))
+    if target == base_real or target.startswith(base_real + os.sep):
+        return target
+    return None
+
+
+@file_bp.route("/local/collectors", methods=["GET"])
+def list_local_collectors():
+    """local_path 모드 Import Collector 목록 (드롭다운용)."""
+    db = SessionLocal()
+    try:
+        from backend.models.collector import ImportCollector
+        rows = (
+            db.query(ImportCollector)
+              .filter(ImportCollector.source_mode == "local_path")
+              .order_by(ImportCollector.id)
+              .all()
+        )
+        items = []
+        for ic in rows:
+            p = ic.local_path or ""
+            exists = bool(p) and os.path.isdir(p)
+            size_bytes = 0
+            count = 0
+            if exists:
+                try:
+                    for root_dir, _sd, fnames in os.walk(p):
+                        for fn in fnames:
+                            try:
+                                size_bytes += os.path.getsize(os.path.join(root_dir, fn))
+                                count += 1
+                            except OSError:
+                                continue
+                except OSError:
+                    pass
+            items.append({
+                "id": ic.id,
+                "name": ic.name,
+                "path": p,
+                "exists": exists,
+                "sizeBytes": size_bytes,
+                "sizeDisplay": _fmt_bytes(size_bytes),
+                "fileCount": count,
+            })
+        return _ok({"items": items})
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/browse", methods=["GET"])
+def browse_local_files():
+    """collectorId 기준 local_path 파일 트리 조회.
+
+    Query: collectorId, path(상대), search, page, size, date_from, date_to
+    """
+    db = SessionLocal()
+    try:
+        cid = request.args.get("collectorId", type=int)
+        if not cid:
+            return _err("collectorId가 필요합니다.", "VALIDATION")
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+
+        page = max(request.args.get("page", 1, type=int), 1)
+        size = max(request.args.get("size", 50, type=int), 1)
+        search = (request.args.get("search", "") or "").lower()
+        browse_path = (request.args.get("path", "") or "").strip().strip("/")
+        date_from = request.args.get("date_from", "")
+        date_to = request.args.get("date_to", "")
+
+        base_path = ic.local_path
+        current = _safe_join(base_path, browse_path) if browse_path else os.path.realpath(base_path)
+        if current is None or not os.path.isdir(current):
+            return _err("유효하지 않은 경로입니다.", "INVALID_PATH", 400)
+
+        dt_from = dt_to = None
+        if date_from:
+            try:
+                dt_from = datetime.fromisoformat(date_from)
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                dt_to = datetime.fromisoformat(date_to)
+            except ValueError:
+                pass
+
+        is_search = bool(search)
+        cumulative_files = []
+        current_level_files = []
+        dirs = []
+        seen_dirs = set()
+
+        for root_dir, subdirs, fnames in os.walk(base_path):
+            for fn in fnames:
+                full = os.path.join(root_dir, fn)
+                rel_path = os.path.relpath(full, base_path).replace(os.sep, "/")
+                if search and search not in fn.lower() and search not in rel_path.lower():
+                    continue
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                mtime = datetime.utcfromtimestamp(st.st_mtime)
+                if dt_from and mtime < dt_from:
+                    continue
+                if dt_to and mtime >= dt_to:
+                    continue
+                ext = os.path.splitext(fn)[1].lower()
+                ftype, _ = _classify(fn)
+                info = {
+                    "name": fn,
+                    "path": rel_path,
+                    "type": ftype,
+                    "extension": ext,
+                    "size": st.st_size,
+                    "sizeDisplay": _fmt_bytes(st.st_size),
+                    "modifiedAt": mtime.isoformat(),
+                }
+                cumulative_files.append(info)
+                parent_rel = os.path.dirname(rel_path).replace(os.sep, "/")
+                current_rel = browse_path
+                if is_search or parent_rel == current_rel:
+                    current_level_files.append(info)
+
+        if not is_search:
+            try:
+                for entry in os.listdir(current):
+                    full = os.path.join(current, entry)
+                    if os.path.isdir(full) and entry not in seen_dirs:
+                        seen_dirs.add(entry)
+                        next_rel = (browse_path + "/" + entry).strip("/")
+                        dirs.append({
+                            "name": entry,
+                            "type": "directory",
+                            "path": next_rel + "/",
+                        })
+            except OSError:
+                pass
+
+        dirs.sort(key=lambda x: x["name"])
+        current_level_files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
+
+        total = len(current_level_files)
+        total_size = sum(int(f.get("size") or 0) for f in current_level_files)
+        cum_total = len(cumulative_files)
+        cum_size = sum(int(f.get("size") or 0) for f in cumulative_files)
+
+        start = (page - 1) * size
+        paged = current_level_files[start:start + size]
+
+        breadcrumb = [{"name": "root", "path": ""}]
+        if browse_path:
+            parts = browse_path.split("/")
+            acc = ""
+            for p in parts:
+                acc += p + "/"
+                breadcrumb.append({"name": p, "path": acc})
+
+        return _ok({
+            "collector": {"id": ic.id, "name": ic.name, "path": base_path},
+            "directories": dirs,
+            "items": paged,
+            "total": total,
+            "totalSize": total_size,
+            "totalSizeDisplay": _fmt_bytes(total_size),
+            "cumulativeTotal": cum_total,
+            "cumulativeSize": cum_size,
+            "cumulativeSizeDisplay": _fmt_bytes(cum_size),
+            "page": page,
+            "size": size,
+            "currentPath": browse_path,
+            "breadcrumb": breadcrumb,
+        })
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/download", methods=["GET"])
+def download_local_file():
+    """local_path 파일 다운로드. Query: collectorId, path(상대)."""
+    db = SessionLocal()
+    try:
+        cid = request.args.get("collectorId", type=int)
+        rel = (request.args.get("path", "") or "").strip().lstrip("/")
+        if not cid or not rel:
+            return _err("collectorId와 path가 필요합니다.", "VALIDATION")
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+        full = _safe_join(ic.local_path, rel)
+        if not full or not os.path.isfile(full):
+            return _err("파일을 찾을 수 없습니다.", "NOT_FOUND", 404)
+        return send_file(full, as_attachment=True, download_name=os.path.basename(full))
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/delete-batch", methods=["DELETE"])
+def delete_local_files_batch():
+    """local_path 파일 일괄 삭제.
+
+    body: {collectorId: int, paths: [str, ...]}
+    경로는 collector의 local_path 기준 상대경로.
+    """
+    db = SessionLocal()
+    try:
+        body = request.get_json(force=True) or {}
+        cid = body.get("collectorId")
+        paths = body.get("paths") or []
+        if not cid or not isinstance(paths, list) or not paths:
+            return _err("collectorId와 paths가 필요합니다.", "VALIDATION")
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+
+        deleted = []
+        errors = []
+        for rel in paths:
+            rel = (rel or "").strip().lstrip("/")
+            if not rel:
+                errors.append({"path": rel, "error": "빈 경로"})
+                continue
+            full = _safe_join(ic.local_path, rel)
+            if not full:
+                errors.append({"path": rel, "error": "경로가 base 디렉토리를 벗어납니다"})
+                continue
+            if not os.path.isfile(full):
+                errors.append({"path": rel, "error": "파일이 없습니다"})
+                continue
+            try:
+                os.remove(full)
+                deleted.append(rel)
+            except OSError as e:
+                errors.append({"path": rel, "error": str(e)})
+
+        # ── 감사 로그 ──
+        try:
+            from backend.services.audit_logger import log_audit
+            log_audit(
+                action_type="data",
+                action="storage.local.delete",
+                target_type="import_collector",
+                target_name=f"{ic.id}:{ic.name}",
+                result="success" if not errors else ("failure" if not deleted else "partial"),
+                detail={
+                    "collectorId": ic.id,
+                    "basePath": ic.local_path,
+                    "requested": len(paths),
+                    "deleted": deleted,
+                    "errors": errors[:20],
+                },
+            )
+        except Exception:
+            pass
+
+        return _ok({
+            "requested": len(paths),
+            "deleted": len(deleted),
+            "failed": len(errors),
+            "errors": errors[:20],
+        })
+    finally:
+        db.close()
