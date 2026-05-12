@@ -1883,6 +1883,8 @@
       "file_date_to": "Modified (to)",
       "file_select_all": "Select All",
       "file_selected": " selected",
+      "file_total_size_tip": "Cumulative size of all files in the current path (after filters applied)",
+      "file_total_files_unit": "files",
       "file_download_zip": "Download Selected (ZIP)",
       "file_zipping": "Creating ZIP...",
       "file_zip_fail": "ZIP download failed.",

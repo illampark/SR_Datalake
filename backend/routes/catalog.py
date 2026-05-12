@@ -2063,6 +2063,9 @@ def list_catalog_files(cid):
         files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
 
         total = len(files)
+        # 전체 파일 누적 크기 (현재 경로 + 검색/날짜 필터 적용 후의 모든 매칭 파일)
+        total_size_bytes = sum(int(f.get("size") or 0) for f in files)
+        total_size_display = _fmt_bytes(total_size_bytes)
         start = (page - 1) * size
         paged_files = files[start:start + size]
 
@@ -2079,6 +2082,8 @@ def list_catalog_files(cid):
             "directories": dirs,
             "items": paged_files,
             "total": total,
+            "totalSize": total_size_bytes,
+            "totalSizeDisplay": total_size_display,
             "page": page,
             "size": size,
             "currentPath": browse_path,

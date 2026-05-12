@@ -1302,11 +1302,12 @@ function loadCatalogFiles(page) {
     '</tr>'
   );
 
-  // Stats bar: breadcrumb + select count + download
+  // Stats bar: breadcrumb + total size + select count + download
   $('#data-stats').show().find('.stat-grid').html(
     '<div class="stat-card" style="padding:8px 12px;">' +
       '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
         '<div id="file-breadcrumb" style="flex:1;"></div>' +
+        '<span class="fs-12" id="file-total-size" title="' + __t('page.catalog.file_total_size_tip') + '"><i class="fas fa-database" style="margin-right:4px;color:var(--text-secondary);"></i><span class="mono">-</span></span>' +
         '<span class="fs-12" id="file-select-count">0 ' + __t('page.catalog.file_selected') + '</span>' +
         '<button class="btn btn-primary btn-sm" id="btn-download-zip" onclick="downloadSelectedZip()" disabled>' +
           '<i class="fas fa-file-zipper"></i> ' + __t('page.catalog.file_download_zip') +
@@ -1324,6 +1325,11 @@ function loadCatalogFiles(page) {
     var dirs = data.directories || [];
     _fileItems = data.items || [];
     var total = data.total || 0;
+    // 전체 파일 누적 크기 표시 (필터 적용된 매칭 파일 총합)
+    var totalSizeLabel = data.totalSizeDisplay || '-';
+    var totalSizeBytes = data.totalSize || 0;
+    $('#file-total-size .mono').text(fmt(total) + ' ' + __t('page.catalog.file_total_files_unit') + ' / ' + totalSizeLabel)
+      .closest('#file-total-size').attr('title', __t('page.catalog.file_total_size_tip') + ' — ' + totalSizeBytes.toLocaleString() + ' bytes');
 
     // Breadcrumb 렌더링
     var bc = data.breadcrumb || [];

@@ -1883,6 +1883,8 @@
       "file_date_to": "수정일 (까지)",
       "file_select_all": "전체 선택",
       "file_selected": "개 선택",
+      "file_total_size_tip": "현재 경로(필터 적용 후) 의 전체 파일 누적 용량",
+      "file_total_files_unit": "개",
       "file_download_zip": "선택 다운로드 (ZIP)",
       "file_zipping": "ZIP 생성 중...",
       "file_zip_fail": "ZIP 다운로드에 실패했습니다.",
