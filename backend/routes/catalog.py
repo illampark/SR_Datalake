@@ -1961,6 +1961,18 @@ def list_catalog_files(cid):
         from backend.services.minio_client import get_minio_client
         client = get_minio_client(db)
 
+        # ─────────────────────────────────────
+        # Import collector 가 source_mode='local_path' 인 경우 → 로컬 FS 직접 walk
+        # (MinIO 가 아니라 sdl-app 컨테이너 안의 마운트 경로에서 파일 조회)
+        # ─────────────────────────────────────
+        if c.connector_type == "import":
+            from backend.models.collector import ImportCollector
+            ic_row = db.query(ImportCollector).get(c.connector_id)
+            if ic_row and ic_row.source_mode == "local_path" and ic_row.local_path:
+                return _list_local_path_files(
+                    ic_row, page, size, search, browse_path, date_from, date_to, c,
+                )
+
         # base prefix 결정
         if c.connector_type == "pipeline" and c.sink_type == "internal_file_sink":
             sink_cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_file_sink")
@@ -2216,6 +2228,127 @@ def _fmt_bytes(b):
             return f"{b:.1f} {unit}"
         b /= 1024
     return f"{b:.1f} TB"
+
+
+def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, date_to, c):
+    """Import collector 의 source_mode='local_path' 시 로컬 FS 파일 목록 응답.
+
+    MinIO 미사용. sdl-app 컨테이너의 ic_row.local_path 를 base 로 os.walk
+    하여 파일을 수집하고, /files 엔드포인트와 동일한 응답 shape 으로 반환.
+    """
+    base_path = ic_row.local_path.rstrip("/")
+    current_dir = os.path.join(base_path, browse_path.strip("/")) if browse_path else base_path
+
+    # 검색이 있으면 재귀, 아니면 현재 디렉토리만
+    is_search = bool(search)
+    use_recursive = is_search
+
+    dirs = []
+    files = []
+    seen_dirs = set()
+
+    # 날짜 필터 파싱
+    dt_from = dt_to = None
+    if date_from:
+        try:
+            dt_from = datetime.fromisoformat(date_from)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.fromisoformat(date_to)
+            if dt_to.hour == 0 and dt_to.minute == 0:
+                dt_to += timedelta(days=1)
+        except ValueError:
+            pass
+
+    try:
+        if use_recursive:
+            walker = os.walk(current_dir)
+        else:
+            # 현재 디렉토리만 (단일 레벨)
+            walker = [(current_dir, [], [])]
+            if os.path.isdir(current_dir):
+                with os.scandir(current_dir) as it:
+                    for entry in it:
+                        if entry.is_dir(follow_symlinks=False):
+                            walker[0][1].append(entry.name)
+                        elif entry.is_file(follow_symlinks=False):
+                            walker[0][2].append(entry.name)
+
+        for root_dir, subdirs, fnames in walker:
+            if not use_recursive:
+                # 디렉토리 항목 (single-level 만)
+                for d in subdirs:
+                    if d not in seen_dirs:
+                        seen_dirs.add(d)
+                        dirs.append({
+                            "name": d,
+                            "type": "directory",
+                            "path": (browse_path.rstrip("/") + "/" if browse_path else "") + d + "/",
+                        })
+            for fn in fnames:
+                fpath = os.path.join(root_dir, fn)
+                try:
+                    st = os.stat(fpath)
+                except OSError:
+                    continue
+                if search and search not in fn.lower() and search not in fpath.lower():
+                    continue
+                mod_dt = datetime.fromtimestamp(st.st_mtime)
+                if dt_from and mod_dt < dt_from:
+                    continue
+                if dt_to and mod_dt >= dt_to:
+                    continue
+                ext = os.path.splitext(fn)[1].lower()
+                rel_path = os.path.relpath(fpath, base_path).replace(os.sep, "/")
+                files.append({
+                    "name": fn,
+                    "objectName": rel_path,    # local 모드에선 bucket 대신 rel path 사용
+                    "bucket": "(local)",
+                    "type": _file_type(ext),
+                    "extension": ext,
+                    "size": st.st_size,
+                    "sizeDisplay": _fmt_bytes(st.st_size),
+                    "path": rel_path,
+                    "modifiedAt": mod_dt.isoformat(),
+                    "isLocal": True,
+                })
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("local_path 파일 목록 조회 실패: %s", e)
+
+    dirs.sort(key=lambda x: x["name"])
+    files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
+
+    total = len(files)
+    total_size_bytes = sum(int(f.get("size") or 0) for f in files)
+    total_size_display = _fmt_bytes(total_size_bytes)
+    start = (page - 1) * size
+    paged_files = files[start:start + size]
+
+    breadcrumb = [{"name": "root", "path": ""}]
+    if browse_path:
+        parts = browse_path.strip("/").split("/")
+        acc = ""
+        for p in parts:
+            acc += p + "/"
+            breadcrumb.append({"name": p, "path": acc})
+
+    return _ok({
+        "directories": dirs,
+        "items": paged_files,
+        "total": total,
+        "totalSize": total_size_bytes,
+        "totalSizeDisplay": total_size_display,
+        "page": page,
+        "size": size,
+        "currentPath": browse_path,
+        "breadcrumb": breadcrumb,
+        "catalog": {"id": c.id, "name": c.name, "connectorType": c.connector_type},
+        "sourceMode": "local_path",
+        "localPath": base_path,
+    })
 
 
 # ──────────────────────────────────────────────
