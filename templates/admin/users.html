@@ -321,7 +321,7 @@ function renderUsers(users) {
     html += '<td>' + _esc(u.email) + '</td>';
     html += '<td><span class="badge-sm badge-' + role.cls + '">' + role.name + '</span></td>';
     html += '<td><span class="badge-status ' + statusBadge + '">' + statusText + '</span></td>';
-    html += '<td class="mono">' + (u.lastLoginAt || '-') + '</td>';
+    html += '<td class="mono">' + fmtLocal(u.lastLoginAt) + '</td>';
     html += '<td>';
     html += '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal(' + u.id + ')"><i class="fas fa-pen"></i></button> ';
     if (u.enabled) {
@@ -545,7 +545,7 @@ function loadHistory() {
       var e = events[i];
       var lbl = _EVENT_LABEL[e.eventType] || {text: e.eventType, cls: 'primary'};
       html += '<tr>';
-      html += '<td class="mono">' + e.createdAt + '</td>';
+      html += '<td class="mono">' + fmtLocal(e.createdAt) + '</td>';
       html += '<td class="fw-600">' + _esc(e.username) + '</td>';
       html += '<td><span class="badge-sm badge-' + lbl.cls + '">' + lbl.text + '</span></td>';
       html += '<td class="mono">' + _esc(e.ipAddress) + '</td>';

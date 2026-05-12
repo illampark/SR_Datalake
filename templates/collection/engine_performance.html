@@ -173,8 +173,7 @@ function statusBadge(s) {
 function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 function fmtTime(iso) {
-  if (!iso) return '-';
-  try { return new Date(iso).toLocaleString('ko-KR'); } catch(e) { return iso; }
+  return fmtLocal(iso);
 }
 
 /* ── Load All ── */
@@ -187,7 +186,7 @@ function loadAll() {
     renderPipelines();
     renderMqttLatencyQuality();
     renderErrors();
-    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-updated').text(fmtLocal(new Date().toISOString()));
   }).fail(function() {
     showToast(__t('page.engine_performance.toast_api_fail'), 'error');
   });

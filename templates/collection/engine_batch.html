@@ -147,7 +147,7 @@ function loadAll() {
     renderDefaults();
     renderConnectors();
     renderPipelines();
-    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-updated').text(fmtLocal(new Date().toISOString()));
   }).fail(function() {
     showToast(__t('page.engine_batch.toast_load_api_fail'), 'error');
   });

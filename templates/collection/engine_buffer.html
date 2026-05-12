@@ -156,7 +156,7 @@ function loadAll() {
     renderSinkBuffers();
     renderAggBuffers();
     renderWindowCache();
-    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-updated').text(fmtLocal(new Date().toISOString()));
   }).fail(function() {
     showToast(__t('page.engine_buffer.toast_load_api_fail'), 'error');
   });
@@ -210,7 +210,7 @@ function renderAggBuffers() {
     for (var i = 0; i < keys.length; i++) {
       var key = keys[i];
       var buf = buffers[key];
-      var started = buf.startedAt ? new Date(buf.startedAt).toLocaleString('ko-KR') : '-';
+      var started = fmtLocal(buf.startedAt);
       html += '<tr>' +
         '<td class="mono" style="font-size:12px">' + escHtml(key) + '</td>' +
         '<td class="mono">' + fmtNum(buf.valuesCount) + '</td>' +

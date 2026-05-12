@@ -218,7 +218,7 @@ function loadAll() {
     renderHealthGrid();
     renderDetailTable();
     renderInfraInfo();
-    $('#last-checked').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-checked').text(fmtLocal(new Date().toISOString()));
   }).fail(function() {
     showToast(__t('page.healthcheck.toast_api_fail'), 'error');
   });
@@ -234,7 +234,7 @@ function runCheck() {
     renderHealthGrid();
     renderDetailTable();
     renderInfraInfo();
-    $('#last-checked').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-checked').text(fmtLocal(new Date().toISOString()));
 
     var s = _data.summary;
     showToast(__t('page.healthcheck.toast_complete') + ' ' + s.healthy + ' ' + __t('page.healthcheck.filter_healthy') + ' / ' + s.degraded + ' ' + __t('page.healthcheck.filter_degraded') + ' / ' + s.down + ' ' + __t('page.healthcheck.filter_down'), 'success');
@@ -366,7 +366,7 @@ function renderInfraInfo() {
   var html = '';
 
   html += '<div class="kv-item"><span class="kv-label">' + __t('page.healthcheck.label_overall_status') + '</span><span class="kv-value">' + statusBadge(_data.overall) + '</span></div>';
-  html += '<div class="kv-item"><span class="kv-label">' + __t('page.healthcheck.label_check_time') + '</span><span class="kv-value">' + new Date(_data.timestamp).toLocaleString('ko-KR') + '</span></div>';
+  html += '<div class="kv-item"><span class="kv-label">' + __t('page.healthcheck.label_check_time') + '</span><span class="kv-value">' + fmtLocal(_data.timestamp) + '</span></div>';
   html += '<div class="kv-item"><span class="kv-label">' + __t('page.healthcheck.label_elapsed_time') + '</span><span class="kv-value">' + _data.elapsed_ms + 'ms</span></div>';
 
   for (var i = 0; i < infra.length; i++) {

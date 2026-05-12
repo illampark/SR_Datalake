@@ -165,7 +165,7 @@ function fmtTime(iso) {
   if (sec < 60) return sec + __t('page.ops_dashboard.label_seconds_ago');
   if (sec < 3600) return Math.floor(sec / 60) + __t('page.ops_dashboard.label_minutes_ago');
   if (sec < 86400) return Math.floor(sec / 3600) + __t('page.ops_dashboard.label_hours_ago');
-  return d.toLocaleDateString('ko-KR') + ' ' + d.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'});
+  return fmtLocal(iso);
 }
 function fmtUptime(sec) {
   if (!sec || sec <= 0) return '-';
@@ -196,7 +196,7 @@ function loadAll() {
     renderCharts();
     renderComponents();
     renderErrors();
-    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-updated').text(fmtLocal(new Date().toISOString()));
   }).fail(function() {
     showToast(__t('page.ops_dashboard.toast_api_fail'), 'error');
   });

@@ -228,7 +228,7 @@ function loadAll() {
     renderCollectedStats(d.connectors);
     renderConnectorTypeChart(d.connectors);
     renderRecentErrors(d.performance.recentErrors);
-    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-updated').text(fmtLocal(new Date().toISOString()));
   });
   $.getJSON('/api/alarm/events', { size: 8 }, function(res) {
     if (!res.success) return;
@@ -373,7 +373,7 @@ function renderRecentAlarms(events) {
     var e = list[i];
     var sevHtml = _severityHtml(e.severity);
     var statusHtml = _statusHtml(e.status);
-    var time = e.fired_at ? e.fired_at.replace('T', ' ').substring(0, 19) : '';
+    var time = fmtLocal(e.fired_at);
     var actionHtml = '';
     if (e.status === 'active') {
       actionHtml = '<button class="btn btn-outline btn-sm" onclick="ackAlarm(' + e.id + ')" title="' + __t('page.dashboard.btn_acknowledge') + '"><i class="fas fa-check"></i></button>';
@@ -428,7 +428,7 @@ function renderRecentErrors(errors) {
   for (var i = 0; i < errors.length; i++) {
     var e = errors[i];
     html += '<tr>' +
-      '<td class="mono fs-12">' + (e.timestamp || '-') + '</td>' +
+      '<td class="mono fs-12">' + fmtLocal(e.timestamp) + '</td>' +
       '<td class="fs-12 fw-600">' + _esc(e.source) + '</td>' +
       '<td class="fs-12"><span class="tag tag-blue">' + _esc(e.sourceType) + '</span></td>' +
       '<td class="fs-12 truncate" style="max-width:400px;" title="' + _escAttr(e.error) + '">' + _esc(e.error) + '</td>' +
@@ -527,7 +527,7 @@ function loadNotices() {
       var n = items[i];
       var catBadge = _noticeCatBadge(n.category);
       var pinIcon  = n.isPinned ? '<i class="fas fa-thumbtack text-warning" style="margin-right:4px;" title="' + __t('page.dashboard.notice_pinned', '고정') + '"></i>' : '';
-      var dateStr  = n.createdAt ? n.createdAt.substring(0, 10) : '';
+      var dateStr  = n.createdAt ? fmtLocal(n.createdAt).substring(0, 10) : '';
       var adminBtns = '';
       if (isAdmin) {
         adminBtns = '<div style="flex-shrink:0;display:flex;gap:4px;">' +
@@ -570,7 +570,7 @@ function openNoticeView(id) {
     var n = res.data;
     var catBadge = _noticeCatBadge(n.category);
     var pinLabel = n.isPinned ? ' <i class="fas fa-thumbtack text-warning"></i>' : '';
-    var dateStr  = n.createdAt ? n.createdAt.replace('T', ' ').substring(0, 16) : '';
+    var dateStr  = n.createdAt ? fmtLocal(n.createdAt).substring(0, 16) : '';
     var body = '<div style="margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
       catBadge + pinLabel +
       '<span style="font-size:12px;color:var(--text-secondary);">' + _esc(n.author) + ' · ' + dateStr + '</span>' +

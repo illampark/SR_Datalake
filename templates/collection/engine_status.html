@@ -219,7 +219,7 @@ function fmtTime(iso) {
   if (sec < 60) return sec + __t('page.engine_status.time_seconds_ago');
   if (sec < 3600) return Math.floor(sec / 60) + __t('page.engine_status.time_minutes_ago');
   if (sec < 86400) return Math.floor(sec / 3600) + __t('page.engine_status.time_hours_ago');
-  return d.toLocaleDateString('ko-KR') + ' ' + d.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'});
+  return fmtLocal(iso);
 }
 
 /* ── Load All ── */
@@ -233,7 +233,7 @@ function loadAll() {
     renderMqtt();
     renderPipelines();
     renderScanners();
-    $('#last-updated').text(new Date().toLocaleTimeString('ko-KR'));
+    $('#last-updated').text(fmtLocal(new Date().toISOString()));
   }).fail(function() {
     showToast(__t('page.engine_status.toast_api_fail'), 'error');
   });

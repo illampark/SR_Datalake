@@ -245,17 +245,10 @@ function qualityBadge(score) {
   return 'badge-danger';
 }
 
-// ── Format timestamp ──
+// ── Format timestamp (system timezone) ──
 function fmtTime(ts) {
-  if (!ts) return '-';
-  var d = new Date(ts);
-  if (isNaN(d.getTime())) return ts;
-  var y = d.getFullYear();
-  var m = ('0' + (d.getMonth()+1)).slice(-2);
-  var day = ('0' + d.getDate()).slice(-2);
-  var h = ('0' + d.getHours()).slice(-2);
-  var min = ('0' + d.getMinutes()).slice(-2);
-  return y + '-' + m + '-' + day + ' ' + h + ':' + min;
+  var s = fmtLocal(ts);
+  return (s && s.length > 16) ? s.substring(0, 16) : s;
 }
 
 // ── Pagination renderer ──

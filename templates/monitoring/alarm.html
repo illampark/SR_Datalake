@@ -177,9 +177,7 @@ var _refreshTimer = null;
 
 function escHtml(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function fmtTime(iso) {
-  if (!iso) return '-';
-  var d = new Date(iso);
-  return d.toLocaleString('ko-KR', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  return fmtLocal(iso);
 }
 
 function sevHtml(s) {
@@ -199,7 +197,7 @@ function loadAll() {
   loadEvents();
   loadRules();
   loadChannels();
-  $('#last-refresh').text(new Date().toLocaleTimeString('ko-KR'));
+  $('#last-refresh').text(fmtLocal(new Date().toISOString()));
 }
 
 /* ── Events ── */

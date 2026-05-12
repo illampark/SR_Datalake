@@ -270,7 +270,7 @@ function renderTable(logs) {
     var badgeCls = _levelBadge(log.level);
     var msgShort = log.message.length > 120 ? log.message.substring(0, 120) + '...' : log.message;
     html += '<tr style="cursor:pointer;" onclick=\'showDetail(' + JSON.stringify(log).replace(/'/g, "&#39;") + ')\'>' +
-      '<td class="mono fs-12">' + _escHtml(log.timestamp) + '</td>' +
+      '<td class="mono fs-12">' + _escHtml(fmtLocal(log.timestamp)) + '</td>' +
       '<td><span class="badge-sm ' + badgeCls + '">' + log.level + '</span></td>' +
       '<td class="fs-12">' + _escHtml(log.component) + '</td>' +
       '<td class="fs-12 truncate" style="max-width:400px;" title="' + _escAttr(log.message) + '">' + _escHtml(msgShort) + '</td>' +
@@ -385,7 +385,7 @@ function populateComponentFilter(components) {
 /* ── 상세 모달 ── */
 function showDetail(log) {
   var html = '<table class="kv-table" style="width:100%;">';
-  html += '<tr><th style="width:100px;">' + __t('page.system_log.th_timestamp') + '</th><td class="mono">' + _escHtml(log.timestamp) + '</td></tr>';
+  html += '<tr><th style="width:100px;">' + __t('page.system_log.th_timestamp') + '</th><td class="mono">' + _escHtml(fmtLocal(log.timestamp)) + '</td></tr>';
   html += '<tr><th>' + __t('page.system_log.th_level') + '</th><td><span class="badge-sm ' + _levelBadge(log.level) + '">' + log.level + '</span></td></tr>';
   html += '<tr><th>' + __t('page.system_log.th_component') + '</th><td>' + _escHtml(log.component) + '</td></tr>';
   html += '<tr><th>' + __t('page.system_log.th_host') + '</th><td class="mono">' + _escHtml(log.host) + '</td></tr>';
