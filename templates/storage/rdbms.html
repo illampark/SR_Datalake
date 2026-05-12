@@ -208,7 +208,7 @@ function loadTables(id) {
       h += '<td class="text-right mono">' + fmtNum(t.row_count) + '</td>';
       h += '<td class="mono">' + (t.size_display || fmtBytes(t.size_bytes)) + '</td>';
       h += '<td class="text-center">' + t.index_count + '</td>';
-      h += '<td class="mono fs-12">' + (t.last_updated ? t.last_updated.replace('T', ' ').substring(0, 19) : '-') + '</td>';
+      h += '<td class="mono fs-12">' + fmtLocal(t.last_updated) + '</td>';
       h += '<td>';
       h += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.rdbms.btn_view_schema') + '" onclick="viewTableSchema(\'' + escAttr(t.table_name) + '\')"><i class="fas fa-eye"></i></button> ';
       {% if is_admin %}

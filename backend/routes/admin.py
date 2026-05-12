@@ -546,6 +546,10 @@ def update_settings():
         if "pageSize" in updated:
             from backend.services.system_settings import invalidate_page_size_cache
             invalidate_page_size_cache()
+        # timezone 변경 즉시 반영 (다음 페이지 진입 시점부터)
+        if "timezone" in updated:
+            from backend.services.system_settings import invalidate_timezone_cache
+            invalidate_timezone_cache()
         logger.info("시스템 설정 수정: %s", ", ".join(updated))
         log_audit("config", "settings.update", "setting", "", detail={"updated": updated})
         return _ok({"updated": updated})

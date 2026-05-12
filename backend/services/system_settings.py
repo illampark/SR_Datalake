@@ -66,3 +66,45 @@ def clamp_page_size(value):
 
 def page_size_bounds():
     return _PAGE_SIZE_MIN, _PAGE_SIZE_MAX
+
+
+# ─────────────────────────────────────────────
+# Timezone (system.timezone)
+# ─────────────────────────────────────────────
+
+_DEFAULT_TIMEZONE = "Asia/Seoul"
+_TIMEZONE_KEY = "system.timezone"
+_tz_cache = {"value": None, "ts": 0.0}
+
+
+def get_timezone():
+    """admin_setting 'system.timezone' 값을 반환. 60초 캐시.
+
+    UI 에서 timestamp 를 표시할 때 이 값 기준으로 변환한다.
+    저장소(DB / TSDB)는 UTC 그대로 유지.
+    """
+    now = time.time()
+    if _tz_cache["value"] is not None and (now - _tz_cache["ts"]) < _TTL_SECONDS:
+        return _tz_cache["value"]
+
+    db = SessionLocal()
+    try:
+        row = db.query(AdminSetting).filter_by(key=_TIMEZONE_KEY).first()
+        v = (row.value or "").strip() if row else ""
+        if not v:
+            v = _DEFAULT_TIMEZONE
+    except Exception:
+        logger.exception("timezone 조회 실패 — 기본값 사용")
+        v = _DEFAULT_TIMEZONE
+    finally:
+        db.close()
+
+    _tz_cache["value"] = v
+    _tz_cache["ts"] = now
+    return v
+
+
+def invalidate_timezone_cache():
+    """설정 저장 직후 호출해 즉시 새 값을 반영시킨다."""
+    _tz_cache["value"] = None
+    _tz_cache["ts"] = 0.0

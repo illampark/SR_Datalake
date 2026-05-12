@@ -77,6 +77,19 @@ def inject_i18n():
         return get_translation(key, lang)
     return {'t': t, 'current_lang': lang, 'i18n_all': get_all_translations(lang)}
 
+
+@app.context_processor
+def inject_system_timezone():
+    """모든 템플릿에서 system_timezone 변수로 admin_setting 의 TZ 값을 접근.
+    UI 가 timestamp 를 표시할 때 fmtLocal() 이 이 값 기준으로 변환한다.
+    저장소(PG/MinIO)는 UTC 그대로 유지."""
+    try:
+        from backend.services.system_settings import get_timezone
+        return {'system_timezone': get_timezone()}
+    except Exception:
+        return {'system_timezone': 'Asia/Seoul'}
+
+
 @app.after_request
 def _set_lang_cookie(response):
     """첫 방문 시 lang 쿠키가 없으면 시스템 기본 언어로 설정한다."""

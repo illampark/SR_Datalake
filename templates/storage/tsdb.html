@@ -202,8 +202,8 @@ function loadDataSummary() {
       h += '<td class="mono">' + (it.pipeline_id != null ? '#' + it.pipeline_id : '-') + ' ' + escHtml(it.pipeline_name || '') + '</td>';
       h += '<td class="mono">' + escHtml(it.measurement || '-') + '</td>';
       h += '<td class="text-right mono">' + fmtNum(it.rows) + '</td>';
-      h += '<td class="mono fs-12">' + (it.first_ts ? it.first_ts.replace('T', ' ').substring(0, 19) : '-') + '</td>';
-      h += '<td class="mono fs-12">' + (it.last_ts ? it.last_ts.replace('T', ' ').substring(0, 19) : '-') + '</td>';
+      h += '<td class="mono fs-12">' + fmtLocal(it.first_ts) + '</td>';
+      h += '<td class="mono fs-12">' + fmtLocal(it.last_ts) + '</td>';
       h += '<td class="text-center">' + label + '</td>';
       h += '<td class="text-center">';
       h += '<button class="btn btn-outline btn-sm btn-icon ds-del-btn"' +

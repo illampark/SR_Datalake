@@ -1255,7 +1255,7 @@ function loadCatalogData(page) {
     }
 
     items.forEach(function(d) {
-      var row = '<tr><td class="mono fs-12">' + escHtml((d.timestamp || '').replace('T', ' ').slice(0, 19)) + '</td>';
+      var row = '<tr><td class="mono fs-12">' + escHtml(fmtLocal(d.timestamp)) + '</td>';
       if (showTag) row += '<td class="mono fs-12">' + escHtml(d.tagName || '') + '</td>';
       row +=
           '<td class="mono fw-600">' + (d.value != null ? d.value : '-') + '</td>' +
@@ -1372,7 +1372,7 @@ function loadCatalogFiles(page) {
           '<td><i class="fas ' + ficon + ' text-muted" style="margin-right:6px;"></i><span class="fw-600">' + escHtml(f.name) + '</span></td>' +
           '<td><span class="badge-sm badge-primary">' + escHtml(f.type || 'other') + '</span></td>' +
           '<td class="mono fs-12">' + escHtml(f.sizeDisplay || '-') + '</td>' +
-          '<td class="fs-12">' + escHtml((f.modifiedAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
+          '<td class="fs-12">' + escHtml(fmtLocal(f.modifiedAt)) + '</td>' +
           '<td>' +
             '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.catalog.btn_preview_file') + '" onclick="previewCatalogFile(\'' + escAttr(f.bucket) + '\',\'' + escAttr(f.objectName) + '\',\'' + escAttr(f.name) + '\')"><i class="fas fa-eye"></i></button> ' +
             '<a href="' + API + '/' + _dataCatalogId + '/files/download?objectName=' + encodeURIComponent(f.objectName || '') + '&bucket=' + encodeURIComponent(f.bucket || '') + '" class="btn btn-outline btn-sm btn-icon" title="' + __t('common.download') + '"><i class="fas fa-download"></i></a>' +
@@ -1825,7 +1825,7 @@ function openExportHistory() {
         '<td>' + escHtml(statusLabel) + '</td>' +
         '<td class="mono">' + Number(it.totalRows || 0).toLocaleString() + '</td>' +
         '<td class="mono">' + _fmtBytes(it.fileSizeBytes || 0) + '</td>' +
-        '<td>' + escHtml((it.createdAt || '').replace('T', ' ').slice(0, 19)) + '</td>' +
+        '<td>' + escHtml(fmtLocal(it.createdAt)) + '</td>' +
         '<td>' + actions + '</td>' +
       '</tr>';
     });
@@ -1987,7 +1987,7 @@ function loadExportRequests(page) {
         '<td>' + progressHtml + '</td>' +
         '<td class="mono fs-12">' + fmt(item.totalRows || 0) + '</td>' +
         '<td class="mono fs-12">' + escHtml(item.fileSizeDisplay || '-') + '</td>' +
-        '<td class="fs-11">' + escHtml((item.createdAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
+        '<td class="fs-11">' + escHtml(fmtLocal(item.createdAt)) + '</td>' +
         '<td><div class="d-flex gap-4">' + actions + '</div></td>' +
         '</tr>'
       );

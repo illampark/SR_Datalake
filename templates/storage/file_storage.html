@@ -324,7 +324,7 @@ function loadFiles() {
       var icon = FILE_ICONS[f.type] || FILE_ICONS.other;
       var tagCls = TAG_COLORS[f.type] || '';
       var label = (TYPE_LABELS[f.type] || f.extension).toUpperCase();
-      var modified = f.modifiedAt ? f.modifiedAt.replace('T', ' ').substring(0, 19) : '-';
+      var modified = fmtLocal(f.modifiedAt);
 
       var selKey = f.bucket + ":" + f.objectName;
       var checked = selectedFiles[selKey] ? ' checked' : '';

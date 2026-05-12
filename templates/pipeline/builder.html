@@ -416,7 +416,7 @@ function loadPipelines() {
         '<td>' + bindingCount + '</td>' +
         '<td class="mono cell-processed">' + fmtNum(processedCount) + '</td>' +
         '<td class="' + errorClass + ' cell-errors">' + fmtNum(errorCount) + '</td>' +
-        '<td class="cell-last">' + escHtml(lastProcessed) + '</td>' +
+        '<td class="cell-last">' + escHtml(fmtLocal(lastProcessed)) + '</td>' +
         '<td><div class="d-flex gap-8">' + actions + '</div></td>' +
         '</tr>'
       );
