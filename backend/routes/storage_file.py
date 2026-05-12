@@ -8,6 +8,7 @@ from minio.error import S3Error
 from backend.database import SessionLocal
 from backend.models.storage import FileCleanupPolicy
 from backend.config import MINIO_BUCKETS
+from backend.services.audit_logger import audit_route
 from backend.services.minio_client import get_minio_client, get_minio_config
 
 logger = logging.getLogger(__name__)
@@ -394,6 +395,7 @@ def update_cleanup_policy():
 # POST /api/storage/file/upload
 # ──────────────────────────────────────────────
 @file_bp.route("/upload", methods=["POST"])
+@audit_route("storage", "storage.file.upload", target_type="minio_object")
 def upload_file():
     try:
         if "file" not in request.files:
@@ -666,6 +668,7 @@ def raw_file():
 
 
 @file_bp.route("/delete-batch", methods=["DELETE"])
+@audit_route("storage", "storage.file.delete_batch", target_type="minio_object")
 def delete_files_batch():
     """여러 파일을 한 번에 삭제 (멀티 선택용).
 
@@ -705,6 +708,7 @@ def delete_files_batch():
 
 
 @file_bp.route("/delete", methods=["DELETE"])
+@audit_route("storage", "storage.file.delete", target_type="minio_object")
 def delete_file():
     try:
         body = request.get_json(force=True)

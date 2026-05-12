@@ -21,6 +21,7 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import or_, func
 from backend.database import SessionLocal
 from backend.models.collector import ImportCollector
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
@@ -190,6 +191,8 @@ def get_import(cid):
 # IMP-003: 생성
 # ═══════════════════════════════════════════
 @import_bp.route("", methods=["POST"])
+@audit_route("connector", "connector.import.create", target_type="import_collector",
+             detail_keys=["name", "importType", "targetType", "sourceMode", "localPath", "batchSize"])
 def create_import():
     db = _db()
     try:
@@ -244,6 +247,9 @@ def create_import():
 # IMP-004: 수정
 # ═══════════════════════════════════════════
 @import_bp.route("/<int:cid>", methods=["PUT"])
+@audit_route("connector", "connector.import.update", target_type="import_collector",
+             target_name_kwarg="cid",
+             detail_keys=["name", "importType", "targetType", "sourceMode", "localPath", "batchSize", "enabled"])
 def update_import(cid):
     db = _db()
     try:
@@ -303,6 +309,8 @@ def update_import(cid):
 # IMP-005: 삭제
 # ═══════════════════════════════════════════
 @import_bp.route("/<int:cid>", methods=["DELETE"])
+@audit_route("connector", "connector.import.delete", target_type="import_collector",
+             target_name_kwarg="cid")
 def delete_import(cid):
     db = _db()
     try:
@@ -329,6 +337,8 @@ def delete_import(cid):
 # IMP-006: 파일 업로드 (단일 또는 다중)
 # ═══════════════════════════════════════════
 @import_bp.route("/<int:cid>/upload", methods=["POST"])
+@audit_route("connector", "connector.import.upload", target_type="import_collector",
+             target_name_kwarg="cid")
 def upload_file(cid):
     db = _db()
     try:
@@ -516,6 +526,8 @@ def preview_import(cid):
 # IMP-008: 실행
 # ═══════════════════════════════════════════
 @import_bp.route("/<int:cid>/execute", methods=["POST"])
+@audit_route("connector", "connector.import.execute", target_type="import_collector",
+             target_name_kwarg="cid")
 def execute_import(cid):
     db = _db()
     try:
@@ -584,6 +596,8 @@ def import_status(cid):
 # IMP-010: 중지
 # ═══════════════════════════════════════════
 @import_bp.route("/<int:cid>/stop", methods=["POST"])
+@audit_route("connector", "connector.import.stop", target_type="import_collector",
+             target_name_kwarg="cid")
 def stop_import(cid):
     db = _db()
     try:
@@ -682,6 +696,8 @@ def scan_path(cid):
 # IMP-014: 서버 경로에서 실행
 # ═══════════════════════════════════════════
 @import_bp.route("/<int:cid>/execute-path", methods=["POST"])
+@audit_route("connector", "connector.import.execute_path", target_type="import_collector",
+             target_name_kwarg="cid")
 def execute_from_path(cid):
     db = _db()
     try:

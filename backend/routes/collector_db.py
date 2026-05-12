@@ -7,6 +7,7 @@ from backend.database import SessionLocal
 from backend.models.collector import DbConnector, DbTag
 from backend.services import benthos_manager as bm
 from backend.services import mqtt_manager
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 db_bp = Blueprint("collector_db", __name__, url_prefix="/api/connectors/db")
@@ -95,6 +96,8 @@ def get_connector(cid):
 # DB-003: POST /api/connectors/db — 등록
 # ──────────────────────────────────────────────
 @db_bp.route("", methods=["POST"])
+@audit_route("connector", "connector.db.create", target_type="db_connector",
+             detail_keys=["name", "dbType", "host", "port", "database", "schemaName", "collectMode"])
 def create_connector():
     db = _db()
     try:
@@ -147,6 +150,9 @@ def create_connector():
 # DB-004: PUT /api/connectors/db/<id> — 수정
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>", methods=["PUT"])
+@audit_route("connector", "connector.db.update", target_type="db_connector",
+             target_name_kwarg="cid",
+             detail_keys=["name", "dbType", "host", "port", "database", "schemaName", "collectMode", "enabled"])
 def update_connector(cid):
     db = _db()
     try:
@@ -215,6 +221,8 @@ def update_connector(cid):
 # DB-005: DELETE /api/connectors/db/<id> — 삭제
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>", methods=["DELETE"])
+@audit_route("connector", "connector.db.delete", target_type="db_connector",
+             target_name_kwarg="cid")
 def delete_connector(cid):
     db = _db()
     try:
@@ -243,6 +251,8 @@ def delete_connector(cid):
 # DB-006: POST /api/connectors/db/<id>/start — 수집 시작
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>/start", methods=["POST"])
+@audit_route("connector", "connector.db.start", target_type="db_connector",
+             target_name_kwarg="cid")
 def start_connector(cid):
     db = _db()
     try:
@@ -283,6 +293,8 @@ def start_connector(cid):
 # DB-007: POST /api/connectors/db/<id>/stop — 수집 중지
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>/stop", methods=["POST"])
+@audit_route("connector", "connector.db.stop", target_type="db_connector",
+             target_name_kwarg="cid")
 def stop_connector(cid):
     db = _db()
     try:
@@ -303,6 +315,8 @@ def stop_connector(cid):
 # DB-008: POST /api/connectors/db/<id>/restart — 재시작
 # ──────────────────────────────────────────────
 @db_bp.route("/<int:cid>/restart", methods=["POST"])
+@audit_route("connector", "connector.db.restart", target_type="db_connector",
+             target_name_kwarg="cid")
 def restart_connector(cid):
     db = _db()
     try:

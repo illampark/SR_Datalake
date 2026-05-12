@@ -5,6 +5,7 @@ from backend.database import SessionLocal
 from backend.models.collector import FileCollector
 from backend.services import file_scanner as fs
 from backend.services import mqtt_manager
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 file_watch_bp = Blueprint("collector_file_watch", __name__, url_prefix="/api/connectors/file")
@@ -104,6 +105,8 @@ def get_collector(cid):
 # FC-003: POST /api/connectors/file — 등록
 # ──────────────────────────────────────────────
 @file_watch_bp.route("", methods=["POST"])
+@audit_route("connector", "connector.file.create", target_type="file_connector",
+             detail_keys=["name", "host", "port", "username", "watchPath", "filePatterns", "parserType", "postAction"])
 def create_collector():
     db = _db()
     try:
@@ -162,6 +165,9 @@ def create_collector():
 # FC-004: PUT /api/connectors/file/<id> — 수정
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/<int:cid>", methods=["PUT"])
+@audit_route("connector", "connector.file.update", target_type="file_connector",
+             target_name_kwarg="cid",
+             detail_keys=["name", "host", "port", "username", "watchPath", "filePatterns", "parserType", "postAction", "enabled"])
 def update_collector(cid):
     db = _db()
     try:
@@ -259,6 +265,8 @@ def update_collector(cid):
 # FC-005: DELETE /api/connectors/file/<id> — 삭제
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/<int:cid>", methods=["DELETE"])
+@audit_route("connector", "connector.file.delete", target_type="file_connector",
+             target_name_kwarg="cid")
 def delete_collector(cid):
     db = _db()
     try:
@@ -287,6 +295,8 @@ def delete_collector(cid):
 # FC-006: POST /api/connectors/file/<id>/start — 수집 시작
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/<int:cid>/start", methods=["POST"])
+@audit_route("connector", "connector.file.start", target_type="file_connector",
+             target_name_kwarg="cid")
 def start_collector(cid):
     db = _db()
     try:
@@ -336,6 +346,8 @@ def start_collector(cid):
 # FC-007: POST /api/connectors/file/<id>/stop — 수집 중지
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/<int:cid>/stop", methods=["POST"])
+@audit_route("connector", "connector.file.stop", target_type="file_connector",
+             target_name_kwarg="cid")
 def stop_collector(cid):
     db = _db()
     try:
@@ -356,6 +368,8 @@ def stop_collector(cid):
 # FC-008: POST /api/connectors/file/<id>/restart — 재시작
 # ──────────────────────────────────────────────
 @file_watch_bp.route("/<int:cid>/restart", methods=["POST"])
+@audit_route("connector", "connector.file.restart", target_type="file_connector",
+             target_name_kwarg="cid")
 def restart_collector(cid):
     db = _db()
     try:

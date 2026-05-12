@@ -4,6 +4,7 @@ from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import MqttConnector, MqttTag
 from backend.services import benthos_manager as bm
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 mqtt_bp = Blueprint("collector_mqtt", __name__, url_prefix="/api/connectors/mqtt")
@@ -88,6 +89,8 @@ def get_connector(cid):
 # CONN-003: POST /api/connectors/mqtt — 등록
 # ──────────────────────────────────────────────
 @mqtt_bp.route("", methods=["POST"])
+@audit_route("connector", "connector.mqtt.create", target_type="mqtt_connector",
+             detail_keys=["name", "host", "port", "tls"])
 def create_connector():
     db = _db()
     try:
@@ -135,6 +138,9 @@ def create_connector():
 # CONN-004: PUT /api/connectors/mqtt/<id> — 수정
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>", methods=["PUT"])
+@audit_route("connector", "connector.mqtt.update", target_type="mqtt_connector",
+             target_name_kwarg="cid",
+             detail_keys=["name", "host", "port", "tls", "enabled"])
 def update_connector(cid):
     db = _db()
     try:
@@ -193,6 +199,8 @@ def update_connector(cid):
 # CONN-005: DELETE /api/connectors/mqtt/<id> — 삭제
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>", methods=["DELETE"])
+@audit_route("connector", "connector.mqtt.delete", target_type="mqtt_connector",
+             target_name_kwarg="cid")
 def delete_connector(cid):
     db = _db()
     try:
@@ -222,6 +230,8 @@ def delete_connector(cid):
 # CONN-006: POST /api/connectors/mqtt/<id>/start — 수집 시작
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/start", methods=["POST"])
+@audit_route("connector", "connector.mqtt.start", target_type="mqtt_connector",
+             target_name_kwarg="cid")
 def start_connector(cid):
     db = _db()
     try:
@@ -263,6 +273,8 @@ def start_connector(cid):
 # CONN-007: POST /api/connectors/mqtt/<id>/stop — 수집 중지
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/stop", methods=["POST"])
+@audit_route("connector", "connector.mqtt.stop", target_type="mqtt_connector",
+             target_name_kwarg="cid")
 def stop_connector(cid):
     db = _db()
     try:
@@ -284,6 +296,8 @@ def stop_connector(cid):
 # CONN-008: POST /api/connectors/mqtt/<id>/restart — 재시작
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/restart", methods=["POST"])
+@audit_route("connector", "connector.mqtt.restart", target_type="mqtt_connector",
+             target_name_kwarg="cid")
 def restart_connector(cid):
     db = _db()
     try:

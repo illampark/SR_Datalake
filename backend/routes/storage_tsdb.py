@@ -668,32 +668,29 @@ def delete_data(tsdb_id):
 
         # 감사 로그
         try:
-            from flask import session, g
-            uname = session.get("username") or ("api-key" if getattr(g, "api_key_authenticated", False) else "unknown")
-            import json as _json
-            detail_str = _json.dumps({
-                "tsdb_id": tsdb_id,
-                "pipeline_id": pid,
-                "measurement": meas or None,
-                "before_ts": before_ts or None,
-                "deleted": deleted,
-                "cleanup_catalog": cleanup_catalog,
-                "catalog_cleaned": catalog_cleaned,
-            }, ensure_ascii=False)
-            db.execute(_sql_text("""
-                INSERT INTO audit_log (timestamp, username, action_type, action, target_type, target_name, ip_address, result, detail)
-                VALUES (NOW(), :u, 'storage.tsdb.data_delete', :a, 'tsdb_data', :tn, :ip, 'success', cast(:detail as json))
-            """), {
-                "u": uname,
-                "a": "TSDB data DELETE",
-                "tn": f"tsdb#{tsdb_id} pid={pid} meas={meas}",
-                "ip": (request.remote_addr or ""),
-                "detail": detail_str,
-            })
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            logger.warning("audit log failed: %s", e)
+            from backend.services.audit_logger import log_audit
+            from flask import g
+            uname = None
+            if getattr(g, "api_key_authenticated", False):
+                uname = "api-key"
+            log_audit(
+                action_type="storage",
+                action="storage.tsdb.data.delete",
+                target_type="tsdb_data",
+                target_name=f"tsdb#{tsdb_id} pid={pid} meas={meas}",
+                detail={
+                    "tsdb_id": tsdb_id,
+                    "pipeline_id": pid,
+                    "measurement": meas or None,
+                    "before_ts": before_ts or None,
+                    "deleted": deleted,
+                    "cleanup_catalog": cleanup_catalog,
+                    "catalog_cleaned": catalog_cleaned,
+                },
+                username=uname,
+            )
+        except Exception:
+            logger.warning("audit log failed", exc_info=True)
 
         return _ok({
             "deleted": deleted,

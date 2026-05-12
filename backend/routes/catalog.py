@@ -12,6 +12,7 @@ from sqlalchemy import func
 from backend.database import SessionLocal
 from backend.models.catalog import DataCatalog, CatalogSearchTag, DataRecipe, AggregatedData
 from backend.models.storage import TimeSeriesData
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 # 대용량 export — 메모리 적재 없이 chunked HTTP 응답으로 흘려보냄.
@@ -292,6 +293,9 @@ def get_catalog(cid):
 # CAT-004: PUT /api/catalog/<id> — 카탈로그 수정
 # ──────────────────────────────────────────────
 @catalog_bp.route("/<int:cid>", methods=["PUT"])
+@audit_route("catalog", "catalog.update", target_type="data_catalog",
+             target_name_kwarg="cid",
+             detail_keys=["name", "description", "category", "dataLevel", "tags"])
 def update_catalog(cid):
     db = _db()
     try:
@@ -595,6 +599,8 @@ def get_catalog_data_summary(cid):
 
 
 @catalog_bp.route("/<int:cid>", methods=["DELETE"])
+@audit_route("catalog", "catalog.delete", target_type="data_catalog",
+             target_name_kwarg="cid")
 def delete_catalog(cid):
     """카탈로그 삭제. ?delete_data=true 면 가리키는 실제 데이터도 함께 삭제."""
     db = _db()
@@ -2638,6 +2644,8 @@ def list_recipes():
 
 # ── RCP-011: POST /api/catalog/recipe ──
 @catalog_bp.route("/recipe", methods=["POST"])
+@audit_route("catalog", "catalog.recipe.create", target_type="data_recipe",
+             detail_keys=["name", "description", "catalogId", "sourceType"])
 def create_recipe():
     """레시피 생성."""
     db = _db()
@@ -2691,6 +2699,9 @@ def get_recipe(rid):
 
 # ── RCP-013: PUT /api/catalog/recipe/<id> ──
 @catalog_bp.route("/recipe/<int:rid>", methods=["PUT"])
+@audit_route("catalog", "catalog.recipe.update", target_type="data_recipe",
+             target_name_kwarg="rid",
+             detail_keys=["name", "description"])
 def update_recipe(rid):
     """레시피 수정."""
     db = _db()
@@ -2720,6 +2731,8 @@ def update_recipe(rid):
 
 # ── RCP-014: DELETE /api/catalog/recipe/<id> ──
 @catalog_bp.route("/recipe/<int:rid>", methods=["DELETE"])
+@audit_route("catalog", "catalog.recipe.delete", target_type="data_recipe",
+             target_name_kwarg="rid")
 def delete_recipe(rid):
     """레시피 삭제 — 관련 카탈로그 + AggregatedData도 삭제."""
     db = _db()
@@ -2783,6 +2796,8 @@ def preview_recipe(rid):
 
 # ── RCP-021: POST /api/catalog/recipe/<id>/execute ──
 @catalog_bp.route("/recipe/<int:rid>/execute", methods=["POST"])
+@audit_route("catalog", "catalog.recipe.execute", target_type="data_recipe",
+             target_name_kwarg="rid")
 def execute_recipe_api(rid):
     """레시피 실행 — 결과 저장 + 카탈로그 생성."""
     db = _db()
@@ -2899,6 +2914,8 @@ def preview_sql_direct():
 # CAT-013: POST /api/catalog/export — 대량 데이터 추출 요청 생성
 # ──────────────────────────────────────────────
 @catalog_bp.route("/export", methods=["POST"])
+@audit_route("catalog", "catalog.export.request", target_type="dataset_request",
+             detail_keys=["catalogId", "format", "purpose"])
 def create_export_request():
     from backend.models.dataset import DatasetRequest
     from backend.services import dataset_executor
@@ -3143,6 +3160,8 @@ def download_export_file(request_id):
 # CAT-017: DELETE /api/catalog/export/<request_id> — 추출 요청 삭제
 # ──────────────────────────────────────────────
 @catalog_bp.route("/export/<request_id>", methods=["DELETE"])
+@audit_route("catalog", "catalog.export.delete", target_type="dataset_request",
+             target_name_kwarg="request_id")
 def delete_export_request(request_id):
     from backend.models.dataset import DatasetRequest
 

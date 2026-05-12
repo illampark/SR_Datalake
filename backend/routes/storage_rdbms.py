@@ -707,22 +707,27 @@ def delete_table(rdbms_id, table_name):
 
         # 감사 로그
         try:
-            from flask import session, g
-            uname = session.get("username") or ("api-key" if getattr(g, "api_key_authenticated", False) else "unknown")
-            db.execute(_sql_text("""
-                INSERT INTO audit_log (timestamp, username, action_type, action, target_type, target_name, ip_address, result, detail)
-                VALUES (NOW(), :u, 'storage.rdbms.table_'||:m, :a, 'rdbms_table', :tn, :ip, 'success', cast(:detail as json))
-            """), {
-                "u": uname, "m": mode,
-                "a": f"RDBMS table {mode.upper()}",
-                "tn": f"{schema}.{table_name}",
-                "ip": (request.remote_addr or ""),
-                "detail": _audit_detail(rdbms_id, mode, cascade, cleanup_catalog, catalog_cleaned),
-            })
-            db.commit()
-        except Exception as e:
-            db.rollback()
-            logger.warning("audit log write error: %s", e)
+            from backend.services.audit_logger import log_audit
+            from flask import g
+            uname = None
+            if getattr(g, "api_key_authenticated", False):
+                uname = "api-key"
+            log_audit(
+                action_type="storage",
+                action=f"storage.rdbms.table.{mode}",
+                target_type="rdbms_table",
+                target_name=f"{schema}.{table_name}",
+                detail={
+                    "rdbms_id": rdbms_id,
+                    "mode": mode,
+                    "cascade": cascade,
+                    "cleanup_catalog": cleanup_catalog,
+                    "catalog_cleaned": catalog_cleaned,
+                },
+                username=uname,
+            )
+        except Exception:
+            logger.warning("audit log write error", exc_info=True)
 
         return _ok({
             "table_name": table_name,
@@ -733,18 +738,6 @@ def delete_table(rdbms_id, table_name):
         })
     finally:
         db.close()
-
-
-def _audit_detail(rdbms_id, mode, cascade, cleanup_catalog, catalog_cleaned):
-    """감사 로그 detail JSON 직렬화."""
-    import json as _json
-    return _json.dumps({
-        "rdbms_id": rdbms_id,
-        "mode": mode,
-        "cascade": cascade,
-        "cleanup_catalog": cleanup_catalog,
-        "catalog_cleaned": catalog_cleaned,
-    }, ensure_ascii=False)
 
 
 # ──────────────────────────────────────────────

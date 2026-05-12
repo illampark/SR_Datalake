@@ -5,6 +5,7 @@ from backend.database import SessionLocal
 from backend.models.collector import OpcuaConnector, OpcuaTag
 from backend.services import benthos_manager as bm
 from backend.services import connector_workers
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 opcua_bp = Blueprint("collector_opcua", __name__, url_prefix="/api/connectors/opcua")
@@ -89,6 +90,8 @@ def get_connector(cid):
 # OPCUA-003: POST /api/connectors/opcua — 등록
 # ──────────────────────────────────────────────
 @opcua_bp.route("", methods=["POST"])
+@audit_route("connector", "connector.opcua.create", target_type="opcua_connector",
+             detail_keys=["name", "serverUrl", "securityPolicy", "securityMode", "authType", "pollingInterval"])
 def create_connector():
     db = _db()
     try:
@@ -132,6 +135,9 @@ def create_connector():
 # OPCUA-004: PUT /api/connectors/opcua/<id> — 수정
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>", methods=["PUT"])
+@audit_route("connector", "connector.opcua.update", target_type="opcua_connector",
+             target_name_kwarg="cid",
+             detail_keys=["name", "serverUrl", "securityPolicy", "securityMode", "authType", "pollingInterval", "enabled"])
 def update_connector(cid):
     db = _db()
     try:
@@ -198,6 +204,8 @@ def update_connector(cid):
 # OPCUA-005: DELETE /api/connectors/opcua/<id> — 삭제
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>", methods=["DELETE"])
+@audit_route("connector", "connector.opcua.delete", target_type="opcua_connector",
+             target_name_kwarg="cid")
 def delete_connector(cid):
     db = _db()
     try:
@@ -225,6 +233,8 @@ def delete_connector(cid):
 # OPCUA-006: POST /api/connectors/opcua/<id>/start — 수집 시작
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>/start", methods=["POST"])
+@audit_route("connector", "connector.opcua.start", target_type="opcua_connector",
+             target_name_kwarg="cid")
 def start_connector(cid):
     db = _db()
     try:
@@ -260,6 +270,8 @@ def start_connector(cid):
 # OPCUA-007: POST /api/connectors/opcua/<id>/stop — 수집 중지
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>/stop", methods=["POST"])
+@audit_route("connector", "connector.opcua.stop", target_type="opcua_connector",
+             target_name_kwarg="cid")
 def stop_connector(cid):
     db = _db()
     try:
@@ -280,6 +292,8 @@ def stop_connector(cid):
 # OPCUA-008: POST /api/connectors/opcua/<id>/restart — 재시작
 # ──────────────────────────────────────────────
 @opcua_bp.route("/<int:cid>/restart", methods=["POST"])
+@audit_route("connector", "connector.opcua.restart", target_type="opcua_connector",
+             target_name_kwarg="cid")
 def restart_connector(cid):
     db = _db()
     try:

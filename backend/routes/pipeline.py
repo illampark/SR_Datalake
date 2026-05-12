@@ -13,6 +13,7 @@ from backend.models.collector import (
     MqttConnector, ApiConnector, FileCollector, DbConnector, DbTag,
     ImportCollector,
 )
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
@@ -119,6 +120,8 @@ def _require_source_step(steps):
 
 
 @pipeline_bp.route("", methods=["POST"])
+@audit_route("pipeline", "pipeline.create", target_type="pipeline",
+             detail_keys=["name", "description", "sourceType", "sourceId"])
 def create_pipeline():
     db = _db()
     try:
@@ -182,6 +185,9 @@ def create_pipeline():
 
 # PIP-004: PUT /api/pipeline/<id> — 수정
 @pipeline_bp.route("/<int:pid>", methods=["PUT"])
+@audit_route("pipeline", "pipeline.update", target_type="pipeline",
+             target_name_kwarg="pid",
+             detail_keys=["name", "description", "sourceType", "sourceId", "enabled"])
 def update_pipeline(pid):
     db = _db()
     try:
@@ -246,6 +252,8 @@ def update_pipeline(pid):
 
 # PIP-005: DELETE /api/pipeline/<id>
 @pipeline_bp.route("/<int:pid>", methods=["DELETE"])
+@audit_route("pipeline", "pipeline.delete", target_type="pipeline",
+             target_name_kwarg="pid")
 def delete_pipeline(pid):
     db = _db()
     try:
@@ -279,6 +287,8 @@ def delete_pipeline(pid):
 
 # PIP-006: POST /api/pipeline/<id>/start
 @pipeline_bp.route("/<int:pid>/start", methods=["POST"])
+@audit_route("pipeline", "pipeline.start", target_type="pipeline",
+             target_name_kwarg="pid")
 def start_pipeline(pid):
     db = _db()
     try:
@@ -306,6 +316,8 @@ def start_pipeline(pid):
 
 # PIP-007: POST /api/pipeline/<id>/stop
 @pipeline_bp.route("/<int:pid>/stop", methods=["POST"])
+@audit_route("pipeline", "pipeline.stop", target_type="pipeline",
+             target_name_kwarg="pid")
 def stop_pipeline(pid):
     db = _db()
     try:
@@ -329,6 +341,8 @@ def stop_pipeline(pid):
 
 # PIP-007b: POST /api/pipeline/<id>/run-file-source
 @pipeline_bp.route("/<int:pid>/run-file-source", methods=["POST"])
+@audit_route("pipeline", "pipeline.run", target_type="pipeline",
+             target_name_kwarg="pid")
 def run_pipeline_file_source(pid):
     """파일 소스 모드 파이프라인 즉시 트리거 (백그라운드 실행).
 

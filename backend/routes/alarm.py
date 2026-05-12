@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 from backend.database import SessionLocal
 from backend.models.alarm import AlarmRule, AlarmEvent, AlarmChannel
 from backend.services import alarm_engine
+from backend.services.audit_logger import audit_route
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,8 @@ def list_events():
 
 
 @alarm_bp.route("/events/<int:event_id>/ack", methods=["POST"])
+@audit_route("alarm", "alarm.event.ack", target_type="alarm_event",
+             target_name_kwarg="event_id")
 def ack_event(event_id):
     db = SessionLocal()
     try:
@@ -89,6 +92,8 @@ def ack_event(event_id):
 
 
 @alarm_bp.route("/events/<int:event_id>/resolve", methods=["POST"])
+@audit_route("alarm", "alarm.event.resolve", target_type="alarm_event",
+             target_name_kwarg="event_id")
 def resolve_event(event_id):
     db = SessionLocal()
     try:
@@ -104,6 +109,7 @@ def resolve_event(event_id):
 
 
 @alarm_bp.route("/events/ack-all", methods=["POST"])
+@audit_route("alarm", "alarm.event.ack_all", target_type="alarm_event")
 def ack_all_events():
     db = SessionLocal()
     try:
@@ -146,6 +152,8 @@ def list_rules():
 
 
 @alarm_bp.route("/rules", methods=["POST"])
+@audit_route("alarm", "alarm.rule.create", target_type="alarm_rule",
+             detail_keys=["name", "severity", "metric", "tagName", "comparator", "threshold", "enabled"])
 def create_rule():
     db = SessionLocal()
     try:
@@ -170,6 +178,9 @@ def create_rule():
 
 
 @alarm_bp.route("/rules/<int:rule_id>", methods=["PUT"])
+@audit_route("alarm", "alarm.rule.update", target_type="alarm_rule",
+             target_name_kwarg="rule_id",
+             detail_keys=["name", "severity", "metric", "tagName", "comparator", "threshold", "enabled"])
 def update_rule(rule_id):
     db = SessionLocal()
     try:
@@ -188,6 +199,8 @@ def update_rule(rule_id):
 
 
 @alarm_bp.route("/rules/<int:rule_id>", methods=["DELETE"])
+@audit_route("alarm", "alarm.rule.delete", target_type="alarm_rule",
+             target_name_kwarg="rule_id")
 def delete_rule(rule_id):
     db = SessionLocal()
     try:
@@ -202,6 +215,8 @@ def delete_rule(rule_id):
 
 
 @alarm_bp.route("/rules/<int:rule_id>/toggle", methods=["POST"])
+@audit_route("alarm", "alarm.rule.toggle", target_type="alarm_rule",
+             target_name_kwarg="rule_id")
 def toggle_rule(rule_id):
     db = SessionLocal()
     try:
@@ -241,6 +256,8 @@ def list_channels():
 
 
 @alarm_bp.route("/channels", methods=["POST"])
+@audit_route("alarm", "alarm.channel.create", target_type="alarm_channel",
+             detail_keys=["name", "channelType", "enabled"])
 def create_channel():
     db = SessionLocal()
     try:
@@ -262,6 +279,9 @@ def create_channel():
 
 
 @alarm_bp.route("/channels/<int:channel_id>", methods=["PUT"])
+@audit_route("alarm", "alarm.channel.update", target_type="alarm_channel",
+             target_name_kwarg="channel_id",
+             detail_keys=["name", "channelType", "enabled"])
 def update_channel(channel_id):
     db = SessionLocal()
     try:
@@ -279,6 +299,8 @@ def update_channel(channel_id):
 
 
 @alarm_bp.route("/channels/<int:channel_id>", methods=["DELETE"])
+@audit_route("alarm", "alarm.channel.delete", target_type="alarm_channel",
+             target_name_kwarg="channel_id")
 def delete_channel(channel_id):
     db = SessionLocal()
     try:

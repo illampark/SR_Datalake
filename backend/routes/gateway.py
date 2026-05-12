@@ -12,6 +12,7 @@ from backend.database import SessionLocal
 from backend.models.gateway import ApiAccessLog, ApiKey
 from backend.models.user import AdminSetting
 from backend.services.api_access_logger import cleanup_old_logs
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 logger = logging.getLogger(__name__)
@@ -221,6 +222,8 @@ def list_keys():
 
 
 @gateway_bp.route("/keys", methods=["POST"])
+@audit_route("apikey", "apikey.create", target_type="api_key",
+             detail_keys=["name", "description", "scopes", "expiresAt"])
 def create_key():
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
@@ -256,6 +259,9 @@ def create_key():
 
 
 @gateway_bp.route("/keys/<int:key_id>", methods=["PUT"])
+@audit_route("apikey", "apikey.update", target_type="api_key",
+             target_name_kwarg="key_id",
+             detail_keys=["name", "description", "scopes", "expiresAt", "enabled"])
 def update_key(key_id):
     body = request.get_json(silent=True) or {}
     db = SessionLocal()
@@ -289,6 +295,8 @@ def update_key(key_id):
 
 
 @gateway_bp.route("/keys/<int:key_id>", methods=["DELETE"])
+@audit_route("apikey", "apikey.delete", target_type="api_key",
+             target_name_kwarg="key_id")
 def delete_key(key_id):
     db = SessionLocal()
     try:

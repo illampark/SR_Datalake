@@ -7,6 +7,7 @@ from backend.database import SessionLocal
 from backend.models.collector import ApiConnector, ApiEndpoint
 from backend.services import benthos_manager as bm
 from backend.services import mqtt_manager
+from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 
 api_bp = Blueprint("collector_api", __name__, url_prefix="/api/connectors/api")
@@ -92,6 +93,8 @@ def get_connector(cid):
 # API-003: POST /api/connectors/api — 등록
 # ──────────────────────────────────────────────
 @api_bp.route("", methods=["POST"])
+@audit_route("connector", "connector.api.create", target_type="api_connector",
+             detail_keys=["name", "baseUrl", "authType", "pollingInterval"])
 def create_connector():
     db = _db()
     try:
@@ -151,6 +154,9 @@ def create_connector():
 # API-004: PUT /api/connectors/api/<id> — 수정
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>", methods=["PUT"])
+@audit_route("connector", "connector.api.update", target_type="api_connector",
+             target_name_kwarg="cid",
+             detail_keys=["name", "baseUrl", "authType", "pollingInterval", "enabled"])
 def update_connector(cid):
     db = _db()
     try:
@@ -229,6 +235,8 @@ def update_connector(cid):
 # API-005: DELETE /api/connectors/api/<id> — 삭제
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>", methods=["DELETE"])
+@audit_route("connector", "connector.api.delete", target_type="api_connector",
+             target_name_kwarg="cid")
 def delete_connector(cid):
     db = _db()
     try:
@@ -257,6 +265,8 @@ def delete_connector(cid):
 # API-006: POST /api/connectors/api/<id>/start — 수집 시작
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>/start", methods=["POST"])
+@audit_route("connector", "connector.api.start", target_type="api_connector",
+             target_name_kwarg="cid")
 def start_connector(cid):
     db = _db()
     try:
@@ -298,6 +308,8 @@ def start_connector(cid):
 # API-007: POST /api/connectors/api/<id>/stop — 수집 중지
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>/stop", methods=["POST"])
+@audit_route("connector", "connector.api.stop", target_type="api_connector",
+             target_name_kwarg="cid")
 def stop_connector(cid):
     db = _db()
     try:
@@ -318,6 +330,8 @@ def stop_connector(cid):
 # API-008: POST /api/connectors/api/<id>/restart — 재시작
 # ──────────────────────────────────────────────
 @api_bp.route("/<int:cid>/restart", methods=["POST"])
+@audit_route("connector", "connector.api.restart", target_type="api_connector",
+             target_name_kwarg="cid")
 def restart_connector(cid):
     db = _db()
     try:
