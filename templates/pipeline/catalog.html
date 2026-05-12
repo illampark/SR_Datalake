@@ -578,6 +578,12 @@ function showDetail(id) {
       return '<span class="tag" style="margin-right:4px;margin-bottom:4px;">' + escHtml(tagStr) + '</span>';
     }).join('');
 
+    // 파일-기반 카탈로그 여부 (file sink / file collector / import) — backend /files 라우팅 조건과 일치
+    var isFileCatalog =
+      (item.connectorType === 'pipeline' && item.sinkType === 'internal_file_sink')
+      || item.connectorType === 'file'
+      || item.connectorType === 'import';
+
     var html =
       '<div class="grid-12">' +
         '<div class="col-8">' +
@@ -591,6 +597,10 @@ function showDetail(id) {
             '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_tag_name') + '</td><td class="mono">' + (item.tagName ? escHtml(item.tagName) : '<span class="badge-sm" style="background:#dbeafe;color:#1e40af;">' + __t('page.catalog.connector_level_label') + '</span>') + '</td></tr>' +
             '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_owner') + '</td><td>' + escHtml(item.owner || '-') + '</td></tr>' +
             '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_category') + '</td><td>' + escHtml(item.category || '-') + '</td></tr>' +
+            // 파일-기반 카탈로그(file sink / file collector / import) 만 누적 용량 표시
+            (isFileCatalog ?
+              '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_total_size') + '</td><td class="mono" id="detail-total-size"><i class="fas fa-spinner fa-spin text-muted"></i> <span class="text-muted fs-12">' + __t('common.loading') + '</span></td></tr>'
+              : '') +
             '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_data_level') + '</td><td>' + escHtml(lvl) + '</td></tr>' +
             '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_sensitivity') + '</td><td>' + escHtml(item.sensitivity || '-') + '</td></tr>' +
             '<tr><td class="fw-600 text-muted" style="padding:6px 12px 6px 0;">' + __t('page.catalog.detail_retention_policy') + '</td><td>' + escHtml(item.retentionPolicy || '-') + '</td></tr>' +
@@ -655,6 +665,34 @@ function showDetail(id) {
     $('#detail-panel').show();
     // Load pipeline linkage (UC-4)
     loadDetailPipelines(item.tagName, item.connectorType, item.connectorId);
+
+    // 파일-기반 카탈로그: 누적 용량 비동기 채우기 (대용량 MinIO list 가 느릴 수 있어 분리)
+    if (isFileCatalog) {
+      $.ajax({
+        url: API + '/' + item.id + '/files',
+        data: { size: 1, page: 1 },
+        dataType: 'json',
+        noProgress: true,
+      }).done(function (r2) {
+        var $cell = $('#detail-total-size');
+        if (!$cell.length) return;
+        if (r2 && r2.success && r2.data) {
+          var sizeLabel = r2.data.totalSizeDisplay || '0 B';
+          var fileCount = r2.data.total || 0;
+          var bytes = r2.data.totalSize || 0;
+          $cell.html(
+            '<i class="fas fa-database" style="margin-right:6px;color:var(--text-secondary);"></i>' +
+            '<span class="fw-600">' + escHtml(sizeLabel) + '</span>' +
+            ' <span class="text-muted fs-12">(' + fmt(fileCount) + ' ' + __t('page.catalog.file_total_files_unit') + ')</span>'
+          ).attr('title', bytes.toLocaleString() + ' bytes');
+        } else {
+          $cell.text('-');
+        }
+      }).fail(function () {
+        $('#detail-total-size').text('-');
+      });
+    }
+
     $('html, body').animate({ scrollTop: $('#detail-panel').offset().top - 80 }, 300);
   });
 }

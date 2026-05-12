@@ -1773,6 +1773,7 @@
       "detail_tag_name": "Tag Name",
       "detail_owner": "Owner",
       "detail_category": "Category",
+      "detail_total_size": "Storage Size",
       "detail_data_level": "Data Level",
       "detail_sensitivity": "Sensitivity",
       "detail_retention_policy": "Retention Policy",

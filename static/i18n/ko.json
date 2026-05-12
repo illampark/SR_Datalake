@@ -1773,6 +1773,7 @@
       "detail_tag_name": "태그명",
       "detail_owner": "소유자",
       "detail_category": "카테고리",
+      "detail_total_size": "저장 용량",
       "detail_data_level": "데이터 수준",
       "detail_sensitivity": "민감도",
       "detail_retention_policy": "보관 정책",
