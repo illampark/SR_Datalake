@@ -408,20 +408,80 @@ function loadPipelines() {
       actions += '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deletePipeline(' + p.id + ',\'' + escAttr(p.name) + '\')"><i class="fas fa-trash text-danger"></i></button>';
 
       $tbody.append(
-        '<tr>' +
+        '<tr data-pid="' + p.id + '" data-status="' + escAttr(p.status || '') + '">' +
         '<td><div class="fw-600">' + escHtml(p.name) + '</div>' +
           (p.description ? '<div class="fs-11 text-muted">' + escHtml(p.description) + '</div>' : '') + '</td>' +
         '<td>' + statusBadge + '</td>' +
         '<td>' + stepCount + '</td>' +
         '<td>' + bindingCount + '</td>' +
-        '<td class="mono">' + fmtNum(processedCount) + '</td>' +
-        '<td class="' + errorClass + '">' + fmtNum(errorCount) + '</td>' +
-        '<td>' + escHtml(lastProcessed) + '</td>' +
+        '<td class="mono cell-processed">' + fmtNum(processedCount) + '</td>' +
+        '<td class="' + errorClass + ' cell-errors">' + fmtNum(errorCount) + '</td>' +
+        '<td class="cell-last">' + escHtml(lastProcessed) + '</td>' +
         '<td><div class="d-flex gap-8">' + actions + '</div></td>' +
         '</tr>'
       );
     });
+    // running 파이프라인의 in-memory 통계를 즉시 한 번 가져오기
+    refreshLiveStats();
   });
+}
+
+// ── 실행 중 파이프라인의 in-memory 통계 갱신 (multi-worker 환경 인지) ──
+// 백그라운드: MQTT-source 파이프라인의 processed_count 는 stop 시점에만 DB 에
+// 커밋되므로, running 중에는 /api/pipeline/<id>/status 의 runtime.stats 가
+// 진짜 live 값. 단 _running_pipelines 가 per-gunicorn-worker 라 round-robin 으로
+// 다른 worker 에 hit 하면 runtime.running=false 가 반환될 수 있다. 그 경우엔
+// 기존 DB 값 그대로 두고, 다음 polling 사이클에 다시 시도.
+var _liveStatsTimer = null;
+
+function refreshLiveStats() {
+  var $rows = $('#pipeline-tbody tr[data-pid][data-status="running"]');
+  if (!$rows.length) return;
+
+  var promises = $rows.map(function () {
+    var pid = $(this).attr('data-pid');
+    return $.ajax({
+      url: API + '/' + pid + '/status',
+      dataType: 'json',
+      noProgress: true,
+    }).then(function (res) {
+      return { pid: pid, data: (res && res.success) ? res.data : null };
+    }, function () {
+      return { pid: pid, data: null };
+    });
+  }).get();
+
+  Promise.all(promises).then(function (results) {
+    results.forEach(function (r) {
+      if (!r.data) return;
+      var rt = r.data.runtime || {};
+      if (!rt.running || !rt.stats) return;
+      var $row = $('tr[data-pid="' + r.pid + '"]');
+      if (!$row.length) return;
+      var processed = rt.stats.processed || 0;
+      var errors = rt.stats.errors || 0;
+      $row.find('.cell-processed')
+        .text(fmtNum(processed))
+        .attr('title', __t('page.builder.tip_live_processed') || '현재 세션 처리량 (live)');
+      $row.find('.cell-errors').text(fmtNum(errors));
+    });
+    // 상단 stat 도 row 합으로 갱신 (running 은 live 값, 나머지는 DB 값)
+    var totalProcessed = 0;
+    $('#pipeline-tbody tr[data-pid] .cell-processed').each(function () {
+      var v = parseInt($(this).text().replace(/,/g, ''), 10);
+      if (!isNaN(v)) totalProcessed += v;
+    });
+    $('#stat-processed').text(fmtNum(totalProcessed));
+  });
+}
+
+function startLiveStatsPolling() {
+  if (_liveStatsTimer) clearInterval(_liveStatsTimer);
+  _liveStatsTimer = setInterval(refreshLiveStats, 10000);  // 10초마다
+}
+
+function stopLiveStatsPolling() {
+  if (_liveStatsTimer) { clearInterval(_liveStatsTimer); _liveStatsTimer = null; }
 }
 
 // ── Load Pipeline Detail ──
@@ -2417,6 +2477,17 @@ function refreshAll() {
 $(function() {
   initDragDrop();
   refreshAll();
+  startLiveStatsPolling();
+});
+
+// 페이지가 백그라운드 가면 polling 중지 (불필요한 트래픽 차단)
+$(document).on('visibilitychange', function () {
+  if (document.hidden) {
+    stopLiveStatsPolling();
+  } else {
+    refreshLiveStats();
+    startLiveStatsPolling();
+  }
 });
 </script>
 {% endblock %}
