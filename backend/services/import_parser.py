@@ -1055,20 +1055,58 @@ def start_import(collector_id, file_content, file_data_list=None):
                     _execute_files_mqtt_publish(c, files, db)
             else:
                 # 정형 데이터 (CSV/JSON) 가져오기
-                # 다중 파일이면 먼저 병합 (CSV: 헤더 1회, JSON: 배열 누적)
-                if file_data_list and len(file_data_list) > 0:
-                    if (c.import_type or "csv").lower() == "json":
-                        merged_content = _concat_json_files(file_data_list)
-                    else:
-                        merged_content = _concat_text_files(file_data_list, drop_header_after_first=not c.skip_header)
+                multi_files = bool(file_data_list and len(file_data_list) > 0)
+
+                if c.target_type == "file" and multi_files and len(file_data_list) > 1:
+                    # target=file + 다중 파일: 병합하지 않고 원본 N개를 그대로 N개 객체로 업로드
+                    # (병합 시 collector.file_name="N files" 가 그대로 MinIO 객체 키로 사용되는 회귀 방지.
+                    #  서버 경로 모드와 동일한 파일별 적재 동작으로 통일.)
+                    c.status = "running"
+                    c.total_rows = 0
+                    c.imported_rows = 0
+                    c.error_rows = 0
+                    c.progress = 0
+                    db.commit()
+                    total_files = len(file_data_list)
+                    for fi, fdata in enumerate(file_data_list):
+                        try:
+                            _execute_import_direct(
+                                c, fdata["content"], db,
+                                source_filename=fdata["name"],
+                                accumulate=True,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Import file {fdata.get('name','?')} error: {e}")
+                            c.error_rows = (c.error_rows or 0) + 1
+                        c.progress = int((fi + 1) / total_files * 100)
+                        db.commit()
+                    c.status = "completed"
+                    c.progress = 100
+                    c.last_imported_at = datetime.utcnow()
+                    db.commit()
+                    _register_catalog(db, c)
+                    if c.publish_mqtt:
+                        for fdata in file_data_list:
+                            try:
+                                _execute_import_mqtt(c, fdata["content"], db)
+                            except Exception:
+                                pass
                 else:
-                    merged_content = file_content
-                # ① 항상 직접 저장 (원본 보장)
-                _execute_import_direct(c, merged_content, db)
-                _register_catalog(db, c)
-                # ② 파이프라인 연계 시 MQTT 추가 발행
-                if c.publish_mqtt:
-                    _execute_import_mqtt(c, merged_content, db)
+                    # 기존 흐름: TSDB/RDBMS 다중 파일은 한 덩어리로 적재가 자연스러움 → 병합 유지.
+                    # 단일 파일이면 file_content 그대로 사용.
+                    if multi_files:
+                        if (c.import_type or "csv").lower() == "json":
+                            merged_content = _concat_json_files(file_data_list)
+                        else:
+                            merged_content = _concat_text_files(file_data_list, drop_header_after_first=not c.skip_header)
+                    else:
+                        merged_content = file_content
+                    # ① 항상 직접 저장 (원본 보장)
+                    _execute_import_direct(c, merged_content, db)
+                    _register_catalog(db, c)
+                    # ② 파이프라인 연계 시 MQTT 추가 발행
+                    if c.publish_mqtt:
+                        _execute_import_mqtt(c, merged_content, db)
         except Exception as e:
             logger.error(f"Import thread #{collector_id} error: {e}")
         finally:
