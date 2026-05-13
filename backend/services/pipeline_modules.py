@@ -1667,15 +1667,19 @@ def _transfer_actual_file(conn, file_meta, step_config):
     storage_type = cfg.get("storage_type", "s3").lower()
     base_path = cfg.get("base_path", "").strip("/")
 
-    # 원본 파일의 상대 경로 추출 (sftp-collect/3/2026-04-11/2026-04-01/file.csv → 2026-04-01/file.csv)
-    # minio_path에서 날짜 디렉토리 이후의 경로를 사용
-    parts = minio_path.split("/")
-    # sftp-collect/{id}/{date}/{relative_path...} → {relative_path...} 부분 추출
-    if len(parts) > 3:
-        rel_path = "/".join(parts[3:])  # 날짜 이후 경로
-    else:
-        rel_path = parts[-1]  # 파일명만
+    # 외부 destination 의 상대 경로 결정 우선순위:
+    #   1) file_meta.original_path 가 제공되면 그대로 사용 (커넥터가 의도한 폴더 구조 보존)
+    #   2) 없으면 minio_path 에서 SDL 수집 prefix(<connector_type>/<collector_id>/) 제거
+    #   3) 그것도 안 되면 basename
+    rel_path = file_meta.get("original_path") or ""
+    if not rel_path:
+        parts = minio_path.split("/")
+        if len(parts) > 2:
+            rel_path = "/".join(parts[2:])
+        else:
+            rel_path = parts[-1]
 
+    rel_path = rel_path.lstrip("/")
     dest_path = f"{base_path}/{rel_path}" if base_path else rel_path
 
     try:

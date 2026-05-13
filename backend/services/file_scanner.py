@@ -526,6 +526,32 @@ def _process_file_direct(sftp, collector_id, finfo, target_bucket,
     logger.info("Scanner %d: direct upload %s → %s/%s (%d bytes)",
                 collector_id, fname, target_bucket, object_name, fsize)
 
+    # ── 파이프라인 라우팅: file_meta envelope 발행 ──
+    # 파이프라인이 sdl/raw/file/{cid}/# 토픽을 구독 중이면 external_file_sink 로 흘러감
+    try:
+        from backend.services import mqtt_manager
+        topic = f"sdl/raw/file/{collector_id}/file"
+        envelope = {
+            "source": {
+                "connectorType": "file",
+                "connectorId": collector_id,
+                "tagName": "file",
+            },
+            "value": {
+                "minio_bucket": target_bucket,
+                "minio_path": object_name,
+                "file_size": fsize,
+                "mime_type": content_type,
+                "original_path": rel_path,
+            },
+            "dataType": "file_meta",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+        mqtt_manager.publish(topic, envelope, qos=1)
+    except Exception as e:
+        logger.warning("Scanner %d: file_meta publish failed (%s): %s",
+                       collector_id, rel_path, e)
+
     # 그룹 카탈로그 자동 생성 (커넥터당 1회)
     try:
         from backend.services.metadata_tracker import _auto_create_connector_catalog

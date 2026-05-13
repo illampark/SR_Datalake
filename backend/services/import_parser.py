@@ -26,6 +26,42 @@ _import_threads = {}  # collector_id → thread
 _import_lock = threading.Lock()
 
 
+def _publish_file_meta(connector_type, connector_id, rel_path, bucket, object_name,
+                       file_size, mime_type, tag_name="file"):
+    """파이프라인 라우팅을 위한 file_meta envelope MQTT 발행.
+
+    외부 파일 sink(external_file_sink) 가 기대하는 키 구조에 맞춤:
+      value: {minio_bucket, minio_path, file_size, mime_type, original_path}
+      dataType: "file_meta"
+
+    파이프라인이 sdl/raw/{connector_type}/{connector_id}/# 를 구독 중이면
+    이 메시지가 라우팅되어 외부 sink 가 MinIO 객체를 읽어 외부로 전송한다.
+    """
+    try:
+        from backend.services import mqtt_manager
+        topic = f"sdl/raw/{connector_type}/{connector_id}/{tag_name}"
+        envelope = {
+            "source": {
+                "connectorType": connector_type,
+                "connectorId": connector_id,
+                "tagName": tag_name,
+            },
+            "value": {
+                "minio_bucket": bucket,
+                "minio_path": object_name,
+                "file_size": file_size,
+                "mime_type": mime_type,
+                "original_path": rel_path,
+            },
+            "dataType": "file_meta",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+        mqtt_manager.publish(topic, envelope, qos=1)
+    except Exception as e:
+        # 발행 실패가 import 전체를 중단시키지 않도록 — 파일 자체는 이미 MinIO 에 안전히 저장됨
+        logger.warning(f"file_meta publish failed (cid={connector_id}, path={rel_path}): {e}")
+
+
 def _build_rdbms_url(cfg):
     """RdbmsConfig로부터 SQLAlchemy 접속 URL 생성"""
     db_type = (cfg.db_type or "").lower()
@@ -200,11 +236,24 @@ def _execute_import_files(collector, file_data_list, db_session):
                 fname = fdata["name"]
                 content = fdata["content"]
                 obj_name = prefix + fname
+                mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
 
                 client.put_object(
                     bucket, obj_name,
                     io.BytesIO(content), len(content),
-                    content_type=mimetypes.guess_type(fname)[0] or "application/octet-stream",
+                    content_type=mime,
+                )
+
+                # ── 파이프라인 라우팅: file_meta envelope 을 MQTT 로 발행 ──
+                # 파이프라인이 sdl/raw/import/{cid}/# 토픽을 구독 중이면 external_file_sink 로 흘러감
+                _publish_file_meta(
+                    connector_type="import",
+                    connector_id=cid,
+                    rel_path=fname,
+                    bucket=bucket,
+                    object_name=obj_name,
+                    file_size=len(content),
+                    mime_type=mime,
                 )
 
                 imported += 1
@@ -737,11 +786,24 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
                 size = os.path.getsize(file_path)
                 with open(file_path, "rb") as fh:
                     client.put_object(bucket, obj_name, fh, size)
+                upload_size = size
             else:
                 if isinstance(file_content, str):
                     file_content = file_content.encode(encoding)
                 from io import BytesIO
                 client.put_object(bucket, obj_name, BytesIO(file_content), len(file_content))
+                upload_size = len(file_content)
+
+            # ── 파이프라인 라우팅: file_meta envelope 발행 ──
+            _publish_file_meta(
+                connector_type="import",
+                connector_id=cid,
+                rel_path=source_filename or collector.file_name or os.path.basename(obj_name),
+                bucket=bucket,
+                object_name=obj_name,
+                file_size=upload_size,
+                mime_type=mimetypes.guess_type(obj_name)[0] or "application/octet-stream",
+            )
 
             if accumulate:
                 collector.imported_rows = (collector.imported_rows or 0) + 1
