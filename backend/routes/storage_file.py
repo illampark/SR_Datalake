@@ -463,6 +463,31 @@ _PREVIEW_BINARY_EXTS = {
 }
 _PREVIEW_MAX_BYTES_DEFAULT = 256 * 1024  # 256 KB
 
+# 텍스트 미리보기 인코딩 자동 감지 — 한글 환경(Windows Excel cp949 등) 우선.
+# import_parser._detect_and_decode 와 동일한 후보 순서.
+_TEXT_ENCODING_CANDIDATES = ("utf-8", "cp949", "euc-kr", "utf-8-sig", "latin-1")
+
+
+def _decode_text_preview(raw):
+    """미리보기 바이트를 자동 인코딩 감지하여 (text, encoding) 반환.
+
+    부분 읽기로 멀티바이트가 잘렸을 가능성을 대비해, 모든 strict 후보 실패 시
+    utf-8 errors='replace' 로 graceful fallback.
+    """
+    if not isinstance(raw, bytes):
+        return raw, "utf-8"
+    if raw[:3] == b"\xef\xbb\xbf":
+        try:
+            return raw.decode("utf-8-sig"), "utf-8-sig"
+        except UnicodeDecodeError:
+            pass
+    for enc in _TEXT_ENCODING_CANDIDATES:
+        try:
+            return raw.decode(enc), enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace"), "utf-8 (replace)"
+
 
 def _guess_inline_mime(ext):
     return {
@@ -593,10 +618,7 @@ def preview_file():
                     resp.release_conn()
             except Exception as e:
                 return _err(f"파일 읽기 실패: {e}", "READ_ERROR", 500)
-            try:
-                content = data.decode("utf-8")
-            except UnicodeDecodeError:
-                content = data.decode("utf-8", errors="replace")
+            content, detected_encoding = _decode_text_preview(data)
             return _ok({
                 "kind": "text",
                 "objectName": object_name,
@@ -606,6 +628,7 @@ def preview_file():
                 "truncated": size > read_size,
                 "content": content,
                 "extension": ext,
+                "detectedEncoding": detected_encoding,
             })
 
         return _ok({
