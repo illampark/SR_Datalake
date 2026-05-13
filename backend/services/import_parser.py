@@ -260,35 +260,60 @@ def _execute_import_files(collector, file_data_list, db_session):
         db_session.commit()
 
 
+def _fix_zip_filename(info):
+    """ZIP 파일명을 cp437 mojibake 에서 자동 복원.
+
+    Windows 표준 압축 도구로 만든 한국어 zip 은 일반적으로 UTF-8 플래그
+    (general purpose bit 11) 를 설정하지 않고 파일명을 cp949 로 인코딩한다.
+    zipfile 모듈은 그런 경우 기본 cp437 로 디코드하므로 '최대' 같은 한국어가
+    '├╓┤δ' 같은 mojibake 로 보인다. 본 함수는 그 mojibake 를 cp949 → utf-8
+    순으로 재해석해 복원한다. 모두 실패하면 원본 이름을 유지한다.
+    """
+    name = info.filename
+    if info.flag_bits & 0x800:
+        return name  # 압축 시 UTF-8 플래그가 명시되어 있으면 그대로 신뢰
+    try:
+        raw = name.encode('cp437')
+    except UnicodeEncodeError:
+        # cp437 로 다시 encode 가 안 되면 이미 다른 경로로 들어온 정상 문자열
+        return name
+    for enc in ('cp949', 'utf-8'):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return name
+
+
 def extract_zip(zip_content):
-    """ZIP 아카이브에서 파일 목록 추출 — 디렉토리 구조 유지"""
+    """ZIP 아카이브에서 파일 목록 추출 — 디렉토리 구조 유지 + 한국어 파일명 복원."""
     result = []
     # ZIP 내 공통 prefix 제거 (예: sample_timeseries/ → 내부 상대 경로만)
     with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
-        names = [i.filename for i in zf.infolist() if not i.is_dir()]
-        # 공통 prefix 찾기
+        infos = [i for i in zf.infolist() if not i.is_dir()]
+        fixed_names = [_fix_zip_filename(i) for i in infos]
+
+        # 공통 prefix 찾기 — 보정된 이름 기준
         common = ""
-        if names:
-            parts = names[0].split("/")
+        if fixed_names:
+            parts = fixed_names[0].split("/")
             if len(parts) > 1:
                 candidate = parts[0] + "/"
-                if all(n.startswith(candidate) for n in names):
+                if all(n.startswith(candidate) for n in fixed_names):
                     common = candidate
 
-        for info in zf.infolist():
-            if info.is_dir():
-                continue
-            name = info.filename
+        for info, name in zip(infos, fixed_names):
             if name.startswith("__MACOSX") or name.startswith(".") or "/.DS_Store" in name:
                 continue
             # 공통 prefix 제거 후 상대 경로 유지
             rel_path = name[len(common):] if common and name.startswith(common) else name
             if not rel_path:
                 continue
+            # zf.read 는 ZipInfo 객체로 호출 — 내부 lookup 은 원본 filename 으로
             result.append({
-                "name": rel_path,  # 상대 경로 유지 (예: 2026-04-01/sensor_0000.csv)
+                "name": rel_path,  # 상대 경로 유지 (한국어 복원 후)
                 "path": name,
-                "content": zf.read(name),
+                "content": zf.read(info),
                 "size": info.file_size,
             })
     return result
