@@ -105,16 +105,18 @@ def start_pipeline(pipeline_id):
                 logger.error("MQTT 브로커 연결 불가")
                 return False
 
-        # 스텝 정보 캐시 (소스/처리/싱크 분리)
+        # 스텝 정보 캐시 (소스/처리/싱크 분리). step_id 를 함께 보관해서 step 단위 통계 갱신.
         source_steps = []
         step_configs = []
         sink_configs = []
+        step_stats = {}
         for st in steps:
             if not st.enabled:
                 continue
             cfg = dict(st.config or {})
             cfg["_pipeline_id"] = pipeline_id
-            entry = {"module_type": st.module_type, "config": cfg}
+            entry = {"step_id": st.id, "module_type": st.module_type, "config": cfg}
+            step_stats[st.id] = {"processed": 0, "errors": 0, "dropped": 0, "last_at": None}
             if st.module_type in _FILE_SOURCE_TYPES:
                 source_steps.append(entry)
             elif st.module_type in SINK_REGISTRY:
@@ -138,9 +140,17 @@ def start_pipeline(pipeline_id):
                 "dropped": 0,
                 "started_at": datetime.utcnow().isoformat(),
             },
+            "step_stats": step_stats,
             # MQTT-source 주기적 DB commit 타임스탬프 (file-source 는 별도 로직)
             "_last_commit_ts": time.time(),
         }
+
+        # MQTT-source 시작 시 step 카운터 DB 리셋 (file-source 는 run_file_source 내부에서 처리)
+        if not is_file_source:
+            try:
+                _reset_step_progress(pipeline_id)
+            except Exception as e:
+                logger.warning("파이프라인 %s: step 카운터 리셋 실패 — %s", pipeline_id, e)
 
         if is_file_source:
             logger.info(
@@ -191,8 +201,12 @@ def stop_pipeline(pipeline_id):
 
     logger.info("파이프라인 %s 정지", pipeline_id)
 
-    # DB 상태 갱신
+    # DB 상태 갱신 + 마지막 step 카운터 flush
     _update_pipeline_db(pipeline_id, "stopped", info["stats"])
+    try:
+        _commit_step_progress(info.get("step_stats", {}))
+    except Exception as e:
+        logger.warning("파이프라인 %s: stop 시 step 통계 flush 실패 — %s", pipeline_id, e)
 
 
 def get_pipeline_status(pipeline_id):
@@ -231,6 +245,8 @@ def _handle_message(pipeline_id, topic, payload):
         return
 
     start_time = time.time()
+    step_stats = info.get("step_stats", {})
+    now_dt = datetime.utcnow()
 
     try:
         # 페이로드 파싱
@@ -244,18 +260,39 @@ def _handle_message(pipeline_id, topic, payload):
         # 원본 보존
         original = copy.deepcopy(message)
 
+        # 소스 step (opcua_source / modbus_source / api_source / ...) — MQTT 메시지 도달 시점에
+        # "수신 1건" 으로 카운트. 실제 소스 모듈은 stub 이라 process_message 안에서 카운트 못 함.
+        for src in info.get("sources", []):
+            sid = src.get("step_id")
+            if sid and sid in step_stats:
+                step_stats[sid]["processed"] += 1
+                step_stats[sid]["last_at"] = now_dt
+
         # 모듈 체인 실행
         steps_applied = []
         for step in info["steps"]:
             module_type = step["module_type"]
             config = step["config"]
+            sid = step.get("step_id")
 
-            message = process_message(message, module_type, config)
+            try:
+                message = process_message(message, module_type, config)
+            except Exception:
+                if sid and sid in step_stats:
+                    step_stats[sid]["errors"] += 1
+                    step_stats[sid]["last_at"] = now_dt
+                raise
             if message is None:
-                # 메시지 드롭
+                # 메시지 드롭 — 현재 step 의 dropped 만 증가
+                if sid and sid in step_stats:
+                    step_stats[sid]["dropped"] += 1
+                    step_stats[sid]["last_at"] = now_dt
                 info["stats"]["dropped"] += 1
                 return
 
+            if sid and sid in step_stats:
+                step_stats[sid]["processed"] += 1
+                step_stats[sid]["last_at"] = now_dt
             steps_applied.append(module_type)
 
         # 처리 완료 → output 토픽 발행
@@ -266,11 +303,18 @@ def _handle_message(pipeline_id, topic, payload):
 
         # 싱크 실행 (처리 완료된 메시지를 각 싱크로 전달)
         for sink_step in info.get("sinks", []):
+            sid = sink_step.get("step_id")
             try:
                 sink_func = SINK_REGISTRY.get(sink_step["module_type"])
                 if sink_func:
                     sink_func(copy.deepcopy(message), sink_step["config"])
+                    if sid and sid in step_stats:
+                        step_stats[sid]["processed"] += 1
+                        step_stats[sid]["last_at"] = now_dt
             except Exception as se:
+                if sid and sid in step_stats:
+                    step_stats[sid]["errors"] += 1
+                    step_stats[sid]["last_at"] = now_dt
                 logger.warning("파이프라인 %s: 싱크 %s 오류 — %s",
                                pipeline_id, sink_step["module_type"], se)
 
@@ -291,6 +335,7 @@ def _handle_message(pipeline_id, topic, payload):
                 if pipeline_id in _running_pipelines:
                     try:
                         _update_pipeline_db(pipeline_id, "running", info["stats"])
+                        _commit_step_progress(step_stats)
                     except Exception as ce:
                         logger.warning("파이프라인 %s: 주기적 통계 commit 실패 — %s",
                                        pipeline_id, ce)
@@ -336,6 +381,56 @@ def _handle_message(pipeline_id, topic, payload):
 
         # DB에 에러 기록
         _update_pipeline_error(pipeline_id, str(e))
+
+
+def _reset_step_progress(pipeline_id):
+    """파이프라인 시작 시 pipeline_step 카운터 0으로 리셋."""
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        ss.execute(_t("""
+            UPDATE pipeline_step
+            SET processed_count = 0, error_count = 0, dropped_count = 0,
+                last_processed_at = NULL
+            WHERE pipeline_id = :pid
+        """), {"pid": pipeline_id})
+        ss.commit()
+    except Exception:
+        ss.rollback()
+    finally:
+        ss.close()
+
+
+def _commit_step_progress(step_stats):
+    """step_stats: {step_id: {processed, errors, dropped, last_at}}.
+    유효한 step_id 항목만 골라 UPDATE."""
+    if not step_stats:
+        return
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        for sid, s in step_stats.items():
+            if not sid:
+                continue
+            ss.execute(_t("""
+                UPDATE pipeline_step
+                SET processed_count = :p, error_count = :e, dropped_count = :d,
+                    last_processed_at = :ts
+                WHERE id = :sid
+            """), {
+                "p": s.get("processed", 0),
+                "e": s.get("errors", 0),
+                "d": s.get("dropped", 0),
+                "ts": s.get("last_at"),
+                "sid": sid,
+            })
+        ss.commit()
+    except Exception:
+        ss.rollback()
+    finally:
+        ss.close()
 
 
 def _update_pipeline_db(pipeline_id, status, stats):
