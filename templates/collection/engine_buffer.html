@@ -10,7 +10,16 @@
 {% endblock %}
 
 {% block page_actions %}
-<button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<div class="d-flex align-center gap-8">
+  <span class="fs-12 text-muted">{{ t('page.ops_dashboard.last_updated_label') }} <span id="last-updated-header">-</span></span>
+  <select class="form-select" id="refresh-interval" style="width:auto;min-width:130px;padding:5px 10px;font-size:12px;">
+    <option value="0">{{ t('page.ops_dashboard.auto_refresh_off') }}</option>
+    <option value="5000">{{ t('page.ops_dashboard.auto_refresh_5s') }}</option>
+    <option value="10000" selected>{{ t('page.ops_dashboard.auto_refresh_10s') }}</option>
+    <option value="30000">{{ t('page.ops_dashboard.auto_refresh_30s') }}</option>
+  </select>
+  <button class="btn btn-outline btn-sm" onclick="loadAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+</div>
 {% endblock %}
 
 {% block content %}
@@ -156,7 +165,9 @@ function loadAll() {
     renderSinkBuffers();
     renderAggBuffers();
     renderWindowCache();
-    $('#last-updated').text(fmtLocal(new Date().toISOString()));
+    var nowStr = fmtLocal(new Date().toISOString());
+    $('#last-updated').text(nowStr);
+    $('#last-updated-header').text(nowStr);
   }).fail(function() {
     showToast(__t('page.engine_buffer.toast_load_api_fail'), 'error');
   });
@@ -287,6 +298,18 @@ function flushSingle(bufferKey) {
 }
 
 /* ── Init ── */
-$(function() { loadAll(); });
+/* ── Auto Refresh (ops_dashboard 와 동일 패턴) ── */
+var _refreshTimer = null;
+function setupRefresh() {
+  var ms = parseInt($('#refresh-interval').val());
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+}
+$('#refresh-interval').on('change', function() {
+  if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
+  var ms = parseInt(this.value);
+  if (ms > 0) _refreshTimer = setInterval(loadAll, ms);
+});
+
+$(function() { loadAll(); setupRefresh(); });
 </script>
 {% endblock %}
