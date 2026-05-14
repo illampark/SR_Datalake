@@ -373,6 +373,19 @@ def run_pipeline_file_source(pid):
     finally:
         db.close()
 
+    # 동기 lock 사전 확인 — run_file_source 안의 acquire 가 실패하면 스레드는
+    # silent 로 끝나서 사용자에게 "트리거됨"만 보였음. 라우트에서 미리 보고 친화적
+    # 에러로 반환한다. (실제 acquire 는 스레드 안에서 다시 시도하므로 TOCTOU 문제 없음 —
+    # 동시 두 사용자가 클릭해도 한쪽만 _try_acquire_lock 에 성공.)
+    is_locked, lock_rid, lock_rat = pipeline_engine.get_file_source_lock_state(pid)
+    if is_locked:
+        return _err(
+            f"이 파이프라인의 파일 소스 작업이 이미 실행 중입니다 "
+            f"(시작 시각 {lock_rat.isoformat() if lock_rat else '?'}). "
+            "완료를 기다리거나 24시간 후 재시도해주세요.",
+            "FILE_SOURCE_LOCKED", 409,
+        )
+
     def _run():
         try:
             result = pipeline_engine.run_file_source(pid)

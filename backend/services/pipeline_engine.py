@@ -383,6 +383,63 @@ def _handle_message(pipeline_id, topic, payload):
         _update_pipeline_error(pipeline_id, str(e))
 
 
+def get_file_source_lock_state(pipeline_id):
+    """파이프라인의 file-source 락 상태를 동기 조회.
+
+    Returns: (is_locked: bool, run_id: str|None, run_at: datetime|None).
+    24h 이상 지나면 stale 으로 보고 is_locked=False (다음 acquire 가 알아서 빼앗음).
+    """
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        row = ss.execute(_t(
+            "SELECT current_run_id, current_run_at FROM pipeline WHERE id=:p"
+        ), {"p": pipeline_id}).fetchone()
+        if not row:
+            return (False, None, None)
+        rid, rat = row[0], row[1]
+        if not rid:
+            return (False, None, None)
+        if rat is None:
+            return (False, rid, None)
+        if (datetime.utcnow() - rat) > timedelta(hours=24):
+            return (False, rid, rat)
+        return (True, rid, rat)
+    finally:
+        ss.close()
+
+
+def clear_stale_file_source_locks():
+    """컨테이너 시작 시 호출 — 모든 파이프라인의 current_run_id 를 NULL 로 리셋.
+
+    컨테이너가 재시작되면 in-flight file-source 스레드는 사라진 상태이므로 어떤 lock
+    도 유효할 수 없다. 이대로 두면 사용자가 /run-file-source 를 호출해도 stale lock 에
+    막혀 24h 동안 처리가 안 됨 (`catalog_export_worker.resume_pending_on_startup` 과
+    동일한 클래스의 startup-cleanup 문제).
+    """
+    from backend.database import SessionLocal
+    from sqlalchemy import text as _t
+    ss = SessionLocal()
+    try:
+        result = ss.execute(_t("""
+            UPDATE pipeline
+            SET current_run_id = '', current_run_at = NULL
+            WHERE current_run_id IS NOT NULL AND current_run_id <> ''
+        """))
+        ss.commit()
+        cleared = result.rowcount or 0
+        if cleared:
+            logger.info("startup: cleared %d stale file-source lock(s)", cleared)
+        return cleared
+    except Exception as e:
+        logger.warning("startup: stale lock cleanup failed — %s", e)
+        ss.rollback()
+        return 0
+    finally:
+        ss.close()
+
+
 def _reset_step_progress(pipeline_id):
     """파이프라인 시작 시 pipeline_step 카운터 0으로 리셋."""
     from backend.database import SessionLocal

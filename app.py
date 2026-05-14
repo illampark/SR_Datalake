@@ -126,6 +126,14 @@ try:
 except Exception:
     pass
 
+# Clear stale file-source locks left behind by container restart — pipeline.current_run_id
+# pointing at a now-dead thread blocks /run-file-source for 24h otherwise.
+from backend.services import pipeline_engine as _pipeline_engine
+try:
+    _pipeline_engine.clear_stale_file_source_locks()
+except Exception:
+    pass
+
 # Setup DB logging handler (backend.* → PostgreSQL)
 from backend.services.log_handler import setup_db_logging
 setup_db_logging()
