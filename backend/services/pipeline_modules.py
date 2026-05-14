@@ -969,6 +969,23 @@ def _rdbms_write_mysql(host, port, database, username, password,
             f"CREATE TABLE IF NOT EXISTS {tbl} "
             f"(id INT AUTO_INCREMENT PRIMARY KEY, {col_defs})"
         )
+        # 스키마 진화 — 누락 컬럼 ALTER TABLE ADD COLUMN (PG 와 동일 로직).
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = %s AND table_name = %s",
+            (database, table_name),
+        )
+        existing_cols = {r[0] for r in cur.fetchall()}
+        missing = [c for c in columns if c not in existing_cols]
+        for col_name in missing:
+            cur.execute(
+                f"ALTER TABLE {tbl} ADD COLUMN {_mysql_ident(col_name)} TEXT"
+            )
+        if missing:
+            logger.info(
+                "RDBMS sink (mysql): added %d missing column(s) to %s: %s",
+                len(missing), table_name, missing,
+            )
         # INSERT
         placeholders = ", ".join(["%s"] * len(columns))
         col_names = ", ".join(col_idents)
@@ -1019,6 +1036,28 @@ def _rdbms_write_pg(host, port, database, username, password,
                 "CREATE TABLE IF NOT EXISTS {tbl} (id SERIAL PRIMARY KEY, {cols})"
             ).format(tbl=full_table_create, cols=col_defs)
         )
+        # 스키마 진화 — 기존 테이블에 누락된 컬럼이 있으면 ALTER TABLE 로 추가.
+        # 첫 배치에 등장하지 않았던 컬럼(예: 측정 레이어 L5/L6, VIA PAD WIDTH) 이
+        # 이후 row 에 나타나면 INSERT 가 "column does not exist" 로 실패하던 문제 fix.
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = %s AND table_name = %s",
+            (schema or "public", table_name),
+        )
+        existing_cols = {r[0] for r in cur.fetchall()}
+        missing = [c for c in columns if c not in existing_cols]
+        for col_name in missing:
+            cur.execute(
+                _sql.SQL("ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} TEXT").format(
+                    tbl=full_table_create,
+                    col=_sql.Identifier(col_name),
+                )
+            )
+        if missing:
+            logger.info(
+                "RDBMS sink: added %d missing column(s) to %s: %s",
+                len(missing), table_name, missing,
+            )
         # INSERT — executemany 가 %-format 처리하므로 식별자 % → %% escape
         safe_table = str(table_name).replace("%", "%%")
         safe_schema = str(schema).replace("%", "%%") if schema else None
