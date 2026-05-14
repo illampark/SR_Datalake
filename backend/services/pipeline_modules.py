@@ -831,8 +831,14 @@ def sink_internal_rdbms(message, config):
 
     # 행 데이터 구성
     if column_mapping == "flatten" and isinstance(raw_value, dict):
-        # value dict의 각 key를 컬럼으로 펼침 + 메타 컬럼 추가
-        row = dict(raw_value)
+        # value dict의 각 key를 컬럼으로 펼침 + 메타 컬럼 추가.
+        # xlsx 의 빈 헤더 셀이나 공백 문자열 키는 SQL 식별자로 사용 불가
+        # ("" → zero-length delimited identifier) 이므로 제외.
+        row = {
+            (k if isinstance(k, str) else str(k)): v
+            for k, v in raw_value.items()
+            if k is not None and (not isinstance(k, str) or k.strip())
+        }
         row["_pipeline_id"] = pipeline_id
         row["_connector_type"] = connector_type
         row["_connector_id"] = connector_id
