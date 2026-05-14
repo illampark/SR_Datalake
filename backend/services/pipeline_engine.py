@@ -11,7 +11,7 @@ import json
 import logging
 import time
 import copy
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from backend.services import mqtt_manager
 from backend.services.pipeline_modules import MODULE_REGISTRY, SINK_REGISTRY, process_message, flush_all_sink_buffers
@@ -647,6 +647,7 @@ def run_file_source(pipeline_id):
 
     def _commit_step_progress(step_stats):
         if not step_stats:
+            logger.warning("file-source pipeline=%s step_stats empty at commit", pipeline_id)
             return
         ss = SessionLocal()
         try:
@@ -661,8 +662,13 @@ def run_file_source(pipeline_id):
                     "ts": s["last_at"], "sid": sid,
                 })
             ss.commit()
-        except Exception:
+            logger.info("file-source pipeline=%s committed step_stats keys=%s sample=%s",
+                        pipeline_id, list(step_stats.keys()),
+                        {k: v["processed"] for k, v in list(step_stats.items())[:2]})
+        except Exception as e:
             ss.rollback()
+            logger.error("file-source pipeline=%s _commit_step_progress 실패: %s",
+                         pipeline_id, e, exc_info=True)
         finally:
             ss.close()
 
