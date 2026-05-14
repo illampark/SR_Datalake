@@ -647,7 +647,6 @@ def run_file_source(pipeline_id):
 
     def _commit_step_progress(step_stats):
         if not step_stats:
-            logger.warning("file-source pipeline=%s step_stats empty at commit", pipeline_id)
             return
         ss = SessionLocal()
         try:
@@ -662,13 +661,10 @@ def run_file_source(pipeline_id):
                     "ts": s["last_at"], "sid": sid,
                 })
             ss.commit()
-            logger.info("file-source pipeline=%s committed step_stats keys=%s sample=%s",
-                        pipeline_id, list(step_stats.keys()),
-                        {k: v["processed"] for k, v in list(step_stats.items())[:2]})
         except Exception as e:
             ss.rollback()
-            logger.error("file-source pipeline=%s _commit_step_progress 실패: %s",
-                         pipeline_id, e, exc_info=True)
+            logger.warning("file-source pipeline=%s _commit_step_progress 실패: %s",
+                           pipeline_id, e)
         finally:
             ss.close()
 
@@ -1136,6 +1132,10 @@ def run_file_source(pipeline_id):
                         pipeline_id, obj.object_name, file_record_count, total_processed,
                     )
                     _commit_progress(total_processed, total_errors, total_dropped)
+                    # 작은 파일이 빠르게 끝나는 경우 inner-loop 의 5000행/5초 임계치가
+                    # 매 파일마다 리셋되어 step_stats 가 영영 commit 되지 않는 문제 방지 —
+                    # 파일 단위 commit 도 함께 한다.
+                    _commit_step_progress(step_stats)
                     last_commit_count = total_processed
                     last_commit_at = _time.time()
                     # 파일 정상 완료 → processed_objects 추가, 현재 파일 offset 리셋
