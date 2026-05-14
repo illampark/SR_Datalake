@@ -1138,6 +1138,15 @@ def run_file_source(pipeline_id):
                     _commit_step_progress(step_stats)
                     last_commit_count = total_processed
                     last_commit_at = _time.time()
+                    # 외부에서 정지 요청? — 작은 파일 처리 시 inner-loop 의 stop 체크가
+                    # 절대 닿지 않으므로 (commit threshold reset 으로) 파일 경계에서도
+                    # 명시적으로 확인. 다음 파일로 넘어가기 전에 안전 정지.
+                    if _is_stop_requested(pipeline_id):
+                        logger.info(
+                            "file-source pipeline=%s STOP 요청 감지 (file boundary)",
+                            pipeline_id,
+                        )
+                        cancelled = True
                     # 파일 정상 완료 → processed_objects 추가, 현재 파일 offset 리셋
                     _processed_objects.add(obj.object_name)
                     _resume_object = None
