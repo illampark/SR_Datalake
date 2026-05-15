@@ -249,20 +249,18 @@ def _get_rdbms_size(db):
 
 
 def _get_minio_size():
-    """MinIO 파일 스토리지 전체 버킷 사이즈 합산 (bytes)."""
+    """MinIO 파일 스토리지 전체 버킷 사이즈 합산 (bytes).
+
+    storage_file._minio_bucket_summary_cached 의 파일 캐시(/tmp/sdl_minio_cache.json)
+    를 재사용. 직접 list_objects(recursive=True) 호출하면 NFS 위 163k 객체에서
+    5~10분 + gunicorn worker timeout 위험. 캐시 miss 면 0 반환 (워머가 채우는 중).
+    """
     try:
-        from minio.error import S3Error
-        db = SessionLocal()
-        client = get_minio_client(db)
-        db.close()
-        total = 0
-        for bname in MINIO_BUCKETS:
-            try:
-                for obj in client.list_objects(bname, recursive=True):
-                    total += obj.size
-            except S3Error:
-                pass
-        return total
+        from backend.routes.storage_file import _minio_bucket_summary_cached
+        summary = _minio_bucket_summary_cached(blocking=False)
+        if summary is None:
+            return 0
+        return int(summary.get("total_size", 0))
     except Exception:
         return 0
 
