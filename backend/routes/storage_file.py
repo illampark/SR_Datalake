@@ -18,28 +18,75 @@ logger = logging.getLogger(__name__)
 
 # MinIO list_objects 결과는 NFS 위에서 매우 느리므로 TTL 캐시 적용
 # (status / browse / stats 모두 173k+ 객체 전체 list 를 trigger 함)
-_MINIO_CACHE = {}
+#
+# CRITICAL: gunicorn preforking 환경에서 in-memory dict 는 워커별 분리되므로
+# leader 워커가 채운 캐시를 다른 워커가 못 본다. 파일 기반(/tmp) 으로 모든
+# 워커가 공유 + in-memory 2-tier 캐시 (한 번 읽으면 메모리에 보관).
+import json as _json
+_MINIO_CACHE = {}                                # in-memory (worker 별, file 읽은 결과 캐시)
 _MINIO_CACHE_LOCK = threading.Lock()
-_MINIO_CACHE_TTL_SEC = int(os.environ.get("MINIO_LIST_CACHE_TTL", "1800"))  # 30분 — NFS list 한 번이 5~10분이라 짧으면 만료 시 worker timeout 위험
+_MINIO_CACHE_TTL_SEC = int(os.environ.get("MINIO_LIST_CACHE_TTL", "1800"))  # 30분
+_MINIO_CACHE_FILE = os.environ.get("MINIO_LIST_CACHE_FILE", "/tmp/sdl_minio_cache.json")
 
 
 def _cache_get(key):
-    """반환 (value, age_seconds) or (None, None) if miss/expired."""
+    """반환 (value, age_seconds) or (None, None) if miss/expired.
+
+    1) in-memory dict (이 워커) → hit 시 즉시 반환
+    2) /tmp 파일 → hit 시 in-memory 에 보관 후 반환 (한 번만 IO)
+    """
+    now = time.time()
     with _MINIO_CACHE_LOCK:
         entry = _MINIO_CACHE.get(key)
-        if not entry:
-            return None, None
-        value, ts = entry
-        age = time.time() - ts
-        if age > _MINIO_CACHE_TTL_SEC:
+        if entry:
+            value, ts = entry
+            age = now - ts
+            if age <= _MINIO_CACHE_TTL_SEC:
+                return value, age
             _MINIO_CACHE.pop(key, None)
-            return None, None
-        return value, age
+    # in-memory miss → 파일에서 시도
+    try:
+        if os.path.exists(_MINIO_CACHE_FILE):
+            with open(_MINIO_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            entry = data.get(key)
+            if entry:
+                ts = float(entry.get("ts", 0))
+                value = entry.get("value")
+                age = now - ts
+                if age <= _MINIO_CACHE_TTL_SEC:
+                    with _MINIO_CACHE_LOCK:
+                        _MINIO_CACHE[key] = (value, ts)
+                    return value, age
+    except Exception:
+        pass
+    return None, None
 
 
 def _cache_put(key, value):
+    now = time.time()
     with _MINIO_CACHE_LOCK:
-        _MINIO_CACHE[key] = (value, time.time())
+        _MINIO_CACHE[key] = (value, now)
+    # 파일 fsync — atomic rename 으로 race-safe.
+    try:
+        data = {}
+        if os.path.exists(_MINIO_CACHE_FILE):
+            try:
+                with open(_MINIO_CACHE_FILE, "r", encoding="utf-8") as f:
+                    data = _json.load(f) or {}
+            except Exception:
+                data = {}
+        # 만료된 다른 키 정리
+        now_ts = now
+        data = {k: v for k, v in data.items()
+                if isinstance(v, dict) and (now_ts - float(v.get("ts", 0))) <= _MINIO_CACHE_TTL_SEC * 2}
+        data[key] = {"ts": now, "value": value}
+        tmp = _MINIO_CACHE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(data, f, default=str)
+        os.replace(tmp, _MINIO_CACHE_FILE)
+    except Exception as e:
+        logger.warning("minio cache_put file write failed: %s", e)
 
 file_bp = Blueprint("storage_file", __name__, url_prefix="/api/storage/file")
 

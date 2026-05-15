@@ -324,6 +324,9 @@ function loadStatus() {
 
     if (d.status === 'connected') {
       $('#info-status').html('<span class="text-success"><i class="fas fa-circle-check"></i> ' + __t('page.file_storage.status_connected') + '</span>');
+    } else if (d.status === 'warming') {
+      // MinIO 객체 list 캐시를 백그라운드에서 채우는 중 — 잠시 후 자동 정상화
+      $('#info-status').html('<span class="text-warning"><i class="fas fa-spinner fa-spin"></i> MinIO 사용량 집계 중… <small>(잠시 후 새로고침)</small></span>');
     } else {
       $('#info-status').html('<span class="text-danger"><i class="fas fa-circle-xmark"></i> ' + __t('page.file_storage.status_disconnected') + '</span>');
     }
