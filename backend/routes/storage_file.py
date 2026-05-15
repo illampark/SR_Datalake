@@ -847,10 +847,16 @@ def list_local_collectors():
 
 @file_bp.route("/local/browse", methods=["GET"])
 def browse_local_files():
-    """collectorId 기준 local_path 파일 트리 조회.
+    """collectorId 기준 local_path 파일 트리 조회 — file_index 테이블 SQL 조회.
+
+    이전엔 호출마다 NFS 위 os.walk 를 돌렸지만(첫 cold 5분+), 이제는 file_indexer
+    백그라운드 스캐너가 PG 의 file_index 에 캐시한 결과를 ms 단위로 응답한다.
+    response.indexedAt 이 stale 인지 확인하려면 /local/index-state 참고.
 
     Query: collectorId, path(상대), search, page, size, date_from, date_to
     """
+    from sqlalchemy import text as _sql_text
+    from backend.models.file_index import FileIndexState
     db = SessionLocal()
     try:
         cid = request.args.get("collectorId", type=int)
@@ -862,91 +868,94 @@ def browse_local_files():
 
         page = max(request.args.get("page", 1, type=int), 1)
         size = max(request.args.get("size", 50, type=int), 1)
-        search = (request.args.get("search", "") or "").lower()
+        search = (request.args.get("search", "") or "").strip().lower()
         browse_path = (request.args.get("path", "") or "").strip().strip("/")
         date_from = request.args.get("date_from", "")
         date_to = request.args.get("date_to", "")
 
-        base_path = ic.local_path
-        current = _safe_join(base_path, browse_path) if browse_path else os.path.realpath(base_path)
-        if current is None or not os.path.isdir(current):
-            return _err("유효하지 않은 경로입니다.", "INVALID_PATH", 400)
-
         dt_from = dt_to = None
         if date_from:
-            try:
-                dt_from = datetime.fromisoformat(date_from)
-            except ValueError:
-                pass
+            try: dt_from = datetime.fromisoformat(date_from)
+            except ValueError: pass
         if date_to:
-            try:
-                dt_to = datetime.fromisoformat(date_to)
-            except ValueError:
-                pass
+            try: dt_to = datetime.fromisoformat(date_to)
+            except ValueError: pass
 
-        is_search = bool(search)
-        cumulative_files = []
-        current_level_files = []
+        # 공통 WHERE 조건 구성 (search/페이지/cumulative 별로 재사용)
+        params = {"cid": cid}
+        date_cond = ""
+        if dt_from is not None:
+            date_cond += " AND modified_at >= :df"; params["df"] = dt_from
+        if dt_to is not None:
+            date_cond += " AND modified_at < :dt"; params["dt"] = dt_to
+
+        # 검색 모드: 전체 collector 범위 + name LIKE
+        # 디렉토리 탐색: parent_path = :p
+        if search:
+            params["q"] = f"%{search}%"
+            where_files = (
+                "collector_id = :cid AND is_dir = false AND "
+                "(LOWER(name) LIKE :q OR LOWER(rel_path) LIKE :q)" + date_cond
+            )
+            where_total = where_files
+        else:
+            params["p"] = browse_path
+            where_files = "collector_id = :cid AND parent_path = :p AND is_dir = false" + date_cond
+            where_total = where_files
+
+        # total + size 합 (현재 레벨 또는 검색결과)
+        total_row = db.execute(_sql_text(
+            f"SELECT COUNT(*), COALESCE(SUM(size), 0) FROM file_index WHERE {where_total}"
+        ), params).first()
+        total = int(total_row[0] or 0)
+        total_size = int(total_row[1] or 0)
+
+        # cumulative (collector 전체 파일)
+        cum_row = db.execute(_sql_text(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM file_index "
+            "WHERE collector_id = :cid AND is_dir = false"
+        ), {"cid": cid}).first()
+        cum_total = int(cum_row[0] or 0)
+        cum_size = int(cum_row[1] or 0)
+
+        # 디렉토리 목록 — 검색 모드면 비움, 일반 탐색이면 현재 레벨 directory
         dirs = []
-        seen_dirs = set()
+        if not search:
+            dir_rows = db.execute(_sql_text(
+                "SELECT name, rel_path FROM file_index "
+                "WHERE collector_id = :cid AND parent_path = :p AND is_dir = true "
+                "ORDER BY name"
+            ), {"cid": cid, "p": browse_path}).fetchall()
+            for r in dir_rows:
+                next_rel = r[1]  # 이미 base 기준 상대
+                dirs.append({
+                    "name": r[0],
+                    "type": "directory",
+                    "path": next_rel + "/",
+                })
 
-        for root_dir, subdirs, fnames in os.walk(base_path):
-            for fn in fnames:
-                full = os.path.join(root_dir, fn)
-                rel_path = os.path.relpath(full, base_path).replace(os.sep, "/")
-                if search and search not in fn.lower() and search not in rel_path.lower():
-                    continue
-                try:
-                    st = os.stat(full)
-                except OSError:
-                    continue
-                mtime = datetime.utcfromtimestamp(st.st_mtime)
-                if dt_from and mtime < dt_from:
-                    continue
-                if dt_to and mtime >= dt_to:
-                    continue
-                ext = os.path.splitext(fn)[1].lower()
-                ftype, _ = _classify(fn)
-                info = {
-                    "name": fn,
-                    "path": rel_path,
-                    "type": ftype,
-                    "extension": ext,
-                    "size": st.st_size,
-                    "sizeDisplay": _fmt_bytes(st.st_size),
-                    "modifiedAt": mtime.isoformat(),
-                }
-                cumulative_files.append(info)
-                parent_rel = os.path.dirname(rel_path).replace(os.sep, "/")
-                current_rel = browse_path
-                if is_search or parent_rel == current_rel:
-                    current_level_files.append(info)
+        # 파일 페이지 — 검색 결과 또는 현재 레벨
+        offset = (page - 1) * size
+        params_page = dict(params); params_page["lim"] = size; params_page["off"] = offset
+        file_rows = db.execute(_sql_text(
+            f"SELECT name, rel_path, ftype, extension, size, modified_at "
+            f"FROM file_index WHERE {where_files} "
+            f"ORDER BY modified_at DESC NULLS LAST, name ASC "
+            f"LIMIT :lim OFFSET :off"
+        ), params_page).fetchall()
 
-        if not is_search:
-            try:
-                for entry in os.listdir(current):
-                    full = os.path.join(current, entry)
-                    if os.path.isdir(full) and entry not in seen_dirs:
-                        seen_dirs.add(entry)
-                        next_rel = (browse_path + "/" + entry).strip("/")
-                        dirs.append({
-                            "name": entry,
-                            "type": "directory",
-                            "path": next_rel + "/",
-                        })
-            except OSError:
-                pass
-
-        dirs.sort(key=lambda x: x["name"])
-        current_level_files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
-
-        total = len(current_level_files)
-        total_size = sum(int(f.get("size") or 0) for f in current_level_files)
-        cum_total = len(cumulative_files)
-        cum_size = sum(int(f.get("size") or 0) for f in cumulative_files)
-
-        start = (page - 1) * size
-        paged = current_level_files[start:start + size]
+        items = []
+        for r in file_rows:
+            mtime = r[5]
+            items.append({
+                "name": r[0],
+                "path": r[1],
+                "type": r[2] or "other",
+                "extension": r[3] or "",
+                "size": int(r[4] or 0),
+                "sizeDisplay": _fmt_bytes(int(r[4] or 0)),
+                "modifiedAt": mtime.isoformat() if mtime else None,
+            })
 
         breadcrumb = [{"name": "root", "path": ""}]
         if browse_path:
@@ -956,10 +965,13 @@ def browse_local_files():
                 acc += p + "/"
                 breadcrumb.append({"name": p, "path": acc})
 
+        state = db.query(FileIndexState).get(cid)
+        index_state = state.to_dict() if state else None
+
         return _ok({
-            "collector": {"id": ic.id, "name": ic.name, "path": base_path},
+            "collector": {"id": ic.id, "name": ic.name, "path": ic.local_path},
             "directories": dirs,
-            "items": paged,
+            "items": items,
             "total": total,
             "totalSize": total_size,
             "totalSizeDisplay": _fmt_bytes(total_size),
@@ -970,9 +982,55 @@ def browse_local_files():
             "size": size,
             "currentPath": browse_path,
             "breadcrumb": breadcrumb,
+            "indexState": index_state,
         })
     finally:
         db.close()
+
+
+@file_bp.route("/local/index-state", methods=["GET"])
+def local_index_state():
+    """파일 인덱서 상태 조회 — collectorId 단일 또는 전체."""
+    db = SessionLocal()
+    try:
+        from backend.models.file_index import FileIndexState
+        cid = request.args.get("collectorId", type=int)
+        if cid:
+            s = db.query(FileIndexState).get(cid)
+            return _ok(s.to_dict() if s else {"collectorId": cid, "indexed": False})
+        items = [s.to_dict() for s in db.query(FileIndexState).order_by(FileIndexState.collector_id).all()]
+        return _ok(items)
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/reindex", methods=["POST"])
+def local_reindex():
+    """사용자가 수동으로 인덱싱 트리거 — 단일 collector 백그라운드 스캔.
+
+    Query: collectorId
+    """
+    import threading
+    cid = request.args.get("collectorId", type=int)
+    if not cid:
+        return _err("collectorId가 필요합니다.", "VALIDATION")
+
+    db = SessionLocal()
+    try:
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+    finally:
+        db.close()
+
+    from backend.services import file_indexer
+    threading.Thread(
+        target=file_indexer.scan_collector,
+        args=(cid,),
+        name=f"manual-reindex-{cid}",
+        daemon=True,
+    ).start()
+    return _ok({"collectorId": cid, "started": True})
 
 
 @file_bp.route("/local/download", methods=["GET"])

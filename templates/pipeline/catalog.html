@@ -1383,6 +1383,21 @@ function loadCatalogFiles(page) {
     });
     $('#file-breadcrumb').html(bcHtml);
 
+    // local_path 모드일 때 인덱스 상태 안내 (file_indexer 기반)
+    if (data.sourceMode === 'local_path' && data.indexState) {
+      var st = data.indexState;
+      var note = '';
+      if (st.isRunning) {
+        note = '<i class="fas fa-spinner fa-spin"></i> 인덱싱 진행 중…';
+      } else if (st.lastScanFinishedAt) {
+        var ageMin = Math.max(0, Math.round((Date.now() - new Date(st.lastScanFinishedAt).getTime()) / 60000));
+        note = '<i class="fas fa-database"></i> 마지막 인덱스: ' + escHtml(fmtLocal(st.lastScanFinishedAt)) + ' (' + ageMin + '분 전)';
+      } else {
+        note = '<i class="fas fa-info-circle"></i> 아직 인덱싱 안 됨';
+      }
+      $('#file-breadcrumb').append('<div class="text-muted fs-11" style="margin-top:4px;">' + note + '</div>');
+    }
+
     $tb = $('#data-tbody').empty();
 
     // 디렉토리 행

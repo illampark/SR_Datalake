@@ -2251,107 +2251,107 @@ def _fmt_bytes(b):
 
 
 def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, date_to, c):
-    """Import collector 의 source_mode='local_path' 시 로컬 FS 파일 목록 응답.
+    """Import collector 의 source_mode='local_path' 시 파일 목록 응답.
 
-    MinIO 미사용. sdl-app 컨테이너의 ic_row.local_path 를 base 로 os.walk
-    하여 파일을 수집하고, /files 엔드포인트와 동일한 응답 shape 으로 반환.
+    이전엔 호출마다 os.walk(base_path) 를 돌렸지만(NFS 위에서 첫 cold 수 분+),
+    이제는 file_indexer 가 PG 의 file_index 에 캐시한 결과를 SQL 로 조회한다.
+    응답 shape 은 동일하게 유지하여 프론트는 무수정.
     """
+    from sqlalchemy.orm.session import object_session
+    from sqlalchemy import text as _sql_text
+    from backend.models.file_index import FileIndexState
+
+    db = object_session(c) or SessionLocal()
     base_path = ic_row.local_path.rstrip("/")
     current_rel = browse_path.strip("/") if browse_path else ""
-    current_dir = os.path.join(base_path, current_rel) if current_rel else base_path
-
-    # 검색이 있으면 items 도 재귀, 아니면 items 는 현재 레벨만 (디렉토리 탐색 UX 유지)
     is_search = bool(search)
+    search_lc = (search or "").lower()
 
-    dirs = []
-    current_level_files = []   # 현재 browse_path 의 직접 자식 파일 (검색 시는 전체 매칭)
-    cumulative_files = []      # 전체 카탈로그 (base_path 재귀) 매칭 — 저장 용량 합산용
-    seen_dirs = set()
-
-    # 날짜 필터 파싱
     dt_from = dt_to = None
     if date_from:
-        try:
-            dt_from = datetime.fromisoformat(date_from)
-        except ValueError:
-            pass
+        try: dt_from = datetime.fromisoformat(date_from)
+        except ValueError: pass
     if date_to:
         try:
             dt_to = datetime.fromisoformat(date_to)
             if dt_to.hour == 0 and dt_to.minute == 0:
                 dt_to += timedelta(days=1)
-        except ValueError:
-            pass
+        except ValueError: pass
 
-    try:
-        # ── 1) 항상 base_path 재귀 walk — cumulative 통계 (전체 카탈로그) ──
-        for root_dir, subdirs, fnames in os.walk(base_path):
-            for fn in fnames:
-                fpath = os.path.join(root_dir, fn)
-                try:
-                    st = os.stat(fpath)
-                except OSError:
-                    continue
-                if search and search not in fn.lower() and search not in fpath.lower():
-                    continue
-                mod_dt = datetime.fromtimestamp(st.st_mtime)
-                if dt_from and mod_dt < dt_from:
-                    continue
-                if dt_to and mod_dt >= dt_to:
-                    continue
-                ext = os.path.splitext(fn)[1].lower()
-                rel_path = os.path.relpath(fpath, base_path).replace(os.sep, "/")
-                file_info = {
-                    "name": fn,
-                    "objectName": rel_path,
-                    "bucket": "(local)",
-                    "type": _file_type(ext),
-                    "extension": ext,
-                    "size": st.st_size,
-                    "sizeDisplay": _fmt_bytes(st.st_size),
-                    "path": rel_path,
-                    "modifiedAt": mod_dt.isoformat(),
-                    "isLocal": True,
-                    "collectorId": ic_row.id,
-                }
-                cumulative_files.append(file_info)
-                # items 선정: 검색 모드면 전체 매칭, 아니면 현재 레벨만
-                file_parent = os.path.dirname(rel_path).replace(os.sep, "/")
-                if is_search or file_parent == current_rel:
-                    current_level_files.append(file_info)
+    params = {"cid": ic_row.id}
+    date_cond = ""
+    if dt_from is not None:
+        date_cond += " AND modified_at >= :df"; params["df"] = dt_from
+    if dt_to is not None:
+        date_cond += " AND modified_at < :dt"; params["dt"] = dt_to
 
-        # ── 2) 현재 레벨 하위 디렉토리 (단일 레벨) ──
-        if not is_search and os.path.isdir(current_dir):
-            try:
-                with os.scandir(current_dir) as it:
-                    for entry in it:
-                        if entry.is_dir(follow_symlinks=False) and entry.name not in seen_dirs:
-                            seen_dirs.add(entry.name)
-                            dirs.append({
-                                "name": entry.name,
-                                "type": "directory",
-                                "path": (browse_path.rstrip("/") + "/" if browse_path else "") + entry.name + "/",
-                            })
-            except OSError:
-                pass
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("local_path 파일 목록 조회 실패: %s", e)
+    if is_search:
+        params["q"] = f"%{search_lc}%"
+        where_files = (
+            "collector_id = :cid AND is_dir = false AND "
+            "(LOWER(name) LIKE :q OR LOWER(rel_path) LIKE :q)" + date_cond
+        )
+    else:
+        params["p"] = current_rel
+        where_files = "collector_id = :cid AND parent_path = :p AND is_dir = false" + date_cond
 
-    dirs.sort(key=lambda x: x["name"])
-    current_level_files.sort(key=lambda x: x.get("modifiedAt") or "", reverse=True)
+    # 페이지 단위 file rows
+    offset = (page - 1) * size
+    p2 = dict(params); p2["lim"] = size; p2["off"] = offset
+    rows = db.execute(_sql_text(
+        f"SELECT name, rel_path, ftype, extension, size, modified_at "
+        f"FROM file_index WHERE {where_files} "
+        f"ORDER BY modified_at DESC NULLS LAST, name ASC "
+        f"LIMIT :lim OFFSET :off"
+    ), p2).fetchall()
 
-    # 현재 레벨 (페이지네이션용)
-    total = len(current_level_files)
-    total_size_bytes = sum(int(f.get("size") or 0) for f in current_level_files)
-    total_size_display = _fmt_bytes(total_size_bytes)
-    # 전체 카탈로그 (catalog detail '저장 용량' 행이 사용)
-    cumulative_total = len(cumulative_files)
-    cumulative_size_bytes = sum(int(f.get("size") or 0) for f in cumulative_files)
-    cumulative_size_display = _fmt_bytes(cumulative_size_bytes)
+    paged_files = []
+    for r in rows:
+        mtime = r[5]
+        ext = r[3] or ""
+        paged_files.append({
+            "name": r[0],
+            "objectName": r[1],
+            "bucket": "(local)",
+            "type": r[2] or "other",
+            "extension": ext,
+            "size": int(r[4] or 0),
+            "sizeDisplay": _fmt_bytes(int(r[4] or 0)),
+            "path": r[1],
+            "modifiedAt": mtime.isoformat() if mtime else None,
+            "isLocal": True,
+            "collectorId": ic_row.id,
+        })
 
-    start = (page - 1) * size
-    paged_files = current_level_files[start:start + size]
+    # total + size 합 (현재 매칭)
+    total_row = db.execute(_sql_text(
+        f"SELECT COUNT(*), COALESCE(SUM(size),0) FROM file_index WHERE {where_files}"
+    ), params).first()
+    total = int(total_row[0] or 0)
+    total_size_bytes = int(total_row[1] or 0)
+
+    # cumulative (collector 전체)
+    cum_row = db.execute(_sql_text(
+        "SELECT COUNT(*), COALESCE(SUM(size),0) FROM file_index "
+        "WHERE collector_id = :cid AND is_dir = false"
+    ), {"cid": ic_row.id}).first()
+    cumulative_total = int(cum_row[0] or 0)
+    cumulative_size_bytes = int(cum_row[1] or 0)
+
+    # 디렉토리 — 검색 모드면 빈 리스트, 일반이면 현재 레벨
+    dirs = []
+    if not is_search:
+        drows = db.execute(_sql_text(
+            "SELECT name, rel_path FROM file_index "
+            "WHERE collector_id = :cid AND parent_path = :p AND is_dir = true "
+            "ORDER BY name"
+        ), {"cid": ic_row.id, "p": current_rel}).fetchall()
+        for r in drows:
+            dirs.append({
+                "name": r[0],
+                "type": "directory",
+                "path": r[1] + "/",
+            })
 
     breadcrumb = [{"name": "root", "path": ""}]
     if browse_path:
@@ -2361,15 +2361,18 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
             acc += p + "/"
             breadcrumb.append({"name": p, "path": acc})
 
+    state = db.query(FileIndexState).get(ic_row.id)
+    index_state = state.to_dict() if state else None
+
     return _ok({
         "directories": dirs,
         "items": paged_files,
-        "total": total,                                     # 현재 레벨 매칭 수 (페이지네이션용)
+        "total": total,
         "totalSize": total_size_bytes,
-        "totalSizeDisplay": total_size_display,
-        "cumulativeTotal": cumulative_total,                # 전체 카탈로그 (재귀, 카탈로그 상세 표시용)
+        "totalSizeDisplay": _fmt_bytes(total_size_bytes),
+        "cumulativeTotal": cumulative_total,
         "cumulativeSize": cumulative_size_bytes,
-        "cumulativeSizeDisplay": cumulative_size_display,
+        "cumulativeSizeDisplay": _fmt_bytes(cumulative_size_bytes),
         "page": page,
         "size": size,
         "currentPath": browse_path,
@@ -2378,6 +2381,7 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
         "sourceMode": "local_path",
         "localPath": base_path,
         "localCollectorId": ic_row.id,
+        "indexState": index_state,
     })
 
 

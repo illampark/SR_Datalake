@@ -171,6 +171,7 @@ def init_db():
     import backend.models.gateway  # noqa: F401
     import backend.models.audit  # noqa: F401
     import backend.models.dataset  # noqa: F401
+    import backend.models.file_index  # noqa: F401
 
     # 멀티 워커 동시 부팅 시 CREATE TABLE / ALTER TABLE 가 race 하지 않도록
     # PostgreSQL advisory lock 으로 직렬화. 비-PG 백엔드면 lock 없이 진행.

@@ -138,6 +138,10 @@
     </div>
   </div>
   <div id="local-breadcrumb" class="px-16 py-8 fs-12" style="display:none;border-bottom:1px solid var(--border);background:var(--bg-subtle);"></div>
+  <div id="local-index-bar" class="px-16 py-6 fs-11" style="display:none;border-bottom:1px solid var(--border);background:#fff8e1;">
+    <span id="local-index-info" class="text-muted"></span>
+    <button class="btn btn-outline btn-sm" style="margin-left:8px;padding:2px 8px;font-size:11px;" onclick="reindexLocalCollector()"><i class="fas fa-sync-alt"></i> 다시 인덱싱</button>
+  </div>
   <div class="card-body p-0">
     <div class="table-wrapper">
       <table>
@@ -201,6 +205,8 @@ var TYPE_LABELS = {
 
 var currentSource = 'minio';   // 'minio' | 'local'
 var currentLocalPath = '';     // local mode 의 현재 디렉토리 (base 기준 상대)
+var _loadFilesXhr = null;      // in-flight 가드: 같은 collector/필터에 대한 중복 호출 방지
+var _loadFilesReqId = 0;       // 늦게 도착한 응답 무시용
 
 $(function() {
   loadStatus();
@@ -242,6 +248,7 @@ function applySourceUi() {
     $('#filter-collector').hide();
     $('#btn-upload-file').show();
     $('#local-breadcrumb').hide();
+    $('#local-index-bar').hide();
   }
 }
 
@@ -372,6 +379,13 @@ function loadFiles() {
   var type = $('#filter-filetype').val();
   var search = $('#search-file').val();
 
+  // in-flight 가드: 이전 요청 abort + 새 요청 ID 부여 (늦게 도착한 응답은 무시)
+  if (_loadFilesXhr && _loadFilesXhr.readyState !== 4) {
+    try { _loadFilesXhr.abort(); } catch(e) {}
+  }
+  _loadFilesReqId++;
+  var thisReqId = _loadFilesReqId;
+
   var hasRows = $('#file-tbody input[data-file-row]').length > 0;
   if (hasRows) $('#file-tbody').css({opacity: 0.5, 'pointer-events': 'none'});
   $('#filter-spinner').show();
@@ -382,6 +396,9 @@ function loadFiles() {
     $('#filter-spinner').hide();
     $('#filter-bucket, #filter-collector, #filter-filetype, #filter-source, #search-file').prop('disabled', false);
   }
+
+  // 늦게 도착한 응답인지 확인. true 면 모든 후처리 skip.
+  function _isStale() { return thisReqId !== _loadFilesReqId; }
 
   if (currentSource === 'local') {
     var cid = $('#filter-collector').val();
@@ -395,12 +412,16 @@ function loadFiles() {
     }
     var params = { collectorId: cid, page: currentPage, size: pageSize, path: currentLocalPath };
     if (search) params.search = search;
-    $.getJSON(API + '/local/browse', params, function(res) {
+    _loadFilesXhr = $.ajax({
+      url: API + '/local/browse', method: 'GET', data: params, dataType: 'json',
+    }).done(function(res) {
+      if (_isStale()) return;
       if (!res.success) {
         $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + escHtml((res.error && res.error.message) || __t('page.file_storage.query_failed')) + '</td></tr>');
         _restoreUi();
         return;
       }
+      renderLocalIndexBar(res.data.indexState);
       renderLocalBreadcrumb(res.data.breadcrumb || []);
       var dirs = res.data.directories || [];
       var files = (res.data.items || []).filter(function(f) {
@@ -452,7 +473,8 @@ function loadFiles() {
       updateBulkDeleteUI();
       updatePagination();
       _restoreUi();
-    }).fail(function() {
+    }).fail(function(xhr, status) {
+      if (_isStale() || status === 'abort') return;  // 의도된 abort 무시
       $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
       _restoreUi();
     });
@@ -465,7 +487,10 @@ function loadFiles() {
   if (type) params.type = type;
   if (search) params.search = search;
 
-  $.getJSON(API + '/browse', params, function(res) {
+  _loadFilesXhr = $.ajax({
+    url: API + '/browse', method: 'GET', data: params, dataType: 'json',
+  }).done(function(res) {
+    if (_isStale()) return;
     if (!res.success) {
       $('#file-tbody').html('<tr><td colspan="6" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.query_failed') + '</td></tr>');
       _restoreUi();
@@ -509,10 +534,47 @@ function loadFiles() {
     updateBulkDeleteUI();
     updatePagination();
     _restoreUi();
-  }).fail(function() {
+  }).fail(function(xhr, status) {
+    if (_isStale() || status === 'abort') return;
     $('#file-tbody').html('<tr><td colspan="7" class="text-center text-danger" style="padding:40px 0"><i class="fas fa-exclamation-triangle"></i> ' + __t('page.file_storage.server_connection_failed') + '</td></tr>');
     _restoreUi();
   });
+}
+
+/* ── 인덱스 상태 표시 + 수동 reindex ── */
+function renderLocalIndexBar(state) {
+  if (currentSource !== 'local') { $('#local-index-bar').hide(); return; }
+  if (!state) { $('#local-index-bar').hide(); return; }
+  var fin = state.lastScanFinishedAt ? fmtLocal(state.lastScanFinishedAt) : null;
+  var msg;
+  if (state.isRunning) {
+    msg = '<i class="fas fa-spinner fa-spin"></i> 인덱싱 진행 중…';
+  } else if (!fin) {
+    msg = '<i class="fas fa-info-circle"></i> 아직 인덱싱 안 됨 — 잠시 후 자동 수행됩니다 (또는 우측 버튼으로 즉시 인덱싱)';
+  } else {
+    var ageMin = Math.max(0, Math.round((Date.now() - new Date(state.lastScanFinishedAt).getTime()) / 60000));
+    msg = '<i class="fas fa-database"></i> 마지막 인덱스: ' + escHtml(fin) + ' (' + ageMin + '분 전, ' + (state.lastScanFiles || 0) + '개 파일)';
+    if (state.lastError) msg += ' <span class="text-warning">— ' + escHtml(state.lastError) + '</span>';
+  }
+  $('#local-index-info').html(msg);
+  $('#local-index-bar').show();
+}
+
+function reindexLocalCollector() {
+  var cid = $('#filter-collector').val();
+  if (!cid) return;
+  $('#local-index-info').html('<i class="fas fa-spinner fa-spin"></i> 인덱싱 요청 중…');
+  $.ajax({ url: API + '/local/reindex?collectorId=' + cid, method: 'POST' })
+    .done(function(r) {
+      if (r && r.success) {
+        showToast('인덱싱 시작 — 잠시 후 새로고침 시 반영됩니다.', 'success');
+        // 5초 후 상태 폴링
+        setTimeout(loadFiles, 5000);
+      } else {
+        showToast((r.error && r.error.message) || __t('common.error'), 'error');
+      }
+    })
+    .fail(function() { showToast(__t('common.error'), 'error'); });
 }
 
 /* ── local_path 파일 다운로드/삭제 ── */

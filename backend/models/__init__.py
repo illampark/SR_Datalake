@@ -11,3 +11,4 @@ from backend.models.user import User, LoginHistory, AdminSetting  # noqa: F401
 from backend.models.backup import BackupHistory  # noqa: F401
 from backend.models.gateway import ApiAccessLog, ApiKey  # noqa: F401
 from backend.models.notice import Notice  # noqa: F401
+from backend.models.file_index import FileIndex, FileIndexState  # noqa: F401

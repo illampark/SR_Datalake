@@ -119,6 +119,11 @@ alarm_engine.start()
 from backend.services.backup_scheduler import start_scheduler as start_backup_scheduler
 start_backup_scheduler()
 
+# Start file indexer (background thread) — scans local_path import collectors
+# and caches into file_index table so /local/browse can return in ms (vs NFS walks)
+from backend.services.file_indexer import start_scheduler as start_file_indexer
+start_file_indexer()
+
 # Resume any interrupted catalog-export requests after process restart
 from backend.services import catalog_export_worker as _catalog_export_worker
 try:
