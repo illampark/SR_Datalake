@@ -31,11 +31,15 @@ from backend.models.file_index import FileIndex, FileIndexState
 logger = logging.getLogger(__name__)
 
 INTERVAL_MIN = int(os.environ.get("FILE_INDEXER_INTERVAL_MIN", "5"))
-BATCH_SIZE = int(os.environ.get("FILE_INDEXER_BATCH_SIZE", "1000"))
+BATCH_SIZE = int(os.environ.get("FILE_INDEXER_BATCH_SIZE", "200"))
 SCAN_TIMEOUT_SEC = int(os.environ.get("FILE_INDEXER_TIMEOUT_SEC", "1800"))  # 30분
+DISABLED = os.environ.get("FILE_INDEXER_DISABLED", "0") == "1"
+# Leader election advisory-lock key (전역). 한 워커만 lock 을 잡아 스케줄 실행.
+LEADER_LOCK_KEY = 0x46494C45494E4458  # 'FILEINDX'
 
 _scheduler_thread = None
 _stop_event = None
+_leader_conn = None
 # 각 collector 의 진행 중 스캔을 호스트 in-process 에서 표시 (선택적 빠른 abort 신호)
 _running_scans = {}
 
@@ -65,20 +69,43 @@ def _classify(name: str) -> tuple[str, str]:
 # ── 진입점 ──
 
 def start_scheduler() -> bool:
-    """스케줄러 백그라운드 스레드 시작. 이미 실행 중이면 무시."""
-    global _scheduler_thread, _stop_event
+    """스케줄러 백그라운드 스레드 시작. multi-worker 환경에서 한 워커만
+    PG advisory lock 을 잡아 실행한다. (gunicorn 4 worker 모두 호출해도 안전)
+    """
+    global _scheduler_thread, _stop_event, _leader_conn
+    if DISABLED:
+        logger.info("file_indexer disabled (FILE_INDEXER_DISABLED=1)")
+        return False
     if _scheduler_thread and _scheduler_thread.is_alive():
-        logger.info("file_indexer scheduler already running")
         return True
+
+    # ── Leader election: 한 워커만 lock 을 끝까지 보유 ──
+    # 연결 끊기지 않게 모듈 전역 connection 유지. 다른 worker 가 try_lock 하면 False.
+    try:
+        raw = engine.raw_connection()
+        cur = raw.cursor()
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (LEADER_LOCK_KEY,))
+        got = cur.fetchone()[0]
+        if not got:
+            cur.close()
+            raw.close()
+            logger.info("file_indexer not leader (other worker holds lock)")
+            return False
+        _leader_conn = raw  # close 되지 않도록 보존
+    except Exception as e:
+        logger.warning("file_indexer leader-election failed: %s", e)
+        return False
+
     _stop_event = threading.Event()
     _scheduler_thread = threading.Thread(
         target=_scheduler_loop,
         args=(_stop_event,),
-        name="file-indexer",
+        name="file-indexer-leader",
         daemon=True,
     )
     _scheduler_thread.start()
-    logger.info("file_indexer scheduler started (interval=%d min)", INTERVAL_MIN)
+    logger.info("file_indexer scheduler started (leader, interval=%d min, batch=%d)",
+                INTERVAL_MIN, BATCH_SIZE)
     return True
 
 
@@ -92,14 +119,38 @@ def _scheduler_loop(stop_event: threading.Event) -> None:
     try:
         time.sleep(15)  # 부팅 안정화 대기
         scan_all_collectors()
+        # MinIO list 캐시도 미리 채움 — UI 요청은 항상 cache hit
+        _warmup_minio_cache()
     except Exception as e:
         logger.warning("initial scan failed: %s", e)
 
     while not stop_event.wait(INTERVAL_MIN * 60):
         try:
             scan_all_collectors()
+            _warmup_minio_cache()
         except Exception as e:
             logger.warning("periodic scan failed: %s", e)
+
+
+def _warmup_minio_cache() -> None:
+    """MinIO list 캐시를 미리 채워 사용자 첫 호출이 timeout 받지 않게.
+    NFS 위 MinIO 163k 객체 list 가 5~10분 걸리므로 leader-only 백그라운드에서 처리.
+    """
+    try:
+        from backend.routes import storage_file as sf
+        t0 = time.time()
+        sf._minio_bucket_summary_cached()
+        d1 = time.time() - t0
+        t0 = time.time()
+        for bucket in ("sdl-files", "sdl-archive", "sdl-backup"):
+            try:
+                sf._minio_browse_cached(bucket, "")
+            except Exception:
+                pass
+        d2 = time.time() - t0
+        logger.info("minio cache warmup: summary=%.1fs browse=%.1fs", d1, d2)
+    except Exception as e:
+        logger.warning("minio cache warmup failed: %s", e)
 
 
 def scan_all_collectors() -> None:
@@ -221,7 +272,8 @@ def scan_collector(collector_id: int, force: bool = False) -> dict:
 
                 if len(batch) >= BATCH_SIZE:
                     _upsert_batch(db, batch)
-                    batch = []
+                    db.commit()
+                    batch.clear()
 
                 # timeout 체크
                 if (time.time() - t0) > SCAN_TIMEOUT_SEC:
@@ -231,6 +283,8 @@ def scan_collector(collector_id: int, force: bool = False) -> dict:
 
             if batch:
                 _upsert_batch(db, batch)
+                db.commit()
+                batch.clear()
 
             # stale row 삭제 — 이번 scan 에서 보이지 않은 record
             deleted = db.execute(_sql_text(

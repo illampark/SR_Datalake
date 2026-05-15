@@ -1,6 +1,8 @@
 import logging
 import os
 import io
+import threading
+import time
 import psutil
 from datetime import datetime
 from flask import Blueprint, request, jsonify, send_file
@@ -12,6 +14,32 @@ from backend.services.audit_logger import audit_route
 from backend.services.minio_client import get_minio_client, get_minio_config
 
 logger = logging.getLogger(__name__)
+
+
+# MinIO list_objects 결과는 NFS 위에서 매우 느리므로 TTL 캐시 적용
+# (status / browse / stats 모두 173k+ 객체 전체 list 를 trigger 함)
+_MINIO_CACHE = {}
+_MINIO_CACHE_LOCK = threading.Lock()
+_MINIO_CACHE_TTL_SEC = int(os.environ.get("MINIO_LIST_CACHE_TTL", "1800"))  # 30분 — NFS list 한 번이 5~10분이라 짧으면 만료 시 worker timeout 위험
+
+
+def _cache_get(key):
+    """반환 (value, age_seconds) or (None, None) if miss/expired."""
+    with _MINIO_CACHE_LOCK:
+        entry = _MINIO_CACHE.get(key)
+        if not entry:
+            return None, None
+        value, ts = entry
+        age = time.time() - ts
+        if age > _MINIO_CACHE_TTL_SEC:
+            _MINIO_CACHE.pop(key, None)
+            return None, None
+        return value, age
+
+
+def _cache_put(key, value):
+    with _MINIO_CACHE_LOCK:
+        _MINIO_CACHE[key] = (value, time.time())
 
 file_bp = Blueprint("storage_file", __name__, url_prefix="/api/storage/file")
 
@@ -93,39 +121,53 @@ def _classify(filename):
 # ──────────────────────────────────────────────
 # STR-011: GET /api/storage/file/status
 # ──────────────────────────────────────────────
+def _minio_bucket_summary_cached():
+    """모든 버킷 (총 사이즈, 객체 수) — TTL 캐시. NFS 위 MinIO 비용 차단."""
+    cached, _age = _cache_get("minio_bucket_summary")
+    if cached is not None:
+        return cached
+    summary = {"total_size": 0, "total_objects": 0, "bucket_details": [], "error": None}
+    try:
+        client = _get_minio()
+        for bname in MINIO_BUCKETS:
+            bsize = 0
+            bcount = 0
+            try:
+                for obj in client.list_objects(bname, recursive=True):
+                    bsize += obj.size
+                    bcount += 1
+            except S3Error:
+                pass
+            summary["total_size"] += bsize
+            summary["total_objects"] += bcount
+            summary["bucket_details"].append({
+                "bucket": bname,
+                "size_bytes": bsize,
+                "size_display": _fmt_bytes(bsize),
+                "object_count": bcount,
+            })
+    except Exception as e:
+        summary["error"] = str(e)
+    _cache_put("minio_bucket_summary", summary)
+    return summary
+
+
 @file_bp.route("/status", methods=["GET"])
 def get_storage_status():
     db = SessionLocal()
     cfg = get_minio_config(db)
     try:
-        # ── 1) MinIO 사용량 ──
-        minio_status = "connected"
-        minio_error = None
-        minio_total_size = 0
-        minio_total_objects = 0
-        bucket_details = []
-        try:
-            client = _get_minio()
-            for bname in MINIO_BUCKETS:
-                bsize = 0
-                bcount = 0
-                try:
-                    for obj in client.list_objects(bname, recursive=True):
-                        bsize += obj.size
-                        bcount += 1
-                except S3Error:
-                    pass
-                minio_total_size += bsize
-                minio_total_objects += bcount
-                bucket_details.append({
-                    "bucket": bname,
-                    "size_bytes": bsize,
-                    "size_display": _fmt_bytes(bsize),
-                    "object_count": bcount,
-                })
-        except Exception as e:
+        # ── 1) MinIO 사용량 (TTL 캐시 via _minio_bucket_summary_cached) ──
+        summary = _minio_bucket_summary_cached()
+        minio_total_size = summary["total_size"]
+        minio_total_objects = summary["total_objects"]
+        bucket_details = summary["bucket_details"]
+        if summary["error"]:
             minio_status = "disconnected"
-            minio_error = str(e)
+            minio_error = summary["error"]
+        else:
+            minio_status = "connected"
+            minio_error = None
 
         # ── 2) local_path import_collector 들의 디스크 사용량 ──
         local_total_size = 0
@@ -240,30 +282,23 @@ def get_storage_status():
 # ──────────────────────────────────────────────
 # STR-012: GET /api/storage/file/browse
 # ──────────────────────────────────────────────
-@file_bp.route("/browse", methods=["GET"])
-def browse_files():
+def _minio_browse_cached(bucket, path):
+    """버킷의 (path prefix) 아래 모든 객체 메타데이터 — TTL 캐시.
+    NFS 위 173k 객체 list 비용을 캐시. 캐시 hit 시 즉시 응답.
+    """
+    key = f"browse:{bucket}:{path or ''}"
+    cached, _age = _cache_get(key)
+    if cached is not None:
+        return cached
+    items = []
     try:
         client = _get_minio()
-        bucket = request.args.get("bucket", MINIO_BUCKETS[0])
-        path = request.args.get("path", "")
-        file_type = request.args.get("type", "")
-        search = request.args.get("search", "").lower()
-        page = request.args.get("page", 1, type=int)
-        size = request.args.get("size", 50, type=int)
-
-        items = []
         for obj in client.list_objects(bucket, prefix=path, recursive=True):
             name = obj.object_name
             filename = os.path.basename(name)
             if not filename:
                 continue
-
             ftype, ext = _classify(filename)
-            if file_type and ftype != file_type:
-                continue
-            if search and search not in filename.lower():
-                continue
-
             dir_path = os.path.dirname(name)
             items.append({
                 "name": filename,
@@ -276,6 +311,30 @@ def browse_files():
                 "bucket": bucket,
                 "modifiedAt": obj.last_modified.isoformat() if obj.last_modified else None,
             })
+    except S3Error:
+        raise
+    _cache_put(key, items)
+    return items
+
+
+@file_bp.route("/browse", methods=["GET"])
+def browse_files():
+    try:
+        bucket = request.args.get("bucket", MINIO_BUCKETS[0])
+        path = request.args.get("path", "")
+        file_type = request.args.get("type", "")
+        search = request.args.get("search", "").lower()
+        page = request.args.get("page", 1, type=int)
+        size = request.args.get("size", 50, type=int)
+
+        all_items = _minio_browse_cached(bucket, path)
+        items = []
+        for it in all_items:
+            if file_type and it["type"] != file_type:
+                continue
+            if search and search not in it["name"].lower():
+                continue
+            items.append(it)
 
         items.sort(key=lambda x: x["modifiedAt"] or "", reverse=True)
         total = len(items)
@@ -295,6 +354,11 @@ def browse_files():
 @file_bp.route("/stats", methods=["GET"])
 def get_file_stats():
     try:
+        # TTL 캐시 (NFS 위 MinIO list 비용 차단)
+        cached, _age = _cache_get("file_stats")
+        if cached is not None:
+            return _ok(cached)
+
         client = _get_minio()
         type_stats = {}
 
@@ -324,7 +388,9 @@ def get_file_stats():
             })
 
         stats.sort(key=lambda x: x["totalSizeBytes"], reverse=True)
-        return _ok({"stats": stats, "snapshot_at": datetime.utcnow().isoformat()})
+        payload = {"stats": stats, "snapshot_at": datetime.utcnow().isoformat()}
+        _cache_put("file_stats", payload)
+        return _ok(payload)
     except Exception as e:
         return _err(f"통계 조회 실패: {e}", "SERVER_ERROR", 500)
 
