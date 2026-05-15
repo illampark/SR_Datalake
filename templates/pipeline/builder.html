@@ -10,7 +10,16 @@
 {% endblock %}
 
 {% block page_actions %}
-<button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+<div class="d-flex align-center gap-8">
+  <span class="fs-12 text-muted">{{ t('page.dashboard.last_updated_label') }} <span id="last-updated">-</span></span>
+  <select class="form-select" id="refresh-interval" style="width:auto;min-width:130px;padding:5px 10px;font-size:12px;">
+    <option value="0" selected>{{ t('page.dashboard.auto_refresh_off') }}</option>
+    <option value="5000">{{ t('page.dashboard.auto_refresh_5s') }}</option>
+    <option value="10000">{{ t('page.dashboard.auto_refresh_10s') }}</option>
+    <option value="30000">{{ t('page.dashboard.auto_refresh_30s') }}</option>
+  </select>
+  <button class="btn btn-outline btn-sm" onclick="refreshAll()"><i class="fas fa-sync-alt"></i> {{ t('common.refresh') }}</button>
+</div>
 {% endblock %}
 
 {% block content %}
@@ -2471,22 +2480,52 @@ function refreshAll() {
   if (selectedPipelineId) {
     loadPipelineDetail(selectedPipelineId);
   }
+  _setLastUpdated();
 }
+
+// 자동 새로고침 — 구조 정보(stats/selector/list)만 갱신.
+// 선택된 파이프라인 detail 은 편집 중 unsaved 변경을 덮을 수 있으므로 갱신 제외.
+var _autoRefreshTimer = null;
+function _setLastUpdated() {
+  var d = new Date();
+  var hh = String(d.getHours()).padStart(2, '0');
+  var mm = String(d.getMinutes()).padStart(2, '0');
+  var ss = String(d.getSeconds()).padStart(2, '0');
+  $('#last-updated').text(hh + ':' + mm + ':' + ss);
+}
+function autoRefresh() {
+  loadStats();
+  loadPipelineSelector();
+  loadPipelines();
+  _setLastUpdated();
+}
+function startAutoRefresh() {
+  if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+  var ms = parseInt($('#refresh-interval').val(), 10);
+  if (ms > 0) _autoRefreshTimer = setInterval(autoRefresh, ms);
+}
+function stopAutoRefresh() {
+  if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+}
+$(document).on('change', '#refresh-interval', startAutoRefresh);
 
 // ── Init ──
 $(function() {
   initDragDrop();
   refreshAll();
   startLiveStatsPolling();
+  startAutoRefresh();
 });
 
 // 페이지가 백그라운드 가면 polling 중지 (불필요한 트래픽 차단)
 $(document).on('visibilitychange', function () {
   if (document.hidden) {
     stopLiveStatsPolling();
+    stopAutoRefresh();
   } else {
     refreshLiveStats();
     startLiveStatsPolling();
+    startAutoRefresh();
   }
 });
 </script>
