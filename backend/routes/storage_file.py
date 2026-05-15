@@ -425,32 +425,58 @@ def browse_files():
 # ──────────────────────────────────────────────
 @file_bp.route("/stats", methods=["GET"])
 def get_file_stats():
+    """파일 유형별 사용량 — 가능한 모든 데이터 소스에서 집계.
+
+    NFS 위 MinIO list 비용을 피하기 위해 _minio_browse_cached 의 캐시를 재사용
+    (워머가 채운 browse:<bucket>: 키들). 캐시 hit 인 버킷들의 항목을 type 별로
+    합산. 추가로 file_index (local_path 파일들) 도 같이 type 별 집계.
+    모든 캐시가 비어있으면 warming 으로 응답.
+    """
     try:
-        # TTL 캐시 (NFS 위 MinIO list 비용 차단)
+        # 짧은 TTL 의 결과 캐시 (UI 가 자주 호출하므로 결과만 짧게 보관)
         cached, _age = _cache_get("file_stats")
         if cached is not None:
             return _ok(cached)
-        # 캐시 미스 — 워머가 채우는 중이라면 빈 결과 + warming
-        # (직접 list_objects 호출하면 5~10분이라 worker timeout. 사용자 새로고침 권장.)
-        if request.args.get("warming_ok", "1") == "1":
-            return _ok({"stats": [], "snapshot_at": None, "status": "warming"})
 
-        client = _get_minio()
         type_stats = {}
+        any_data = False
 
+        # 1) MinIO browse 캐시에서 type 별 집계
         for bname in MINIO_BUCKETS:
+            items = _minio_browse_cached(bname, "", blocking=False)
+            if items is None:
+                continue
+            any_data = True
+            for it in items:
+                ftype = it.get("type") or "other"
+                bucket_entry = type_stats.setdefault(ftype, {"count": 0, "total_size": 0})
+                bucket_entry["count"] += 1
+                bucket_entry["total_size"] += int(it.get("size") or 0)
+
+        # 2) file_index (local_path import) 도 type 별 집계 — 즉시 SQL hit
+        try:
+            from sqlalchemy import text as _sql_text
+            db = SessionLocal()
             try:
-                for obj in client.list_objects(bname, recursive=True):
-                    filename = os.path.basename(obj.object_name)
-                    if not filename:
-                        continue
-                    ftype, _ = _classify(filename)
-                    if ftype not in type_stats:
-                        type_stats[ftype] = {"count": 0, "total_size": 0}
-                    type_stats[ftype]["count"] += 1
-                    type_stats[ftype]["total_size"] += obj.size
-            except S3Error:
-                pass
+                rows = db.execute(_sql_text(
+                    "SELECT ftype, COUNT(*), COALESCE(SUM(size),0) "
+                    "FROM file_index WHERE is_dir = false "
+                    "GROUP BY ftype"
+                )).fetchall()
+                for r in rows:
+                    ftype = r[0] or "other"
+                    entry = type_stats.setdefault(ftype, {"count": 0, "total_size": 0})
+                    entry["count"] += int(r[1] or 0)
+                    entry["total_size"] += int(r[2] or 0)
+                if rows:
+                    any_data = True
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("file_index aggregate failed: %s", e)
+
+        if not any_data:
+            return _ok({"stats": [], "snapshot_at": None, "status": "warming"})
 
         stats = []
         for ftype, info in type_stats.items():
@@ -462,7 +488,6 @@ def get_file_stats():
                 "totalSizeGB": round(info["total_size"] / (1024 ** 3), 4),
                 "totalSizeDisplay": _fmt_bytes(info["total_size"]),
             })
-
         stats.sort(key=lambda x: x["totalSizeBytes"], reverse=True)
         payload = {"stats": stats, "snapshot_at": datetime.utcnow().isoformat()}
         _cache_put("file_stats", payload)
