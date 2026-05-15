@@ -37,6 +37,51 @@ def _log_extra(config, exc=None, **kw):
     return extra
 
 
+def _pid_from_cache_key(cache_key):
+    """sink 버퍼 cache_key 에서 pipeline_id 추출.
+
+    cache_key 형식: '{prefix}:{pipeline_id}:{...}'
+      예) 'tsdb_sink:21:1', 'rdbms_sink:21:1:tb_xxx', 'ext_tsdb:21:5',
+          'file_sink:21:sdl-files:pipeline/21/{date}/'
+    """
+    if not cache_key or ":" not in cache_key:
+        return None
+    parts = cache_key.split(":", 2)
+    if len(parts) >= 2:
+        try:
+            return int(parts[1])
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _pid_from_rows(rows):
+    """sink 가 적재하려던 rows 첫 번째 항목에서 pipeline_id 추출.
+    내부 TSDB sink 의 base_row 처럼 pipeline_id 컬럼을 들고 있는 경우 사용.
+    """
+    if not rows:
+        return None
+    first = rows[0] if isinstance(rows, list) else rows
+    if isinstance(first, dict):
+        return first.get("pipeline_id") or first.get("_pipeline_id")
+    return None
+
+
+def _sink_extra(pid, sink_type, exc=None, **kw):
+    """sink 내부 logger 호출용 extra 생성 — pid 와 sink_type 명시.
+    config 가 없는 _write_*/_flush_* 함수에서 사용.
+    """
+    extra = {}
+    if pid is not None:
+        extra["pipeline_id"] = pid
+    if sink_type:
+        extra["step_type"] = sink_type
+    if exc is not None:
+        extra["exc_class"] = type(exc).__name__
+    extra.update(kw)
+    return extra
+
+
 # 이동 윈도우 캐시 (태그별)
 _window_cache = {}  # key: "{pipeline_id}:{tag_name}" → deque
 
@@ -697,6 +742,7 @@ def _flush_tsdb_batch(cache_key):
 
 
 def _write_tsdb_rows(rows):
+    pid = _pid_from_rows(rows)
     try:
         from backend.database import SessionLocal
         from backend.models.storage import TimeSeriesData
@@ -708,11 +754,14 @@ def _write_tsdb_rows(rows):
             logger.debug("TSDB sink: %d rows written", len(rows))
         except Exception as e:
             db.rollback()
-            logger.error("TSDB sink write error: %s", e)
+            logger.error("TSDB sink write error: %s", e,
+                         extra=_sink_extra(pid, "internal_tsdb_sink", e,
+                                           row_count=len(rows)))
         finally:
             db.close()
     except Exception as e:
-        logger.error("TSDB sink DB session error: %s", e)
+        logger.error("TSDB sink DB session error: %s", e,
+                     extra=_sink_extra(pid, "internal_tsdb_sink", e))
 
 
 def flush_all_sink_buffers():
@@ -738,7 +787,9 @@ def flush_all_sink_buffers():
             else:
                 _flush_tsdb_batch(key)
         except Exception as fe:
-            logger.error("flush_all_sink_buffers: key=%s 실패 — %s", key, fe)
+            logger.error("flush_all_sink_buffers: key=%s 실패 — %s", key, fe,
+                         extra=_sink_extra(_pid_from_cache_key(key), None, fe,
+                                           cache_key=key))
 
 
 # ── 버퍼 상태 조회 / 개별 플러시 (engine_buffer API 용) ──
@@ -898,7 +949,8 @@ def sink_internal_rdbms(message, config):
             "collected_at": ts.isoformat(),
         }
 
-    cache_entry = {"rdbms_id": rdbms_id, "table_name": table_name, "row": row}
+    cache_entry = {"rdbms_id": rdbms_id, "table_name": table_name, "row": row,
+                   "_pipeline_id": pipeline_id}
 
     if write_mode == "batch":
         batch_size = config.get("batchSize", 100)
@@ -909,7 +961,7 @@ def sink_internal_rdbms(message, config):
         if len(_sink_buffers[cache_key]) >= batch_size:
             _flush_rdbms_batch(cache_key)
     else:
-        _write_rdbms_rows([cache_entry])
+        _write_rdbms_rows([cache_entry], pipeline_id=pipeline_id)
 
     return message
 
@@ -917,10 +969,10 @@ def sink_internal_rdbms(message, config):
 def _flush_rdbms_batch(cache_key):
     entries = _sink_buffers.pop(cache_key, [])
     if entries:
-        _write_rdbms_rows(entries)
+        _write_rdbms_rows(entries, pipeline_id=_pid_from_cache_key(cache_key))
 
 
-def _write_rdbms_rows(entries):
+def _write_rdbms_rows(entries, pipeline_id=None):
     """RdbmsConfig 기반으로 외부 RDBMS에 INSERT"""
     if not entries:
         return
@@ -928,6 +980,7 @@ def _write_rdbms_rows(entries):
     rdbms_id = entries[0]["rdbms_id"]
     table_name = entries[0]["table_name"]
     rows = [e["row"] for e in entries]
+    pid = pipeline_id if pipeline_id is not None else entries[0].get("_pipeline_id")
 
     try:
         from backend.database import SessionLocal
@@ -937,7 +990,10 @@ def _write_rdbms_rows(entries):
         try:
             rdbms = db.query(RdbmsConfig).get(rdbms_id)
             if not rdbms:
-                logger.error("RDBMS sink: RdbmsConfig %d not found", rdbms_id)
+                logger.error("RDBMS sink: RdbmsConfig %d not found", rdbms_id,
+                             extra=_sink_extra(pid, "internal_rdbms_sink",
+                                               rdbms_id=rdbms_id,
+                                               table_name=table_name))
                 return
             db_type = (rdbms.db_type or "").lower()
             host = rdbms.host
@@ -969,7 +1025,10 @@ def _write_rdbms_rows(entries):
     except Exception as e:
         # 로그 + 재발생: engine 의 sink 루프가 sink_func 예외를 잡아
         # pipeline.error_count / per-step error_count 를 증가시킬 수 있도록.
-        logger.error("RDBMS sink write error: %s", e)
+        logger.error("RDBMS sink write error: %s", e,
+                     extra=_sink_extra(pid, "internal_rdbms_sink", e,
+                                       table_name=table_name,
+                                       row_count=len(rows)))
         raise
 
 
@@ -1228,6 +1287,7 @@ def sink_internal_file(message, config):
         "object_name": object_name,
         "file_format": file_format,
         "row": row,
+        "_pipeline_id": pipeline_id,
     }
 
     if cache_key not in _sink_buffers:
@@ -1243,10 +1303,10 @@ def sink_internal_file(message, config):
 def _flush_file_batch(cache_key):
     entries = _sink_buffers.pop(cache_key, [])
     if entries:
-        _write_file_to_minio(entries)
+        _write_file_to_minio(entries, pipeline_id=_pid_from_cache_key(cache_key))
 
 
-def _write_file_to_minio(entries):
+def _write_file_to_minio(entries, pipeline_id=None):
     """MinIO에 파일 쓰기 — append 방식 (기존 파일 + 신규 데이터)"""
     if not entries:
         return
@@ -1255,6 +1315,7 @@ def _write_file_to_minio(entries):
     object_name = entries[0]["object_name"]
     file_format = entries[0]["file_format"]
     rows = [e["row"] for e in entries]
+    pid = pipeline_id if pipeline_id is not None else entries[0].get("_pipeline_id")
 
     try:
         client = _get_minio()
@@ -1331,7 +1392,10 @@ def _write_file_to_minio(entries):
                       len(rows), bucket, object_name, len(data))
 
     except Exception as e:
-        logger.error("File sink write error: %s", e)
+        logger.error("File sink write error: %s", e,
+                     extra=_sink_extra(pid, "internal_file_sink", e,
+                                       bucket=bucket, object_name=object_name,
+                                       row_count=len(rows)))
 
 
 # ══════════════════════════════════════════════
@@ -1414,7 +1478,8 @@ def sink_external_tsdb(message, step_config, context=None):
         return message
     conn = _get_external_connection(conn_id)
     if not conn:
-        logger.warning("[EXT TSDB] connection_id=%s not found", conn_id)
+        logger.warning("[EXT TSDB] connection_id=%s not found", conn_id,
+                       extra=_log_extra(step_config, connection_id=conn_id))
         return message
 
     row = _build_ext_row(message)
@@ -1423,6 +1488,7 @@ def sink_external_tsdb(message, step_config, context=None):
 
     cache_key = f"ext_tsdb:{conn_id}:{measurement}"
     row["measurement"] = measurement
+    row["_pipeline_id"] = step_config.get("_pipeline_id", 0)
     _sink_buffers.setdefault(cache_key, []).append(row)
 
     if len(_sink_buffers[cache_key]) >= batch_size:
@@ -1440,22 +1506,27 @@ def _flush_ext_tsdb_batch(cache_key, conn=None):
     if not conn:
         return
 
+    pid = _pid_from_rows(entries)
     cfg = conn.config or {}
     db_type = cfg.get("db_type", "").lower()
 
     try:
         if "influx" in db_type:
-            _write_ext_influxdb(conn, cfg, entries)
+            _write_ext_influxdb(conn, cfg, entries, pipeline_id=pid)
         else:
             # TimescaleDB — PostgreSQL 기반
-            _write_ext_timescaledb(conn, entries)
+            _write_ext_timescaledb(conn, entries, pipeline_id=pid)
     except Exception as e:
-        logger.error("[EXT TSDB] flush error (conn=%d): %s", conn.id, e)
+        logger.error("[EXT TSDB] flush error (conn=%d): %s", conn.id, e,
+                     extra=_sink_extra(pid, "external_tsdb_sink", e,
+                                       connection_id=conn.id,
+                                       row_count=len(entries)))
 
 
-def _write_ext_influxdb(conn, cfg, entries):
+def _write_ext_influxdb(conn, cfg, entries, pipeline_id=None):
     """InfluxDB 2.x 라인 프로토콜 HTTP POST"""
     import requests
+    pid = pipeline_id if pipeline_id is not None else _pid_from_rows(entries)
     url = f"http://{conn.host}:{conn.port or 8086}/api/v2/write"
     org = cfg.get("org", "")
     bucket = cfg.get("bucket", "")
@@ -1475,12 +1546,15 @@ def _write_ext_influxdb(conn, cfg, entries):
                          headers={"Authorization": f"Token {token}", "Content-Type": "text/plain"},
                          timeout=10)
     if resp.status_code not in (200, 204):
-        logger.error("[EXT InfluxDB] write failed: %s %s", resp.status_code, resp.text[:200])
+        logger.error("[EXT InfluxDB] write failed: %s %s", resp.status_code, resp.text[:200],
+                     extra=_sink_extra(pid, "external_tsdb_sink",
+                                       status_code=resp.status_code,
+                                       bucket=bucket))
     else:
         logger.info("[EXT InfluxDB] wrote %d points to %s/%s", len(entries), org, bucket)
 
 
-def _write_ext_timescaledb(conn, entries):
+def _write_ext_timescaledb(conn, entries, pipeline_id=None):
     """TimescaleDB — psycopg2로 INSERT"""
     import psycopg2
     c = psycopg2.connect(
@@ -1516,7 +1590,8 @@ def sink_external_rdbms(message, step_config, context=None):
         return message
     conn = _get_external_connection(conn_id)
     if not conn:
-        logger.warning("[EXT RDBMS] connection_id=%s not found", conn_id)
+        logger.warning("[EXT RDBMS] connection_id=%s not found", conn_id,
+                       extra=_log_extra(step_config, connection_id=conn_id))
         return message
 
     row = _build_ext_row(message)
@@ -1544,6 +1619,7 @@ def _flush_ext_rdbms_batch(cache_key, conn=None, table_name=None):
     if not conn or not table_name:
         return
 
+    pid = _pid_from_rows(entries)
     cfg = conn.config or {}
     db_type = cfg.get("db_type", conn.database_name or "").lower()
 
@@ -1557,7 +1633,12 @@ def _flush_ext_rdbms_batch(cache_key, conn=None, table_name=None):
         else:
             _write_ext_pg(conn, table_name, entries)
     except Exception as e:
-        logger.error("[EXT RDBMS] flush error (conn=%d, table=%s): %s", conn.id, table_name, e)
+        logger.error("[EXT RDBMS] flush error (conn=%d, table=%s): %s",
+                     conn.id, table_name, e,
+                     extra=_sink_extra(pid, "external_rdbms_sink", e,
+                                       connection_id=conn.id,
+                                       table_name=table_name,
+                                       row_count=len(entries)))
 
 
 def _ext_rdbms_row_values(entries):
@@ -1731,6 +1812,7 @@ def _transfer_actual_file(conn, file_meta, step_config):
     if not minio_path:
         return
 
+    pid = step_config.get("_pipeline_id") if isinstance(step_config, dict) else None
     cfg = conn.config or {}
     storage_type = cfg.get("storage_type", "s3").lower()
     base_path = cfg.get("base_path", "").strip("/")
@@ -1769,10 +1851,17 @@ def _transfer_actual_file(conn, file_meta, step_config):
         elif storage_type in ("sftp", "ssh", "ftp"):
             _write_ext_sftp(conn, cfg, dest_path, file_content)
         else:
-            logger.warning("[EXT File Transfer] unsupported storage_type: %s", storage_type)
+            logger.warning("[EXT File Transfer] unsupported storage_type: %s", storage_type,
+                           extra=_sink_extra(pid, "external_file_sink",
+                                             storage_type=storage_type))
 
     except Exception as e:
-        logger.error("[EXT File Transfer] %s → %s failed: %s", minio_path, dest_path, e)
+        logger.error("[EXT File Transfer] %s → %s failed: %s",
+                     minio_path, dest_path, e,
+                     extra=_sink_extra(pid, "external_file_sink", e,
+                                       minio_path=minio_path,
+                                       dest_path=dest_path,
+                                       storage_type=storage_type))
 
 
 def _flush_ext_file_batch(cache_key, conn=None, step_config=None):
@@ -1786,6 +1875,7 @@ def _flush_ext_file_batch(cache_key, conn=None, step_config=None):
     if not conn:
         return
 
+    pid = _pid_from_rows(entries)
     cfg = conn.config or {}
     storage_type = cfg.get("storage_type", "s3").lower()
     file_name = parts[2] if len(parts) > 2 else "export.jsonl"
@@ -1801,7 +1891,11 @@ def _flush_ext_file_batch(cache_key, conn=None, step_config=None):
         elif storage_type in ("sftp", "ssh", "ftp"):
             _write_ext_sftp(conn, cfg, obj_path, content)
     except Exception as e:
-        logger.error("[EXT File] flush error (conn=%d): %s", conn.id, e)
+        logger.error("[EXT File] flush error (conn=%d): %s", conn.id, e,
+                     extra=_sink_extra(pid, "external_file_sink", e,
+                                       connection_id=conn.id,
+                                       obj_path=obj_path,
+                                       storage_type=storage_type))
 
 
 def _flush_ext_file_export(cache_key):
@@ -1823,7 +1917,9 @@ def _flush_ext_file_export(cache_key):
 
     conn = _get_external_connection(conn_id)
     if not conn:
-        logger.warning("[EXT File Export] connection %d not found", conn_id)
+        logger.warning("[EXT File Export] connection %d not found", conn_id,
+                       extra=_sink_extra(pipeline_id, "external_file_sink",
+                                         connection_id=conn_id))
         return
 
     cfg = conn.config or {}
@@ -1857,11 +1953,14 @@ def _flush_ext_file_export(cache_key):
                 pass
 
         if not exported:
-            logger.warning("[EXT File Export] pipeline=%d: no internal sink found to export", pipeline_id)
+            logger.warning("[EXT File Export] pipeline=%d: no internal sink found to export", pipeline_id,
+                           extra=_sink_extra(pipeline_id, "external_file_sink"))
 
         db.close()
     except Exception as e:
-        logger.error("[EXT File Export] pipeline=%d error: %s", pipeline_id, e)
+        logger.error("[EXT File Export] pipeline=%d error: %s", pipeline_id, e,
+                     extra=_sink_extra(pipeline_id, "external_file_sink", e,
+                                       connection_id=conn_id))
 
 
 def _export_rdbms_to_csv(db, conn, ext_cfg, sink_config, pipeline_id, base_path, today, storage_type):
@@ -1933,7 +2032,9 @@ def _export_rdbms_to_csv(db, conn, ext_cfg, sink_config, pipeline_id, base_path,
                     table_name, dest_path, len(rows), len(content))
 
     except Exception as e:
-        logger.error("[EXT File Export] RDBMS export error: %s", e)
+        logger.error("[EXT File Export] RDBMS export error: %s", e,
+                     extra=_sink_extra(pipeline_id, "external_file_sink", e,
+                                       table_name=table_name))
 
 
 def _export_tsdb_to_csv(db, conn, ext_cfg, sink_config, pipeline_id, base_path, today, storage_type):
@@ -2084,7 +2185,8 @@ def sink_external_kafka(message, step_config, context=None):
         return message
     conn = _get_external_connection(conn_id)
     if not conn:
-        logger.warning("[EXT Kafka] connection_id=%s not found", conn_id)
+        logger.warning("[EXT Kafka] connection_id=%s not found", conn_id,
+                       extra=_log_extra(step_config, connection_id=conn_id))
         return message
 
     cfg = conn.config or {}
@@ -2096,7 +2198,8 @@ def sink_external_kafka(message, step_config, context=None):
     try:
         from confluent_kafka import Producer
     except ImportError:
-        logger.error("[EXT Kafka] confluent-kafka 패키지가 설치되지 않았습니다: pip install confluent-kafka")
+        logger.error("[EXT Kafka] confluent-kafka 패키지가 설치되지 않았습니다: pip install confluent-kafka",
+                     extra=_log_extra(step_config))
         return message
 
     try:
@@ -2110,7 +2213,8 @@ def sink_external_kafka(message, step_config, context=None):
         producer.flush(timeout=5)
         logger.debug("[EXT Kafka] sent to %s topic=%s key=%s", bootstrap, topic, key)
     except Exception as e:
-        logger.error("[EXT Kafka] produce error: %s", e)
+        logger.error("[EXT Kafka] produce error: %s", e,
+                     extra=_log_extra(step_config, e, topic=topic))
 
     return message
 
@@ -2122,7 +2226,8 @@ def sink_external_mqtt(message, step_config, context=None):
         return message
     conn = _get_external_connection(conn_id)
     if not conn:
-        logger.warning("[EXT MQTT] connection_id=%s not found", conn_id)
+        logger.warning("[EXT MQTT] connection_id=%s not found", conn_id,
+                       extra=_log_extra(step_config, connection_id=conn_id))
         return message
 
     cfg = conn.config or {}
@@ -2146,7 +2251,8 @@ def sink_external_mqtt(message, step_config, context=None):
         client.disconnect()
         logger.debug("[EXT MQTT] sent to %s:%d topic=%s", host, port, topic)
     except Exception as e:
-        logger.error("[EXT MQTT] publish error: %s", e)
+        logger.error("[EXT MQTT] publish error: %s", e,
+                     extra=_log_extra(step_config, e, topic=topic))
 
     return message
 
@@ -2158,7 +2264,8 @@ def sink_external_messaging(message, step_config, context=None):
         return message
     conn = _get_external_connection(conn_id)
     if not conn:
-        logger.warning("[EXT Messaging] connection_id=%s not found", conn_id)
+        logger.warning("[EXT Messaging] connection_id=%s not found", conn_id,
+                       extra=_log_extra(step_config, connection_id=conn_id))
         return message
 
     conn_type = conn.connection_type or ""
@@ -2190,7 +2297,8 @@ def process_message(message, module_type, config):
     """
     func = MODULE_REGISTRY.get(module_type)
     if not func:
-        logger.warning("알 수 없는 모듈 타입: %s", module_type)
+        logger.warning("알 수 없는 모듈 타입: %s", module_type,
+                       extra=_log_extra(config, module_type=module_type))
         return message
 
     target_field = config.get("targetField", "")
@@ -2199,7 +2307,8 @@ def process_message(message, module_type, config):
         row = message["value"]
         if target_field not in row:
             logger.warning("targetField '%s' not found in row keys: %s",
-                           target_field, list(row.keys()))
+                           target_field, list(row.keys()),
+                           extra=_log_extra(config, target_field=target_field))
             return message
 
         # 원본 행 보존, value를 해당 필드 값으로 교체
