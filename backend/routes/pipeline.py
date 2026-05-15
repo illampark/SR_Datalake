@@ -421,6 +421,147 @@ def pipeline_status(pid):
         db.close()
 
 
+# PIP-008B: GET /api/pipeline/<id>/errors
+# system_log 에서 해당 파이프라인 관련 ERROR/WARNING 을 페이지네이션·필터링하여 반환.
+# 구조화 필드(extra->>'pipeline_id') 우선 매칭 + 과거 로그(message 텍스트 포함)
+# fallback 으로 호환성 유지.
+@pipeline_bp.route("/<int:pid>/errors", methods=["GET"])
+def pipeline_errors(pid):
+    from sqlalchemy import text as _sql_text
+    db = _db()
+    try:
+        if not db.query(Pipeline).get(pid):
+            return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        page = max(request.args.get("page", 1, type=int), 1)
+        size = min(max(request.args.get("size", 50, type=int), 1), 500)
+
+        levels_raw = (request.args.get("level") or "ERROR,WARNING").strip()
+        levels = [lv.strip().upper() for lv in levels_raw.split(",")
+                  if lv.strip().upper() in ("DEBUG", "INFO", "WARNING", "ERROR")]
+        if not levels:
+            levels = ["ERROR", "WARNING"]
+
+        step_id_raw = request.args.get("step_id") or request.args.get("stepId")
+        step_id = None
+        if step_id_raw:
+            try:
+                step_id = int(step_id_raw)
+            except ValueError:
+                pass
+
+        since = request.args.get("since") or ""
+        until = request.args.get("until") or ""
+        q = (request.args.get("q") or "").strip()
+
+        # 필터 조건 구성
+        where_parts = []
+        params = {"pid_str": str(pid)}
+
+        # pipeline 매칭: 구조화 필드 우선, 과거 로그는 message 텍스트 포함 fallback
+        # logger_name 으로 pipeline 관련 로거만 우선 한정 (false-positive 차단)
+        where_parts.append(
+            "((extra->>'pipeline_id') = :pid_str "
+            " OR (logger_name LIKE 'backend.services.pipeline%' "
+            "     AND message LIKE :pid_legacy))"
+        )
+        params["pid_legacy"] = f"%파이프라인 {pid}%"
+
+        if levels:
+            where_parts.append("level = ANY(:levels)")
+            params["levels"] = levels
+
+        if step_id is not None:
+            where_parts.append("(extra->>'step_id') = :step_id_str")
+            params["step_id_str"] = str(step_id)
+
+        if since:
+            try:
+                params["since_dt"] = datetime.fromisoformat(since.replace("Z", ""))
+                where_parts.append("timestamp >= :since_dt")
+            except ValueError:
+                pass
+
+        if until:
+            try:
+                params["until_dt"] = datetime.fromisoformat(until.replace("Z", ""))
+                where_parts.append("timestamp <= :until_dt")
+            except ValueError:
+                pass
+
+        if q:
+            where_parts.append("message ILIKE :q_pat")
+            params["q_pat"] = f"%{q}%"
+
+        where_sql = " AND ".join(where_parts)
+
+        # total 카운트 + level 분포
+        total_row = db.execute(_sql_text(
+            f"SELECT COUNT(*) AS total, "
+            f"  SUM(CASE WHEN level='ERROR' THEN 1 ELSE 0 END) AS err_cnt, "
+            f"  SUM(CASE WHEN level='WARNING' THEN 1 ELSE 0 END) AS warn_cnt "
+            f"FROM system_log WHERE {where_sql}"
+        ), params).first()
+        total = int(total_row[0] or 0) if total_row else 0
+        err_cnt = int(total_row[1] or 0) if total_row else 0
+        warn_cnt = int(total_row[2] or 0) if total_row else 0
+
+        # step 별 분포
+        by_step_rows = db.execute(_sql_text(
+            f"SELECT (extra->>'step_id') AS sid, (extra->>'step_type') AS stype, "
+            f"  COUNT(*) AS c "
+            f"FROM system_log "
+            f"WHERE {where_sql} AND (extra->>'step_id') IS NOT NULL "
+            f"GROUP BY (extra->>'step_id'), (extra->>'step_type') "
+            f"ORDER BY c DESC LIMIT 50"
+        ), params).fetchall()
+        by_step = [
+            {"stepId": int(r[0]) if r[0] else None,
+             "stepType": r[1] or "",
+             "count": int(r[2] or 0)}
+            for r in by_step_rows
+        ]
+
+        # 아이템 (페이지네이션)
+        offset = (page - 1) * size
+        params["lim"] = size
+        params["off"] = offset
+        item_rows = db.execute(_sql_text(
+            f"SELECT id, timestamp, level, component, logger_name, message, extra "
+            f"FROM system_log WHERE {where_sql} "
+            f"ORDER BY id DESC LIMIT :lim OFFSET :off"
+        ), params).fetchall()
+
+        items = []
+        for r in item_rows:
+            ex = r[6] or {}
+            items.append({
+                "id": int(r[0]),
+                "timestamp": r[1].isoformat() if r[1] else None,
+                "level": r[2],
+                "component": r[3] or "",
+                "loggerName": r[4] or "",
+                "message": r[5] or "",
+                "pipelineId": ex.get("pipeline_id"),
+                "stepId": ex.get("step_id"),
+                "stepType": ex.get("step_type"),
+                "excClass": ex.get("exc_class"),
+                "pathname": ex.get("pathname"),
+                "lineno": ex.get("lineno"),
+                "funcName": ex.get("funcName"),
+                "traceback": ex.get("traceback"),
+            })
+
+        return _ok(items, meta={
+            "page": page, "size": size, "total": total,
+            "errorCount": err_cnt, "warningCount": warn_cnt,
+            "byStep": by_step,
+            "levels": levels,
+        })
+    finally:
+        db.close()
+
+
 # ══════════════════════════════════════════════
 # Module Rule Libraries (NormalizeRule, UnitConversion, FilterRule, AnomalyConfig)
 # ══════════════════════════════════════════════

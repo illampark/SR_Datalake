@@ -424,7 +424,11 @@ function loadPipelines() {
         '<td>' + stepCount + '</td>' +
         '<td>' + bindingCount + '</td>' +
         '<td class="mono cell-processed">' + fmtNum(processedCount) + '</td>' +
-        '<td class="' + errorClass + ' cell-errors">' + fmtNum(errorCount) + '</td>' +
+        '<td class="' + errorClass + ' cell-errors">' +
+          (errorCount > 0
+            ? '<a href="javascript:void(0)" class="cell-error-link" style="text-decoration:underline;cursor:pointer;color:inherit;" onclick="openPipelineErrors(' + p.id + ',\'' + escAttr(p.name) + '\')">' + fmtNum(errorCount) + '</a>'
+            : fmtNum(errorCount)) +
+        '</td>' +
         '<td class="cell-last">' + escHtml(fmtLocal(lastProcessed)) + '</td>' +
         '<td><div class="d-flex gap-8">' + actions + '</div></td>' +
         '</tr>'
@@ -2508,6 +2512,151 @@ function stopAutoRefresh() {
   if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
 }
 $(document).on('change', '#refresh-interval', startAutoRefresh);
+
+// ── 파이프라인 오류 상세 모달 ──
+var _peState = { pid: null, name: '', page: 1, size: 50,
+                 level: 'ERROR,WARNING', stepId: '', q: '' };
+
+function openPipelineErrors(pid, name) {
+  _peState.pid = pid; _peState.name = name; _peState.page = 1;
+  _peState.level = 'ERROR,WARNING'; _peState.stepId = ''; _peState.q = '';
+  var body =
+    '<div class="d-flex gap-8 align-center mb-12" id="pe-toolbar" style="flex-wrap:wrap;">' +
+      '<select id="pe-level" class="form-select" style="width:auto;font-size:12px;">' +
+        '<option value="ERROR,WARNING" selected>' + __t('page.builder.pe_level_all') + '</option>' +
+        '<option value="ERROR">ERROR</option>' +
+        '<option value="WARNING">WARNING</option>' +
+      '</select>' +
+      '<select id="pe-step" class="form-select" style="width:auto;font-size:12px;">' +
+        '<option value="">' + __t('page.builder.pe_step_all') + '</option>' +
+      '</select>' +
+      '<input id="pe-q" class="form-control" style="width:200px;font-size:12px;" placeholder="' + __t('page.builder.pe_search_placeholder') + '">' +
+      '<button class="btn btn-outline btn-sm" onclick="loadPipelineErrors(1)"><i class="fas fa-search"></i></button>' +
+      '<button class="btn btn-outline btn-sm" onclick="loadPipelineErrors(_peState.page)"><i class="fas fa-sync-alt"></i></button>' +
+    '</div>' +
+    '<div id="pe-summary" class="fs-12 text-muted mb-8">-</div>' +
+    '<div id="pe-table-wrap" style="max-height:55vh;overflow:auto;border:1px solid var(--border);border-radius:4px;"><div class="text-muted text-center" style="padding:40px;">' + __t('common.loading') + '</div></div>' +
+    '<div id="pe-pagination" class="d-flex justify-end mt-12"></div>';
+  var title = __t('page.builder.pe_modal_title') + ' — ' + escHtml(name);
+  openModal(title, body,
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>');
+  $('#pe-level').on('change', function () { loadPipelineErrors(1); });
+  $('#pe-step').on('change', function () { loadPipelineErrors(1); });
+  $('#pe-q').on('keypress', function (e) { if (e.which === 13) loadPipelineErrors(1); });
+  _populatePeStepSelect(pid);
+  loadPipelineErrors(1);
+}
+
+function _populatePeStepSelect(pid) {
+  // 현재 캐시된 detail steps 가 있으면 그대로, 없으면 lightweight GET
+  if (selectedPipelineId === pid && selectedPipelineData && selectedPipelineData.steps) {
+    _renderPeStepOptions(selectedPipelineData.steps);
+  } else {
+    $.getJSON(API + '/' + pid, function (res) {
+      if (res && res.success && res.data) _renderPeStepOptions(res.data.steps || []);
+    });
+  }
+}
+function _renderPeStepOptions(steps) {
+  var html = '<option value="">' + __t('page.builder.pe_step_all') + '</option>';
+  steps.forEach(function (s) {
+    var lbl = '#' + s.id + ' · ' + (s.moduleType || s.module_type || '');
+    html += '<option value="' + s.id + '">' + escHtml(lbl) + '</option>';
+  });
+  $('#pe-step').html(html);
+}
+
+function loadPipelineErrors(page) {
+  _peState.page = page;
+  _peState.level = $('#pe-level').val() || 'ERROR,WARNING';
+  _peState.stepId = $('#pe-step').val() || '';
+  _peState.q = $('#pe-q').val() || '';
+  var qs = $.param({
+    page: page, size: _peState.size,
+    level: _peState.level,
+    step_id: _peState.stepId,
+    q: _peState.q,
+  });
+  $('#pe-table-wrap').html('<div class="text-muted text-center" style="padding:40px;">' + __t('common.loading') + '</div>');
+  $.getJSON(API + '/' + _peState.pid + '/errors?' + qs, function (r) {
+    if (!r.success) {
+      $('#pe-table-wrap').html('<div class="text-danger text-center" style="padding:40px;">' + escHtml((r.error && r.error.message) || __t('common.error')) + '</div>');
+      return;
+    }
+    _renderPipelineErrors(r);
+  }).fail(function () {
+    $('#pe-table-wrap').html('<div class="text-danger text-center" style="padding:40px;">' + __t('common.error') + '</div>');
+  });
+}
+
+function _renderPipelineErrors(r) {
+  var items = r.data || [];
+  var m = r.meta || {};
+  $('#pe-summary').text(
+    __t('page.builder.pe_summary')
+      .replace('{total}', fmtNum(m.total || 0))
+      .replace('{error}', fmtNum(m.errorCount || 0))
+      .replace('{warning}', fmtNum(m.warningCount || 0))
+  );
+
+  if (!items.length) {
+    $('#pe-table-wrap').html('<div class="text-muted text-center" style="padding:40px;">' + __t('page.builder.pe_empty') + '</div>');
+    $('#pe-pagination').html('');
+    return;
+  }
+
+  var rowsHtml = items.map(function (it) {
+    var lvClass = (it.level === 'ERROR') ? 'badge-error' : 'badge-warning';
+    var stepBadge = '';
+    if (it.stepType || it.stepId) {
+      stepBadge = '<span class="tag">' + escHtml((it.stepType || '') + (it.stepId ? ' #' + it.stepId : '')) + '</span>';
+    }
+    var excTag = it.excClass ? ' <span class="text-muted fs-11">(' + escHtml(it.excClass) + ')</span>' : '';
+    var location = '';
+    if (it.pathname || it.lineno) {
+      var loc = (it.pathname || '').split('/').slice(-2).join('/') + (it.lineno ? ':' + it.lineno : '');
+      location = ' <span class="text-muted fs-11">[' + escHtml(loc) + ']</span>';
+    }
+    var tbHtml = '';
+    if (it.traceback) {
+      tbHtml = '<details style="margin-top:4px;"><summary class="fs-11 text-muted" style="cursor:pointer;">traceback</summary>' +
+               '<pre class="fs-11" style="white-space:pre-wrap;background:#f8f9fa;border:1px solid #dee2e6;padding:8px;border-radius:4px;margin:4px 0;">' + escHtml(it.traceback) + '</pre></details>';
+    }
+    return '<tr>' +
+      '<td class="mono fs-11" style="white-space:nowrap;">' + escHtml(fmtLocal(it.timestamp)) + '</td>' +
+      '<td><span class="badge-status ' + lvClass + '">' + it.level + '</span></td>' +
+      '<td>' + stepBadge + '</td>' +
+      '<td class="fs-12">' + escHtml(it.message) + excTag + location + tbHtml + '</td>' +
+      '</tr>';
+  }).join('');
+
+  $('#pe-table-wrap').html(
+    '<table class="table"><thead><tr>' +
+      '<th style="white-space:nowrap;">' + __t('page.builder.pe_col_time') + '</th>' +
+      '<th>' + __t('page.builder.pe_col_level') + '</th>' +
+      '<th>' + __t('page.builder.pe_col_step') + '</th>' +
+      '<th>' + __t('page.builder.pe_col_message') + '</th>' +
+    '</tr></thead><tbody>' + rowsHtml + '</tbody></table>'
+  );
+
+  _renderPePagination(m.page || 1, m.size || _peState.size, m.total || 0);
+}
+
+function _renderPePagination(page, size, total) {
+  var totalPages = Math.max(1, Math.ceil(total / size));
+  if (totalPages <= 1) { $('#pe-pagination').html(''); return; }
+  var prev = page > 1
+    ? '<button class="btn btn-outline btn-sm" onclick="loadPipelineErrors(' + (page - 1) + ')"><i class="fas fa-chevron-left"></i></button>'
+    : '<button class="btn btn-outline btn-sm" disabled><i class="fas fa-chevron-left"></i></button>';
+  var next = page < totalPages
+    ? '<button class="btn btn-outline btn-sm" onclick="loadPipelineErrors(' + (page + 1) + ')"><i class="fas fa-chevron-right"></i></button>'
+    : '<button class="btn btn-outline btn-sm" disabled><i class="fas fa-chevron-right"></i></button>';
+  $('#pe-pagination').html(
+    '<div class="d-flex gap-8 align-center fs-12 text-muted">' +
+      prev + ' <span>' + page + ' / ' + totalPages + '</span> ' + next +
+    '</div>'
+  );
+}
 
 // ── Init ──
 $(function() {

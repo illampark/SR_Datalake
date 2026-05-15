@@ -95,7 +95,7 @@ def start_pipeline(pipeline_id):
             st.enabled and st.module_type in _FILE_SOURCE_TYPES for st in steps
         )
         if not bindings and not _has_file_source_step:
-            logger.warning("파이프라인 %s: 바인딩 없음", pipeline_id)
+            logger.warning("바인딩 없음", extra={"pipeline_id": pipeline_id})
             return False
 
         # MQTT 연결 확인
@@ -115,6 +115,8 @@ def start_pipeline(pipeline_id):
                 continue
             cfg = dict(st.config or {})
             cfg["_pipeline_id"] = pipeline_id
+            cfg["_step_id"] = st.id
+            cfg["_step_type"] = st.module_type
             entry = {"step_id": st.id, "module_type": st.module_type, "config": cfg}
             step_stats[st.id] = {"processed": 0, "errors": 0, "dropped": 0, "last_at": None}
             if st.module_type in _FILE_SOURCE_TYPES:
@@ -150,7 +152,9 @@ def start_pipeline(pipeline_id):
             try:
                 _reset_step_progress(pipeline_id)
             except Exception as e:
-                logger.warning("파이프라인 %s: step 카운터 리셋 실패 — %s", pipeline_id, e)
+                logger.warning("step 카운터 리셋 실패 — %s", e,
+                               extra={"pipeline_id": pipeline_id,
+                                      "exc_class": type(e).__name__})
 
         if is_file_source:
             logger.info(
@@ -176,7 +180,9 @@ def start_pipeline(pipeline_id):
                          pipeline_id, p.name, len(step_configs), len(bindings))
         return True
     except Exception as e:
-        logger.error("파이프라인 %s 시작 실패: %s", pipeline_id, e)
+        logger.error("시작 실패: %s", e,
+                     extra={"pipeline_id": pipeline_id,
+                            "exc_class": type(e).__name__})
         return False
     finally:
         db.close()
@@ -192,7 +198,9 @@ def stop_pipeline(pipeline_id):
     try:
         flush_all_sink_buffers()
     except Exception as e:
-        logger.warning("파이프라인 %s: 싱크 버퍼 플러시 실패 — %s", pipeline_id, e)
+        logger.warning("싱크 버퍼 플러시 실패 — %s", e,
+                       extra={"pipeline_id": pipeline_id,
+                              "exc_class": type(e).__name__})
 
     # 바인딩별 토픽 구독 해제
     for b in info.get("bindings", []):
@@ -206,7 +214,9 @@ def stop_pipeline(pipeline_id):
     try:
         _commit_step_progress(info.get("step_stats", {}))
     except Exception as e:
-        logger.warning("파이프라인 %s: stop 시 step 통계 flush 실패 — %s", pipeline_id, e)
+        logger.warning("stop 시 step 통계 flush 실패 — %s", e,
+                       extra={"pipeline_id": pipeline_id,
+                              "exc_class": type(e).__name__})
 
 
 def get_pipeline_status(pipeline_id):
@@ -315,8 +325,12 @@ def _handle_message(pipeline_id, topic, payload):
                 if sid and sid in step_stats:
                     step_stats[sid]["errors"] += 1
                     step_stats[sid]["last_at"] = now_dt
-                logger.warning("파이프라인 %s: 싱크 %s 오류 — %s",
-                               pipeline_id, sink_step["module_type"], se)
+                logger.warning("싱크 %s 오류 — %s",
+                               sink_step["module_type"], se,
+                               extra={"pipeline_id": pipeline_id,
+                                      "step_id": sid,
+                                      "step_type": sink_step["module_type"],
+                                      "exc_class": type(se).__name__})
 
         # 통계 갱신
         info["stats"]["processed"] += 1
@@ -337,8 +351,9 @@ def _handle_message(pipeline_id, topic, payload):
                         _update_pipeline_db(pipeline_id, "running", info["stats"])
                         _commit_step_progress(step_stats)
                     except Exception as ce:
-                        logger.warning("파이프라인 %s: 주기적 통계 commit 실패 — %s",
-                                       pipeline_id, ce)
+                        logger.warning("주기적 통계 commit 실패 — %s", ce,
+                                       extra={"pipeline_id": pipeline_id,
+                                              "exc_class": type(ce).__name__})
 
         # 메타데이터 갱신 (비동기적)
         try:
@@ -372,12 +387,16 @@ def _handle_message(pipeline_id, topic, payload):
         except Exception as e:
             logger.warning("메타데이터 갱신 실패: %s", e)
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as je:
         info["stats"]["errors"] += 1
-        logger.warning("파이프라인 %s: JSON 파싱 오류 [%s]", pipeline_id, topic)
+        logger.warning("JSON 파싱 오류 [%s]", topic,
+                       extra={"pipeline_id": pipeline_id,
+                              "exc_class": "JSONDecodeError"})
     except Exception as e:
         info["stats"]["errors"] += 1
-        logger.error("파이프라인 %s: 처리 오류 [%s] — %s", pipeline_id, topic, e)
+        logger.error("처리 오류 [%s] — %s", topic, e,
+                     extra={"pipeline_id": pipeline_id,
+                            "exc_class": type(e).__name__})
 
         # DB에 에러 기록
         _update_pipeline_error(pipeline_id, str(e))
@@ -505,7 +524,9 @@ def _update_pipeline_db(pipeline_id, status, stats):
             db.commit()
     except Exception as e:
         db.rollback()
-        logger.error("파이프라인 DB 갱신 실패: %s", e)
+        logger.error("DB 갱신 실패: %s", e,
+                     extra={"pipeline_id": pipeline_id,
+                            "exc_class": type(e).__name__})
     finally:
         db.close()
 
@@ -663,8 +684,9 @@ def run_file_source(pipeline_id):
             ss.commit()
         except Exception as e:
             ss.rollback()
-            logger.warning("file-source pipeline=%s _commit_step_progress 실패: %s",
-                           pipeline_id, e)
+            logger.warning("file-source _commit_step_progress 실패: %s", e,
+                           extra={"pipeline_id": pipeline_id,
+                                  "exc_class": type(e).__name__})
         finally:
             ss.close()
 

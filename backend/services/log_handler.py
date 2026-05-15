@@ -105,6 +105,14 @@ class DatabaseLogHandler(logging.Handler):
                 import traceback
                 extra["traceback"] = "".join(
                     traceback.format_exception(*record.exc_info))
+            # 호출 측의 logger.xxx(..., extra={...}) 로 들어온 structured 필드
+            # (구조화된 필터링용 — system_log.extra JSON 에 그대로 보존)
+            for key in ("pipeline_id", "step_id", "step_type",
+                        "exc_class", "connector_id", "connector_type",
+                        "tag_name"):
+                val = getattr(record, key, None)
+                if val is not None:
+                    extra[key] = val
 
             entry = {
                 "timestamp": datetime.utcfromtimestamp(record.created),

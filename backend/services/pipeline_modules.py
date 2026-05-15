@@ -17,6 +17,26 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+def _log_extra(config, exc=None, **kw):
+    """system_log 구조화 필드 — config 의 _pipeline_id/_step_id/_step_type 자동 추출.
+
+    호출: logger.error("...", e, extra=_log_extra(config, e, ...))
+    """
+    extra = {}
+    if isinstance(config, dict):
+        if config.get("_pipeline_id") is not None:
+            extra["pipeline_id"] = config["_pipeline_id"]
+        if config.get("_step_id") is not None:
+            extra["step_id"] = config["_step_id"]
+        if config.get("_step_type"):
+            extra["step_type"] = config["_step_type"]
+    if exc is not None:
+        extra["exc_class"] = type(exc).__name__
+    extra.update(kw)
+    return extra
+
+
 # 이동 윈도우 캐시 (태그별)
 _window_cache = {}  # key: "{pipeline_id}:{tag_name}" → deque
 
@@ -372,7 +392,8 @@ def module_enrich(message, config):
                 message["enrichment"]["connectorName"] = meta.connector_name
             db.close()
         except Exception as e:
-            logger.warning("Enrich 메타 조인 실패: %s", e)
+            logger.warning("Enrich 메타 조인 실패: %s", e,
+                           extra=_log_extra(config, e))
 
     return message
 
@@ -394,7 +415,8 @@ def module_script(message, config):
 
     language = config.get("language", "python")
     if language != "python":
-        logger.warning("지원하지 않는 스크립트 언어: %s", language)
+        logger.warning("지원하지 않는 스크립트 언어: %s", language,
+                       extra=_log_extra(config))
         return message
 
     # 안전한 실행 환경
@@ -419,7 +441,8 @@ def module_script(message, config):
             message["value"] = safe_globals["value"]
         return message
     except Exception as e:
-        logger.error("스크립트 실행 오류: %s", e)
+        logger.error("스크립트 실행 오류: %s", e,
+                     extra=_log_extra(config, e))
         message["_script_error"] = str(e)
         return message
 
