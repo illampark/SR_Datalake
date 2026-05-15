@@ -121,11 +121,17 @@ def _classify(filename):
 # ──────────────────────────────────────────────
 # STR-011: GET /api/storage/file/status
 # ──────────────────────────────────────────────
-def _minio_bucket_summary_cached():
-    """모든 버킷 (총 사이즈, 객체 수) — TTL 캐시. NFS 위 MinIO 비용 차단."""
+def _minio_bucket_summary_cached(blocking=True):
+    """모든 버킷 (총 사이즈, 객체 수) — TTL 캐시. NFS 위 MinIO 비용 차단.
+
+    blocking=True (기본): 캐시 miss 시 직접 list_objects 호출 (느림, 5~10분).
+    blocking=False: 캐시 miss 시 None 반환 — worker timeout 회피, 백그라운드 워머가 채우는 동안.
+    """
     cached, _age = _cache_get("minio_bucket_summary")
     if cached is not None:
         return cached
+    if not blocking:
+        return None
     summary = {"total_size": 0, "total_objects": 0, "bucket_details": [], "error": None}
     try:
         client = _get_minio()
@@ -157,19 +163,31 @@ def get_storage_status():
     db = SessionLocal()
     cfg = get_minio_config(db)
     try:
-        # ── 1) MinIO 사용량 (TTL 캐시 via _minio_bucket_summary_cached) ──
-        summary = _minio_bucket_summary_cached()
-        minio_total_size = summary["total_size"]
-        minio_total_objects = summary["total_objects"]
-        bucket_details = summary["bucket_details"]
-        if summary["error"]:
-            minio_status = "disconnected"
-            minio_error = summary["error"]
-        else:
-            minio_status = "connected"
+        # ── 1) MinIO 사용량 (TTL 캐시, miss 시 placeholder 반환) ──
+        summary = _minio_bucket_summary_cached(blocking=False)
+        if summary is None:
+            # 캐시 미스 — 백그라운드 워머가 채우는 중. worker 죽지 않게 즉시 응답.
+            minio_status = "warming"
             minio_error = None
+            minio_total_size = 0
+            minio_total_objects = 0
+            bucket_details = [{"bucket": b, "size_bytes": 0, "size_display": "-", "object_count": 0}
+                              for b in MINIO_BUCKETS]
+        else:
+            minio_total_size = summary["total_size"]
+            minio_total_objects = summary["total_objects"]
+            bucket_details = summary["bucket_details"]
+            if summary["error"]:
+                minio_status = "disconnected"
+                minio_error = summary["error"]
+            else:
+                minio_status = "connected"
+                minio_error = None
 
-        # ── 2) local_path import_collector 들의 디스크 사용량 ──
+        # ── 2) local_path import_collector 들의 디스크 사용량 (file_index SQL) ──
+        # 이전엔 모든 collector 의 os.walk 로 stat → NFS 위에서 분 단위 timeout 위험.
+        # 이제 file_indexer 가 채운 file_index 테이블에서 집계.
+        from sqlalchemy import text as _sql_text2
         local_total_size = 0
         local_total_objects = 0
         local_paths = []
@@ -180,20 +198,21 @@ def get_storage_status():
                   .filter(ImportCollector.source_mode == "local_path")
                   .all()
             )
+            sums = {}
+            if ic_rows:
+                ids = tuple(ic.id for ic in ic_rows)
+                res = db.execute(_sql_text2(
+                    "SELECT collector_id, COUNT(*), COALESCE(SUM(size),0) "
+                    "FROM file_index "
+                    "WHERE collector_id IN :ids AND is_dir = false "
+                    "GROUP BY collector_id"
+                ), {"ids": ids}).fetchall()
+                sums = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in res}
             for ic in ic_rows:
                 p = ic.local_path or ""
-                if not p or not os.path.isdir(p):
+                if not p:
                     continue
-                lsize = 0
-                lcount = 0
-                for root_dir, _subdirs, fnames in os.walk(p):
-                    for fn in fnames:
-                        try:
-                            st = os.stat(os.path.join(root_dir, fn))
-                            lsize += st.st_size
-                            lcount += 1
-                        except OSError:
-                            continue
+                lcount, lsize = sums.get(ic.id, (0, 0))
                 local_total_size += lsize
                 local_total_objects += lcount
                 local_paths.append({
@@ -282,14 +301,16 @@ def get_storage_status():
 # ──────────────────────────────────────────────
 # STR-012: GET /api/storage/file/browse
 # ──────────────────────────────────────────────
-def _minio_browse_cached(bucket, path):
+def _minio_browse_cached(bucket, path, blocking=True):
     """버킷의 (path prefix) 아래 모든 객체 메타데이터 — TTL 캐시.
-    NFS 위 173k 객체 list 비용을 캐시. 캐시 hit 시 즉시 응답.
+    NFS 위 173k 객체 list 비용을 캐시. blocking=False 면 miss 시 None.
     """
     key = f"browse:{bucket}:{path or ''}"
     cached, _age = _cache_get(key)
     if cached is not None:
         return cached
+    if not blocking:
+        return None
     items = []
     try:
         client = _get_minio()
@@ -327,7 +348,11 @@ def browse_files():
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", 50, type=int)
 
-        all_items = _minio_browse_cached(bucket, path)
+        all_items = _minio_browse_cached(bucket, path, blocking=False)
+        if all_items is None:
+            # 캐시 미스 — 워머가 채우는 중. 빈 결과 + warming 신호.
+            return _ok([], {"page": page, "size": size, "total": 0,
+                            "bucket": bucket, "status": "warming"})
         items = []
         for it in all_items:
             if file_type and it["type"] != file_type:
@@ -358,6 +383,10 @@ def get_file_stats():
         cached, _age = _cache_get("file_stats")
         if cached is not None:
             return _ok(cached)
+        # 캐시 미스 — 워머가 채우는 중이라면 빈 결과 + warming
+        # (직접 list_objects 호출하면 5~10분이라 worker timeout. 사용자 새로고침 권장.)
+        if request.args.get("warming_ok", "1") == "1":
+            return _ok({"stats": [], "snapshot_at": None, "status": "warming"})
 
         client = _get_minio()
         type_stats = {}
@@ -870,7 +899,13 @@ def _safe_join(base, rel):
 
 @file_bp.route("/local/collectors", methods=["GET"])
 def list_local_collectors():
-    """local_path 모드 Import Collector 목록 (드롭다운용)."""
+    """local_path 모드 Import Collector 목록 (드롭다운용).
+
+    이전엔 호출마다 모든 collector 의 os.walk(p) 로 size/count 를 계산했지만,
+    NFS 위에서 162k+138k 파일 stat 이 수십 초~분 → worker timeout 위험.
+    이제 file_index 테이블에서 SQL 집계 (file_indexer 백그라운드가 갱신).
+    """
+    from sqlalchemy import text as _sql_text
     db = SessionLocal()
     try:
         from backend.models.collector import ImportCollector
@@ -880,23 +915,25 @@ def list_local_collectors():
               .order_by(ImportCollector.id)
               .all()
         )
+        # 한 번의 GROUP BY 로 모든 collector size/count 조회
+        sums = {}
+        if rows:
+            ids = tuple(ic.id for ic in rows)
+            res = db.execute(_sql_text(
+                "SELECT collector_id, COUNT(*), COALESCE(SUM(size), 0) "
+                "FROM file_index "
+                "WHERE collector_id IN :ids AND is_dir = false "
+                "GROUP BY collector_id"
+            ), {"ids": ids}).fetchall()
+            sums = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in res}
+
         items = []
         for ic in rows:
             p = ic.local_path or ""
-            exists = bool(p) and os.path.isdir(p)
-            size_bytes = 0
-            count = 0
-            if exists:
-                try:
-                    for root_dir, _sd, fnames in os.walk(p):
-                        for fn in fnames:
-                            try:
-                                size_bytes += os.path.getsize(os.path.join(root_dir, fn))
-                                count += 1
-                            except OSError:
-                                continue
-                except OSError:
-                    pass
+            # NFS isdir 도 비용 — 단순히 path 존재 여부만 확인.
+            # file_index 에 행이 있으면 사실상 존재 (인덱서가 본 적 있다는 뜻).
+            count, size_bytes = sums.get(ic.id, (0, 0))
+            exists = count > 0 or (bool(p) and os.path.isdir(p))
             items.append({
                 "id": ic.id,
                 "name": ic.name,
