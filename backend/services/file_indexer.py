@@ -1,5 +1,11 @@
-"""File Indexer — local_path import collector 의 디렉토리를 주기적으로 스캔하여
-file_index 테이블에 upsert 한다.
+"""File Indexer — local_path import collector 의 'import 대기함(inbox)' 인덱스.
+
+MinIO 정본화 이후 file_index 의 역할:
+- local_path 는 정본 저장소가 아니라 import 대기함(inbox) — import 가 끝나면
+  소스는 post_import_action(archive/delete)로 정리되어 사라진다.
+- 따라서 file_index 는 '아직 import 되지 않은 대기 파일' 의 인덱스이며,
+  데이터레이크 스토리지 합계(/status, /stats)에는 절대 반영하지 않는다.
+- archive_subdir(.imported 등)는 스캔에서 제외 — 이미 import 완료된 파일.
 
 목적:
 - /local/browse 응답을 NFS walk 비용 없이 SQL 인덱스 hit 으로 응답 (ms 단위)
@@ -202,6 +208,9 @@ def scan_collector(collector_id: int, force: bool = False) -> dict:
         if ic.source_mode != "local_path" or not ic.local_path:
             return {"error": "not a local_path collector"}
         base_path = ic.local_path
+        # archive 영역(.imported 등)은 인덱싱 제외 — 이미 import 완료된 파일이라
+        # import 대기함(inbox) 뷰·집계에 잡히면 안 됨.
+        archive_subdir = (ic.archive_subdir or ".imported")
         if not os.path.isdir(base_path):
             _update_state(db, collector_id,
                           last_error=f"local_path 가 존재하지 않습니다: {base_path}",
@@ -223,6 +232,9 @@ def scan_collector(collector_id: int, force: bool = False) -> dict:
 
         try:
             for root, dirs, files in os.walk(base_path):
+                # archive 영역은 하위 walk 진입 자체를 차단
+                if archive_subdir in dirs:
+                    dirs.remove(archive_subdir)
                 # 디렉토리 entry
                 for d in dirs:
                     full = os.path.join(root, d)

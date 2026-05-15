@@ -585,6 +585,12 @@ class ImportCollector(Base):
     local_path = Column(String(1000), default="")        # 서버 로컬 경로
     file_patterns = Column(JSON, default=["*"])           # 파일 패턴 ["*.csv", "*.jpg"]
     recursive = Column(Boolean, default=True)             # 하위 디렉토리 포함
+    # local_path import 후 소스 정리 정책 — MinIO 정본화(중복 방지).
+    #   keep    : 소스 유지 (레거시 호환, NFS·MinIO 중복 발생)
+    #   archive : {local_path}/{archive_subdir}/ 로 이동 (무손실, 기본 권장)
+    #   delete  : 소스 즉시 삭제
+    post_import_action = Column(String(20), default="keep")
+    archive_subdir = Column(String(200), default=".imported")  # archive 모드 하위 디렉토리
     # 상태
     status = Column(String(20), default="ready")  # ready / running / completed / error
     enabled = Column(Boolean, default=True)
@@ -629,6 +635,8 @@ class ImportCollector(Base):
             "localPath": self.local_path or "",
             "filePatterns": self.file_patterns or ["*"],
             "recursive": self.recursive if self.recursive is not None else True,
+            "postImportAction": self.post_import_action or "keep",
+            "archiveSubdir": self.archive_subdir or ".imported",
             "status": self.status,
             "enabled": self.enabled,
             "config": self.config or {},

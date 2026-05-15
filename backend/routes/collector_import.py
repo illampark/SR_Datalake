@@ -227,6 +227,10 @@ def create_import():
             local_path=body.get("localPath", ""),
             file_patterns=body.get("filePatterns", ["*"]),
             recursive=body.get("recursive", True),
+            # MinIO 정본화: 신규 collector 는 archive 기본 (import 후 소스를 격리,
+            # NFS·MinIO 중복 방지). 미지정 시 archive — 무손실.
+            post_import_action=body.get("postImportAction", "archive"),
+            archive_subdir=body.get("archiveSubdir", ".imported"),
         )
         # target=file은 MinIO 저장 결과를 파이프라인이 직접 읽으므로 MQTT 재발행 불필요·위험
         if c.target_type == "file":
@@ -272,6 +276,7 @@ def update_import(cid):
             "sheetName": "sheet_name", "headerRow": "header_row",
             "sourceMode": "source_mode", "localPath": "local_path",
             "filePatterns": "file_patterns", "recursive": "recursive",
+            "postImportAction": "post_import_action", "archiveSubdir": "archive_subdir",
         }
         for api_key, db_key in field_map.items():
             if api_key in body:
@@ -673,7 +678,9 @@ def scan_path(cid):
             return _err("서버 경로를 입력하세요.", "VALIDATION")
 
         from backend.services.import_parser import scan_local_path
-        result = scan_local_path(local_path, patterns, recursive)
+        # archive 영역은 미리보기에서 제외 — 이미 import 완료된 파일
+        result = scan_local_path(local_path, patterns, recursive,
+                                 exclude_dirs=[c.archive_subdir or ".imported"])
 
         if result.get("error"):
             return _err(result["error"], "SCAN_ERROR")

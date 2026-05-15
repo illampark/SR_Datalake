@@ -110,9 +110,9 @@
   <div class="card-header">
     <h3><i class="fas fa-folder-open"></i> {{ t('page.file_storage.card_file_list') }}</h3>
     <div class="d-flex gap-8">
-      <select class="form-select" style="width:auto;min-width:110px;padding:4px 8px;" id="filter-source">
-        <option value="minio">MinIO</option>
-        <option value="local">Local Path</option>
+      <select class="form-select" style="width:auto;min-width:130px;padding:4px 8px;" id="filter-source">
+        <option value="minio">{{ t('page.file_storage.source_minio') }}</option>
+        <option value="local">{{ t('page.file_storage.source_inbox') }}</option>
       </select>
       <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="filter-bucket">
         <option value="sdl-files">sdl-files</option>
@@ -134,6 +134,9 @@
       <span id="filter-spinner" style="display:none;line-height:32px;color:var(--text-secondary);font-size:12px;"><i class="fas fa-spinner fa-spin"></i></span>
       <button class="btn btn-danger btn-sm" id="btn-delete-selected" disabled onclick="deleteSelectedFiles()" title="{{ t('page.file_storage.btn_delete_selected') }}">
         <i class="fas fa-trash"></i> <span id="btn-delete-selected-label">{{ t('page.file_storage.btn_delete_selected') }}</span>
+      </button>
+      <button class="btn btn-outline btn-sm" id="btn-cleanup-migrated" style="display:none;" onclick="cleanupMigratedFiles()" title="{{ t('page.file_storage.cleanup_help') }}">
+        <i class="fas fa-broom"></i> <span>{{ t('page.file_storage.btn_cleanup_migrated') }}</span>
       </button>
     </div>
   </div>
@@ -242,11 +245,13 @@ function applySourceUi() {
     $('#filter-bucket').hide();
     $('#filter-collector').show();
     $('#btn-upload-file').hide();
+    $('#btn-cleanup-migrated').show();
     $('#local-breadcrumb').show();
   } else {
     $('#filter-bucket').show();
     $('#filter-collector').hide();
     $('#btn-upload-file').show();
+    $('#btn-cleanup-migrated').hide();
     $('#local-breadcrumb').hide();
     $('#local-index-bar').hide();
   }
@@ -344,7 +349,8 @@ function loadStatus() {
       $('#info-' + prefix + '-bar').attr('class', 'progress-bar ' + cls).css('width', pct + '%');
     }
     var m = d.minio || {usedGB: 0, usagePercent: 0};
-    var l = d.localPath || {usedGB: 0, usagePercent: 0};
+    // inbox = import 대기함 (정본 아님 — 합계 미반영). localPath 는 하위호환 별칭.
+    var l = d.inbox || d.localPath || {usedGB: 0, usagePercent: 0};
     applyBar('minio', m.usedGB, m.usagePercent);
     applyBar('local', l.usedGB, l.usagePercent);
   });
@@ -461,7 +467,7 @@ function loadFiles() {
         var checked = selectedFiles[selKey] ? ' checked' : '';
         html += '<tr>' +
           '<td style="text-align:center;"><input type="checkbox" data-file-row data-sel-key="' + escAttr(selKey) + '" data-source="local" data-cid="' + cid + '" data-relpath="' + escAttr(f.path) + '" data-name="' + escAttr(f.name) + '" onchange="toggleFileSelection(this)"' + checked + '></td>' +
-          '<td><i class="fas ' + icon + '"></i> ' + escHtml(f.name) + '</td>' +
+          '<td><i class="fas ' + icon + '"></i> ' + escHtml(f.name) + ' <span class="ms-badge" data-ms-rel="' + escAttr(f.path) + '"></span></td>' +
           '<td><span class="tag ' + tagCls + '">' + label + '</span></td>' +
           '<td class="mono">' + f.sizeDisplay + '</td>' +
           '<td class="mono fs-12 truncate">' + escHtml(f.path) + '</td>' +
@@ -473,6 +479,7 @@ function loadFiles() {
           '</td></tr>';
       }
       $('#file-tbody').html(html);
+      applyMinioStatus(cid, files);
       updateBulkDeleteUI();
       updatePagination();
       _restoreUi();
@@ -578,6 +585,139 @@ function reindexLocalCollector() {
       }
     })
     .fail(function() { showToast(__t('common.error'), 'error'); });
+}
+
+/* ── MinIO 정본 이관 여부 배지 — 파일 정리 지원 ──
+ * /local/browse 는 SQL 전용(빠름)으로 두고, 현재 페이지 파일 목록을
+ * /local/minio-status 로 보내 이관 여부를 비동기로 덧입힌다. MinIO list 는
+ * NFS 위에서 느려 캐시 miss 시 'warming' 응답 → 잠시 후 재요청한다. */
+function _msBadge(status) {
+  var map = {
+    migrated:     {bg:'#e6f4ea', fg:'#1e7e34', ic:'fa-check-circle',
+                   k:'minio_migrated', h:'minio_migrated_help'},
+    changed:      {bg:'#fff3cd', fg:'#856404', ic:'fa-exclamation-triangle',
+                   k:'minio_changed', h:'minio_changed_help'},
+    not_migrated: {bg:'#f1f3f5', fg:'#868e96', ic:'fa-circle',
+                   k:'minio_not_migrated', h:'minio_not_migrated_help'}
+  };
+  var m = map[status];
+  if (!m) return '';
+  return '<span class="tag" style="background:' + m.bg + ';color:' + m.fg +
+         '" title="' + __t('page.file_storage.' + m.h) + '"><i class="fas ' + m.ic +
+         '"></i> ' + __t('page.file_storage.' + m.k) + '</span>';
+}
+
+function applyMinioStatus(cid, files, retry) {
+  if (!cid || !files || !files.length) return;
+  retry = retry || 0;
+  var reqCid = String(cid), reqPath = currentLocalPath, reqPage = currentPage;
+  function _stale() {
+    return currentSource !== 'local'
+      || String($('#filter-collector').val()) !== reqCid
+      || currentLocalPath !== reqPath || currentPage !== reqPage;
+  }
+  if (retry === 0) {
+    $('.ms-badge').html('<span class="tag" style="opacity:.45">' +
+      __t('page.file_storage.minio_checking') + '</span>');
+  }
+  $.ajax({
+    url: API + '/local/minio-status', method: 'POST', dataType: 'json',
+    contentType: 'application/json',
+    data: JSON.stringify({
+      collectorId: parseInt(cid, 10),
+      files: files.map(function(f) { return { path: f.path, size: f.size }; })
+    })
+  }).done(function(res) {
+    if (_stale()) return;
+    if (!res || !res.success || !res.data) { $('.ms-badge').empty(); return; }
+    var d = res.data;
+    if (d.applicable === false) { $('.ms-badge').empty(); return; }
+    if (d.status === 'warming') {
+      if (retry < 4) setTimeout(function() { applyMinioStatus(reqCid, files, retry + 1); }, 2500);
+      else $('.ms-badge').empty();
+      return;
+    }
+    var items = d.items || {};
+    $('.ms-badge').each(function() {
+      $(this).html(_msBadge(items[$(this).data('ms-rel')]));
+    });
+  }).fail(function() { if (!_stale()) $('.ms-badge').empty(); });
+}
+
+/* ── 이관 완료 파일 일괄 정리 ──
+ * 1) dryRun 으로 대상 수 집계 → 2) 모달에서 보관/삭제 선택 → 3) 실제 정리.
+ * 서버가 migrated 상태(MinIO 사본 존재)만 정리하고 changed/미이관은 제외한다. */
+function cleanupMigratedFiles() {
+  var cid = $('#filter-collector').val();
+  if (!cid) { showToast(__t('page.file_storage.select_collector_hint'), 'warning'); return; }
+  var $btn = $('#btn-cleanup-migrated').prop('disabled', true);
+  $.ajax({
+    url: API + '/local/cleanup-migrated', method: 'POST', dataType: 'json',
+    contentType: 'application/json',
+    data: JSON.stringify({ collectorId: parseInt(cid, 10), action: 'archive', dryRun: true })
+  }).done(function(res) {
+    $btn.prop('disabled', false);
+    if (!res || !res.success || !res.data) {
+      showToast((res && res.error && res.error.message) || __t('common.error'), 'error');
+      return;
+    }
+    var d = res.data;
+    if (d.status === 'warming') { showToast(__t('page.file_storage.cleanup_warming'), 'info'); return; }
+    if (!d.migratedCount) { showToast(__t('page.file_storage.cleanup_none'), 'info'); return; }
+    _openCleanupModal(cid, d);
+  }).fail(function() {
+    $btn.prop('disabled', false);
+    showToast(__t('common.error'), 'error');
+  });
+}
+
+function _openCleanupModal(cid, d) {
+  var body =
+    '<p>' + __t('page.file_storage.cleanup_summary').replace('{n}', d.migratedCount) + '</p>' +
+    '<div class="form-group">' +
+      '<label>' + __t('page.file_storage.cleanup_action_label') + '</label>' +
+      '<select class="form-control" id="cleanup-action">' +
+        '<option value="archive">' + __t('page.import_collector.post_archive') + '</option>' +
+        '<option value="delete">' + __t('page.import_collector.post_delete') + '</option>' +
+      '</select>' +
+    '</div>' +
+    ((d.changedCount || d.notMigratedCount)
+      ? '<p class="fs-12 text-muted">' + __t('page.file_storage.cleanup_skipped')
+          .replace('{c}', d.changedCount || 0).replace('{k}', d.notMigratedCount || 0) + '</p>'
+      : '');
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" id="cleanup-exec">' + __t('page.file_storage.cleanup_exec') + '</button>';
+  openModal(__t('page.file_storage.btn_cleanup_migrated'), body, footer);
+  $('#cleanup-exec').on('click', function() { _runCleanup(cid, $('#cleanup-action').val()); });
+}
+
+function _runCleanup(cid, action) {
+  $('#cleanup-exec').prop('disabled', true)
+    .html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.file_storage.cleanup_running'));
+  $.ajax({
+    url: API + '/local/cleanup-migrated', method: 'POST', dataType: 'json',
+    contentType: 'application/json',
+    data: JSON.stringify({ collectorId: parseInt(cid, 10), action: action, dryRun: false })
+  }).done(function(res) {
+    closeModal();
+    if (!res || !res.success || !res.data) {
+      showToast((res && res.error && res.error.message) || __t('common.error'), 'error');
+      return;
+    }
+    var d = res.data;
+    if (d.status === 'warming') { showToast(__t('page.file_storage.cleanup_warming'), 'info'); return; }
+    var msg = __t('page.file_storage.cleanup_done').replace('{n}', d.cleaned || 0);
+    if (d.failed) msg += ' ' + __t('page.file_storage.cleanup_failed_n').replace('{n}', d.failed);
+    showToast(msg, d.failed ? 'warning' : 'success');
+    selectedFiles = {};
+    loadFiles();
+    loadLocalCollectors();
+    loadStatus();
+  }).fail(function() {
+    closeModal();
+    showToast(__t('common.error'), 'error');
+  });
 }
 
 /* ── local_path 파일 다운로드/삭제 ── */

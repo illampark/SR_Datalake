@@ -1968,10 +1968,11 @@ def list_catalog_files(cid):
         client = get_minio_client(db)
 
         # ─────────────────────────────────────
-        # Import collector 가 source_mode='local_path' 인 경우 → 로컬 FS 직접 walk
-        # (MinIO 가 아니라 sdl-app 컨테이너 안의 마운트 경로에서 파일 조회)
+        # MinIO 정본화: import collector 카탈로그 browse 는 항상 정본(MinIO) 조회.
+        # import 완료 파일은 source_mode 와 무관하게 모두 MinIO import/{cid}/ 에 있음.
+        # local_path 의 'import 대기함(inbox)' 은 ?view=inbox 명시 요청 시에만 표시.
         # ─────────────────────────────────────
-        if c.connector_type == "import":
+        if c.connector_type == "import" and request.args.get("view") == "inbox":
             from backend.models.collector import ImportCollector
             ic_row = db.query(ImportCollector).get(c.connector_id)
             if ic_row and ic_row.source_mode == "local_path" and ic_row.local_path:

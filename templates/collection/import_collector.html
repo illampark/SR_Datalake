@@ -219,6 +219,19 @@
                 {{ t('page.import_collector.lbl_recursive') }}
               </label>
             </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label>{{ t('page.import_collector.lbl_post_import_action') }}</label>
+              <select class="form-control" id="f-postImportAction" onchange="onPostImportActionChange()">
+                <option value="archive">{{ t('page.import_collector.post_archive') }}</option>
+                <option value="delete">{{ t('page.import_collector.post_delete') }}</option>
+                <option value="keep">{{ t('page.import_collector.post_keep') }}</option>
+              </select>
+              <small style="color:var(--text-secondary)">{{ t('page.import_collector.post_import_action_help') }}</small>
+            </div>
+            <div class="form-group" id="grp-archiveSubdir" style="grid-column:1/-1">
+              <label>{{ t('page.import_collector.lbl_archive_subdir') }}</label>
+              <input type="text" class="form-control" id="f-archiveSubdir" value=".imported" placeholder=".imported">
+            </div>
           </div>
         </div>
       </div>
@@ -565,7 +578,10 @@ function openAddModal(){
   $('#f-localPath').val('');
   $('#f-filePatterns').val('*');
   $('#f-recursive').prop('checked', true);
+  $('#f-postImportAction').val('archive');
+  $('#f-archiveSubdir').val('.imported');
   onSourceModeChange();
+  onPostImportActionChange();
   loadTargets(function(){onTargetTypeChange();});
   onImportTypeChange();
   $('#modal-overlay').show();
@@ -595,7 +611,10 @@ function openEditModal(id){
     $('#f-localPath').val(c.localPath||'');
     $('#f-filePatterns').val((c.filePatterns||['*']).join(', '));
     $('#f-recursive').prop('checked', c.recursive!==false);
+    $('#f-postImportAction').val(c.postImportAction||'archive');
+    $('#f-archiveSubdir').val(c.archiveSubdir||'.imported');
     onSourceModeChange();
+    onPostImportActionChange();
     loadTargets(function(){
       onTargetTypeChange();
       if(c.targetId) $('#f-targetId').val(c.targetId);
@@ -629,6 +648,8 @@ function saveImport(){
     localPath: $('#f-localPath').val() || '',
     filePatterns: ($('#f-filePatterns').val()||'*').split(',').map(function(s){return s.trim()}).filter(Boolean),
     recursive: $('#f-recursive').is(':checked'),
+    postImportAction: $('#f-postImportAction').val() || 'archive',
+    archiveSubdir: ($('#f-archiveSubdir').val()||'.imported').trim() || '.imported',
   };
   if(!body.name) return alert(__t('page.import_collector.err_name_required'));
   var method = id ? 'PUT' : 'POST';
@@ -711,6 +732,12 @@ function onSourceModeChange(){
   } else {
     $('#grp-localPath').hide();
   }
+}
+
+/* import 후 소스 정리 정책 — archive 일 때만 하위 디렉토리 입력 노출 */
+function onPostImportActionChange(){
+  var act = $('#f-postImportAction').val();
+  $('#grp-archiveSubdir').toggle(act === 'archive');
 }
 
 function openUpload(id){

@@ -16,6 +16,7 @@ import json
 import logging
 import mimetypes
 import os
+import shutil
 import threading
 import zipfile
 from datetime import datetime
@@ -24,6 +25,39 @@ logger = logging.getLogger(__name__)
 
 _import_threads = {}  # collector_id → thread
 _import_lock = threading.Lock()
+
+
+def _apply_post_import_action(collector, full_path, rel_path):
+    """import 성공 후 소스 파일 정리 — MinIO 정본화로 NFS·MinIO 중복 제거.
+
+    collector.post_import_action:
+      keep    — 소스 유지 (레거시 호환, 중복 발생)
+      archive — {local_path}/{archive_subdir}/{rel_path} 로 이동 (무손실, 구조 보존)
+      delete  — 소스 즉시 삭제
+
+    full_path: 소스 파일 절대 경로
+    rel_path : local_path 기준 상대 경로 (archive 시 구조 보존에 사용)
+
+    실패는 import 전체를 중단시키지 않는다 — 파일은 이미 MinIO 에 안전히 적재됨.
+    """
+    action = (getattr(collector, "post_import_action", None) or "keep").lower()
+    if action == "keep":
+        return
+    try:
+        if action == "delete":
+            os.remove(full_path)
+            logger.info(f"Import #{collector.id} post-import delete: {rel_path}")
+        elif action == "archive":
+            subdir = collector.archive_subdir or ".imported"
+            base = collector.local_path or os.path.dirname(full_path)
+            dest = os.path.join(base, subdir, rel_path)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.move(full_path, dest)
+            logger.info(f"Import #{collector.id} post-import archive: {rel_path} → {subdir}/")
+    except Exception as e:
+        logger.warning(
+            f"Import #{collector.id} post-import '{action}' failed for {rel_path}: {e}"
+        )
 
 
 def _publish_file_meta(connector_type, connector_id, rel_path, bucket, object_name,
@@ -230,6 +264,7 @@ def _execute_import_files(collector, file_data_list, db_session):
 
         imported = 0
         errors = 0
+        ok_names = []  # MinIO 업로드 성공 파일명 — 호출자가 소스 정리에 사용
 
         for i, fdata in enumerate(file_data_list):
             try:
@@ -257,6 +292,7 @@ def _execute_import_files(collector, file_data_list, db_session):
                 )
 
                 imported += 1
+                ok_names.append(fname)
             except Exception as e:
                 errors += 1
                 logger.warning(f"Import file '{fdata.get('name','')}' error: {e}")
@@ -300,6 +336,7 @@ def _execute_import_files(collector, file_data_list, db_session):
             existing.description = f"데이터 가져오기 '{collector.name}'에서 수집된 {imported}개 파일"
             existing.access_url = f"s3://{bucket}/{prefix}"
         db_session.commit()
+        return ok_names
 
     except Exception as e:
         logger.error(f"Import #{cid} files failed: {e}")
@@ -307,6 +344,7 @@ def _execute_import_files(collector, file_data_list, db_session):
         collector.last_error = str(e)
         collector.error_count += 1
         db_session.commit()
+        return []
 
 
 def _fix_zip_filename(info):
@@ -368,7 +406,8 @@ def extract_zip(zip_content):
     return result
 
 
-def scan_local_path(local_path, file_patterns=None, recursive=True, max_preview=500):
+def scan_local_path(local_path, file_patterns=None, recursive=True, max_preview=500,
+                    exclude_dirs=None):
     """서버 로컬 경로를 스캔하여 파일 목록 반환
 
     Args:
@@ -376,6 +415,8 @@ def scan_local_path(local_path, file_patterns=None, recursive=True, max_preview=
         file_patterns: 파일 패턴 목록 ["*.csv", "*.jpg"]
         recursive: 하위 디렉토리 포함 여부
         max_preview: 미리보기 최대 파일 수
+        exclude_dirs: walk 에서 제외할 디렉토리명 (예: archive_subdir '.imported')
+                      — 이미 가져온 파일을 재스캔·재import 하지 않도록.
     Returns:
         {"files": [...], "totalFiles": N, "totalSize": N}
     """
@@ -386,6 +427,7 @@ def scan_local_path(local_path, file_patterns=None, recursive=True, max_preview=
                 "error": f"경로를 찾을 수 없습니다: {local_path}"}
 
     patterns = file_patterns or ["*"]
+    exclude = {d for d in (exclude_dirs or []) if d}
     files = []
     total_size = 0
 
@@ -400,7 +442,10 @@ def scan_local_path(local_path, file_patterns=None, recursive=True, max_preview=
                     "error": f"접근 권한이 없습니다: {local_path}"}
         walker = [(local_path, [], [e for e in entries if os.path.isfile(os.path.join(local_path, e))])]
 
-    for dirpath, _, filenames in walker:
+    for dirpath, dirnames, filenames in walker:
+        # archive 영역 등 제외 디렉토리는 하위 walk 진입 자체를 차단
+        if exclude:
+            dirnames[:] = [d for d in dirnames if d not in exclude]
         for fname in filenames:
             # 숨김 파일 제외
             if fname.startswith("."):
@@ -456,8 +501,11 @@ def start_import_from_path(collector_id):
             local_path = c.local_path
             patterns = c.file_patterns or ["*"]
             is_recursive = c.recursive if c.recursive is not None else True
+            # archive 영역은 재스캔 대상에서 제외 — 이미 가져온 파일 재import 방지
+            archive_subdir = c.archive_subdir or ".imported"
 
-            scan = scan_local_path(local_path, patterns, is_recursive, max_preview=999999)
+            scan = scan_local_path(local_path, patterns, is_recursive, max_preview=999999,
+                                   exclude_dirs=[archive_subdir])
             if scan.get("error"):
                 c.status = "error"
                 c.last_error = scan["error"]
@@ -474,6 +522,7 @@ def start_import_from_path(collector_id):
             if c.import_type == "files":
                 # 비정형 파일 → MinIO 직접 업로드
                 file_data_list = []
+                path_map = {}  # rel_path → fullPath (소스 정리용)
                 for f in all_files:
                     try:
                         with open(f["fullPath"], "rb") as fh:
@@ -482,15 +531,21 @@ def start_import_from_path(collector_id):
                                 "content": fh.read(),
                                 "size": f["size"],
                             })
+                        path_map[f["path"]] = f["fullPath"]
                     except (OSError, PermissionError) as e:
                         logger.warning(f"Cannot read {f['fullPath']}: {e}")
 
-                _execute_import_files(c, file_data_list, db)
+                ok_names = _execute_import_files(c, file_data_list, db)
                 if c.publish_mqtt:
                     _execute_files_mqtt_publish(c, file_data_list, db)
+                # MinIO 정본화: MinIO 업로드 성공한 파일의 NFS 소스 정리
+                for name in (ok_names or []):
+                    fp = path_map.get(name)
+                    if fp:
+                        _apply_post_import_action(c, fp, name)
             else:
-                # 정형 데이터 (CSV/JSON) — 첫 번째 파일만 처리 (또는 전체 병합)
-                # 다수 CSV 파일이면 순차 처리
+                # 정형 데이터 (CSV/JSON) — 파일별 순차 처리.
+                # 파일 단위로 import → MQTT 발행 → 소스 정리 순서 (정리 후엔 read 불가).
                 c.status = "running"
                 c.total_rows = 0
                 c.imported_rows = 0
@@ -500,18 +555,32 @@ def start_import_from_path(collector_id):
 
                 total_files = len(all_files)
                 for fi, f in enumerate(all_files):
+                    ok = False
                     try:
                         if c.target_type == "file":
                             # target=file은 raw bytes를 그대로 MinIO에 저장하므로
-                            # 메모리 풀로드 없이 파일 경로만 넘겨 스트리밍 업로드
-                            _execute_import_direct(c, None, db, source_filename=f["name"], accumulate=True, file_path=f["fullPath"])
+                            # 메모리 풀로드 없이 파일 경로만 넘겨 스트리밍 업로드.
+                            # source_filename=상대경로 → MinIO 객체 키에 디렉토리 구조 보존.
+                            _execute_import_direct(c, None, db, source_filename=f["path"], accumulate=True, file_path=f["fullPath"])
                         else:
                             with open(f["fullPath"], "rb") as fh:
                                 content = fh.read()
-                            _execute_import_direct(c, content, db, source_filename=f["name"], accumulate=True)
+                            _execute_import_direct(c, content, db, source_filename=f["path"], accumulate=True)
+                        ok = True
                     except Exception as e:
-                        logger.warning(f"Import file {f['name']} error: {e}")
+                        logger.warning(f"Import file {f['path']} error: {e}")
                         c.error_rows = (c.error_rows or 0) + 1
+
+                    # MQTT 발행은 소스 정리 전에 (정리되면 파일 read 불가)
+                    if ok and c.publish_mqtt:
+                        try:
+                            with open(f["fullPath"], "rb") as fh:
+                                _execute_import_mqtt(c, fh.read(), db)
+                        except Exception:
+                            pass
+                    # MinIO 정본화: 성공 파일의 NFS 소스 정리
+                    if ok:
+                        _apply_post_import_action(c, f["fullPath"], f["path"])
 
                     c.progress = int((fi + 1) / total_files * 100)
                     db.commit()
@@ -520,14 +589,6 @@ def start_import_from_path(collector_id):
                 c.progress = 100
                 c.last_imported_at = datetime.utcnow()
                 db.commit()
-
-                if c.publish_mqtt:
-                    for f in all_files:
-                        try:
-                            with open(f["fullPath"], "rb") as fh:
-                                _execute_import_mqtt(c, fh.read(), db)
-                        except Exception:
-                            pass
 
                 _register_catalog(db, c)
         except Exception as e:
@@ -778,7 +839,14 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
             from backend.services.minio_client import get_minio_client
             client = get_minio_client(db_session)
             bucket = collector.target_bucket or "sdl-files"
-            prefix = f"import/{cid}/{datetime.utcnow().strftime('%Y%m%d')}/"
+            # 결정적 객체 키 — 날짜는 '소스 파일 mtime' 기준 (실행일 아님).
+            # 같은 파일을 재import 하면 같은 키 → 덮어쓰기 → 중복 객체 누적 방지.
+            if file_path and os.path.exists(file_path):
+                date_str = datetime.utcfromtimestamp(
+                    os.path.getmtime(file_path)).strftime("%Y%m%d")
+            else:
+                date_str = datetime.utcnow().strftime("%Y%m%d")
+            prefix = f"import/{cid}/{date_str}/"
             obj_name = prefix + (source_filename or collector.file_name or f"import_{cid}.dat")
 
             if file_path:

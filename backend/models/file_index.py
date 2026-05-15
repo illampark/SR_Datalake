@@ -1,7 +1,11 @@
-"""File Index 모델 — local_path 디렉토리 스캔 결과를 PG에 캐싱
+"""File Index 모델 — local_path import 대기함(inbox) 인덱스
 
 UI 의 /local/browse 응답을 ms 단위로 빠르게 만들기 위해, file_indexer 서비스가
 주기적으로 os.walk 결과를 이 테이블에 upsert / stale row 삭제한다.
+
+MinIO 정본화 이후: local_path 는 정본이 아니라 import 대기함이다. 이 테이블은
+'아직 import 되지 않은 파일' 의 인덱스이며 데이터레이크 스토리지 합계엔 미반영.
+archive_subdir(.imported) 영역은 인덱싱 대상에서 제외한다.
 """
 
 from datetime import datetime

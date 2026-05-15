@@ -1,6 +1,7 @@
 import logging
 import os
 import io
+import shutil
 import threading
 import time
 import psutil
@@ -289,26 +290,39 @@ def get_storage_status():
 
         minio_used_gb = minio_total_size / (1024 ** 3)
         local_used_gb = local_total_size / (1024 ** 3)
-        total_used_gb = minio_used_gb + local_used_gb
+        # MinIO 정본화: 데이터레이크 사용량 합계 = MinIO 전용.
+        # local_path 는 'import 대기함(inbox)' 일 뿐 — 정본 저장소가 아니므로
+        # totalUsedGB / totalObjects 에 합산하지 않는다 (이중 계상 방지).
+        total_used_gb = minio_used_gb
         avail_gb = max(total_gb - total_used_gb, 0)
 
         def _pct(used):
             return round((used / total_gb) * 100, 1) if total_gb > 0 else 0
 
+        # import 대기함(inbox) — 정보 표시용. 합계 미반영.
+        inbox = {
+            "usedGB": round(local_used_gb, 4),
+            "sizeBytes": local_total_size,
+            "sizeDisplay": _fmt_bytes(local_total_size),
+            "objectCount": local_total_objects,
+            "usagePercent": _pct(local_used_gb),
+            "paths": local_paths,
+        }
+
         return _ok({
-            # ── 하위 호환 (기존 stat 카드용 — 합계) ──
+            # ── 하위 호환 (기존 stat 카드용 — MinIO 정본 기준) ──
             "totalGB": round(total_gb, 2),
             "usedGB": round(total_used_gb, 4),
             "availableGB": round(avail_gb, 2),
             "usagePercent": _pct(total_used_gb),
-            "totalObjects": minio_total_objects + local_total_objects,
+            "totalObjects": minio_total_objects,
             "buckets": bucket_details,
             "storageType": "MinIO S3",
             "endpoint": cfg["endpoint"],
             "status": minio_status,
             "diskPath": disk_path,
             "snapshot_at": datetime.utcnow().isoformat(),
-            # ── 출처별 분리 ──
+            # ── 정본 저장소 (MinIO) ──
             "minio": {
                 "usedGB": round(minio_used_gb, 4),
                 "sizeBytes": minio_total_size,
@@ -319,14 +333,9 @@ def get_storage_status():
                 "error": minio_error,
                 "buckets": bucket_details,
             },
-            "localPath": {
-                "usedGB": round(local_used_gb, 4),
-                "sizeBytes": local_total_size,
-                "sizeDisplay": _fmt_bytes(local_total_size),
-                "objectCount": local_total_objects,
-                "usagePercent": _pct(local_used_gb),
-                "paths": local_paths,
-            },
+            # ── import 대기함 (inbox) — 합계 미반영 ──
+            "inbox": inbox,
+            "localPath": inbox,  # 하위 호환 별칭 (deprecated)
         })
     except Exception as e:
         return _ok({
@@ -338,6 +347,8 @@ def get_storage_status():
             "snapshot_at": datetime.utcnow().isoformat(),
             "minio": {"usedGB": 0, "sizeBytes": 0, "sizeDisplay": "0.0 B",
                       "objectCount": 0, "usagePercent": 0, "status": "disconnected", "buckets": []},
+            "inbox": {"usedGB": 0, "sizeBytes": 0, "sizeDisplay": "0.0 B",
+                      "objectCount": 0, "usagePercent": 0, "paths": []},
             "localPath": {"usedGB": 0, "sizeBytes": 0, "sizeDisplay": "0.0 B",
                           "objectCount": 0, "usagePercent": 0, "paths": []},
         })
@@ -385,6 +396,100 @@ def _minio_browse_cached(bucket, path, blocking=True):
     return items
 
 
+# ──────────────────────────────────────────────
+# local_path → MinIO 정본 이관 여부 (파일 정리 지원)
+# ──────────────────────────────────────────────
+_import_warm_lock = threading.Lock()
+_import_warming = set()
+
+
+def _minio_import_objects(bucket, cid, blocking=True):
+    """import/{cid}/ 아래 MinIO 객체 목록 [{key,size}] — TTL 캐시.
+
+    NFS 위 MinIO list 비용을 캐시로 차단. blocking=False 면 miss 시 None.
+    """
+    key = f"import_objs:{bucket}:{cid}"
+    cached, _age = _cache_get(key)
+    if cached is not None:
+        return cached
+    if not blocking:
+        return None
+    objs = []
+    try:
+        client = _get_minio()
+        for obj in client.list_objects(bucket, prefix=f"import/{cid}/", recursive=True):
+            if obj.object_name.endswith("/"):
+                continue
+            objs.append({"key": obj.object_name, "size": int(obj.size or 0)})
+    except S3Error:
+        raise
+    _cache_put(key, objs)
+    return objs
+
+
+def _warm_import_objects(bucket, cid):
+    """import/{cid}/ list 를 백그라운드에서 1회 채움 (중복 스레드 방지)."""
+    skey = f"{bucket}:{cid}"
+    with _import_warm_lock:
+        if skey in _import_warming:
+            return
+        _import_warming.add(skey)
+
+    def _run():
+        try:
+            _minio_import_objects(bucket, cid, blocking=True)
+        except Exception as e:
+            logger.warning("import objects warm failed cid=%s: %s", cid, e)
+        finally:
+            with _import_warm_lock:
+                _import_warming.discard(skey)
+
+    threading.Thread(target=_run, name=f"warm-import-{cid}", daemon=True).start()
+
+
+def _import_match_index(objs, cid):
+    """MinIO 객체 목록 → 매칭 인덱스 (by_rel, by_name) — 각각 str→set(size).
+
+    객체 키: import/{cid}/{YYYYMMDD}/{rel_path}(정형·파일) 또는
+             import/{cid}/{rel_path}(비정형). 날짜 세그먼트는 8자리 숫자.
+    rel_path 전체 + basename 양쪽으로 색인 — 신규(rel 보존)·레거시(basename) 모두 매칭.
+    """
+    prefix = f"import/{cid}/"
+    by_rel, by_name = {}, {}
+    for o in objs:
+        key = o.get("key", "")
+        size = int(o.get("size") or 0)
+        tail = key[len(prefix):] if key.startswith(prefix) else key
+        first, sep, rest = tail.partition("/")
+        cand = rest if (sep and len(first) == 8 and first.isdigit()) else tail
+        for k in {tail, cand}:
+            if k:
+                by_rel.setdefault(k, set()).add(size)
+        base = os.path.basename(tail)
+        if base:
+            by_name.setdefault(base, set()).add(size)
+    return by_rel, by_name
+
+
+def _import_match_status(rel, size, by_rel, by_name):
+    """단일 파일의 이관 상태 — migrated / changed / not_migrated.
+
+    migrated     : MinIO 에 같은 경로(또는 파일명)+크기 객체 존재 → 정리 안전.
+    changed      : 경로는 같지만 크기가 다름 → import 후 소스 수정됨, 정리 주의.
+    not_migrated : MinIO 에 사본 없음 → 아직 미이관.
+    """
+    rel = (rel or "").lstrip("/")
+    if not rel:
+        return "not_migrated"
+    size = int(size or 0)
+    if rel in by_rel:
+        return "migrated" if size in by_rel[rel] else "changed"
+    base = os.path.basename(rel)
+    if base in by_name and size in by_name[base]:
+        return "migrated"
+    return "not_migrated"
+
+
 @file_bp.route("/browse", methods=["GET"])
 def browse_files():
     try:
@@ -425,11 +530,11 @@ def browse_files():
 # ──────────────────────────────────────────────
 @file_bp.route("/stats", methods=["GET"])
 def get_file_stats():
-    """파일 유형별 사용량 — 가능한 모든 데이터 소스에서 집계.
+    """파일 유형별 사용량 — 정본(MinIO)만 집계.
 
     NFS 위 MinIO list 비용을 피하기 위해 _minio_browse_cached 의 캐시를 재사용
     (워머가 채운 browse:<bucket>: 키들). 캐시 hit 인 버킷들의 항목을 type 별로
-    합산. 추가로 file_index (local_path 파일들) 도 같이 type 별 집계.
+    합산. local_path(file_index) 는 import 대기함이므로 집계에서 제외.
     모든 캐시가 비어있으면 warming 으로 응답.
     """
     try:
@@ -441,7 +546,8 @@ def get_file_stats():
         type_stats = {}
         any_data = False
 
-        # 1) MinIO browse 캐시에서 type 별 집계
+        # MinIO 정본화: 파일 유형 통계는 정본(MinIO)만 집계.
+        # local_path(file_index) 는 import 대기함일 뿐 → 합산 시 이중 계상되므로 제외.
         for bname in MINIO_BUCKETS:
             items = _minio_browse_cached(bname, "", blocking=False)
             if items is None:
@@ -452,28 +558,6 @@ def get_file_stats():
                 bucket_entry = type_stats.setdefault(ftype, {"count": 0, "total_size": 0})
                 bucket_entry["count"] += 1
                 bucket_entry["total_size"] += int(it.get("size") or 0)
-
-        # 2) file_index (local_path import) 도 type 별 집계 — 즉시 SQL hit
-        try:
-            from sqlalchemy import text as _sql_text
-            db = SessionLocal()
-            try:
-                rows = db.execute(_sql_text(
-                    "SELECT ftype, COUNT(*), COALESCE(SUM(size),0) "
-                    "FROM file_index WHERE is_dir = false "
-                    "GROUP BY ftype"
-                )).fetchall()
-                for r in rows:
-                    ftype = r[0] or "other"
-                    entry = type_stats.setdefault(ftype, {"count": 0, "total_size": 0})
-                    entry["count"] += int(r[1] or 0)
-                    entry["total_size"] += int(r[2] or 0)
-                if rows:
-                    any_data = True
-            finally:
-                db.close()
-        except Exception as e:
-            logger.warning("file_index aggregate failed: %s", e)
 
         if not any_data:
             return _ok({"stats": [], "snapshot_at": None, "status": "warming"})
@@ -1016,6 +1100,189 @@ def list_local_collectors():
                 "fileCount": count,
             })
         return _ok({"items": items})
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/minio-status", methods=["POST"])
+def local_minio_status():
+    """local_path 파일이 MinIO 정본(import/{cid}/)에 이관됐는지 판정 — 파일 정리용.
+
+    /local/browse 핫패스는 SQL 전용으로 유지하고, UI 가 현재 페이지의 파일
+    목록을 이 엔드포인트로 보내 이관 여부 배지를 비동기로 덧입힌다.
+
+    MinIO list 는 NFS 위에서 느리므로 import/{cid}/ 목록을 TTL 캐시(30분)하고,
+    캐시 miss 시 백그라운드 워밍 + 'warming' 응답 (UI 가 잠시 후 재요청).
+
+    Body(JSON): {collectorId, files: [{path, size}, ...]}
+    Returns: {applicable, status, items: {rel_path: migrated|changed|not_migrated}, ...}
+    """
+    db = SessionLocal()
+    try:
+        body = request.get_json(silent=True) or {}
+        cid = body.get("collectorId")
+        files = body.get("files") or []
+        if not cid:
+            return _err("collectorId가 필요합니다.", "VALIDATION")
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+
+        # target=file 만 MinIO 사본을 가짐. tsdb/rdbms 는 행으로 변환 → 해당 없음.
+        target = (ic.target_type or "file").lower()
+        if target != "file":
+            return _ok({"applicable": False, "targetType": target,
+                        "status": "ready", "items": {}})
+
+        bucket = ic.target_bucket or "sdl-files"
+        objs = _minio_import_objects(bucket, int(cid), blocking=False)
+        if objs is None:
+            _warm_import_objects(bucket, int(cid))
+            return _ok({"applicable": True, "status": "warming", "items": {}})
+
+        by_rel, by_name = _import_match_index(objs, int(cid))
+        items = {}
+        migrated = changed = 0
+        for f in files:
+            rel = f.get("path") or ""
+            st = _import_match_status(rel, f.get("size"), by_rel, by_name)
+            items[rel] = st
+            if st == "migrated":
+                migrated += 1
+            elif st == "changed":
+                changed += 1
+        return _ok({
+            "applicable": True, "status": "ready",
+            "objectCount": len(objs), "total": len(files),
+            "migratedCount": migrated, "changedCount": changed,
+            "items": items,
+        })
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/cleanup-migrated", methods=["POST"])
+def local_cleanup_migrated():
+    """MinIO 정본에 이관 완료된 local_path 파일을 일괄 정리 (보관 이동 / 삭제).
+
+    안전 규칙:
+      - migrated(동일 경로·크기 사본이 MinIO 에 존재) 상태만 정리 대상.
+      - changed(경로 동일·크기 상이) / not_migrated 는 절대 건드리지 않음.
+      - dryRun=true 면 대상 수만 집계, 파일은 변경하지 않음 (확인 다이얼로그용).
+
+    정리된 파일의 file_index 행도 함께 제거해 UI 가 즉시 정합되게 한다.
+
+    Body: {collectorId, action: 'archive'|'delete', dryRun: bool}
+    """
+    db = SessionLocal()
+    try:
+        from sqlalchemy import text as _sql_text
+        body = request.get_json(silent=True) or {}
+        cid = body.get("collectorId")
+        action = (body.get("action") or "archive").lower()
+        dry_run = bool(body.get("dryRun"))
+        if not cid:
+            return _err("collectorId가 필요합니다.", "VALIDATION")
+        if action not in ("archive", "delete"):
+            return _err("action 은 archive 또는 delete 여야 합니다.", "VALIDATION")
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+        if (ic.target_type or "file").lower() != "file":
+            return _err("target=file 수집기만 MinIO 이관 정리를 지원합니다.", "INVALID_MODE")
+
+        bucket = ic.target_bucket or "sdl-files"
+        objs = _minio_import_objects(bucket, int(cid), blocking=False)
+        if objs is None:
+            _warm_import_objects(bucket, int(cid))
+            return _ok({"status": "warming"})
+
+        by_rel, by_name = _import_match_index(objs, int(cid))
+        rows = db.execute(_sql_text(
+            "SELECT rel_path, size FROM file_index "
+            "WHERE collector_id = :cid AND is_dir = false"
+        ), {"cid": int(cid)}).fetchall()
+
+        migrated = []
+        changed = not_migrated = 0
+        for r in rows:
+            st = _import_match_status(r[0], r[1], by_rel, by_name)
+            if st == "migrated":
+                migrated.append(r[0])
+            elif st == "changed":
+                changed += 1
+            else:
+                not_migrated += 1
+
+        # dryRun — 확인 다이얼로그용 집계만
+        if dry_run:
+            return _ok({
+                "status": "ready", "dryRun": True, "action": action,
+                "migratedCount": len(migrated),
+                "changedCount": changed, "notMigratedCount": not_migrated,
+            })
+
+        # ── 실제 정리 ──
+        archive_subdir = ic.archive_subdir or ".imported"
+        archive_base = os.path.join(ic.local_path, archive_subdir)
+        cleaned, errors = [], []
+        for rel in migrated:
+            rel = (rel or "").strip().lstrip("/")
+            full = _safe_join(ic.local_path, rel)
+            if not full:
+                errors.append({"path": rel, "error": "경로가 base 디렉토리를 벗어납니다"})
+                continue
+            if not os.path.isfile(full):
+                # 이미 사라짐 — file_index 만 stale. 행 삭제 대상에 포함.
+                cleaned.append(rel)
+                continue
+            try:
+                if action == "delete":
+                    os.remove(full)
+                else:
+                    dest = _safe_join(archive_base, rel)
+                    if not dest:
+                        errors.append({"path": rel, "error": "보관 경로 계산 실패"})
+                        continue
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    shutil.move(full, dest)
+                cleaned.append(rel)
+            except OSError as e:
+                errors.append({"path": rel, "error": str(e)})
+
+        # 정리 완료 파일의 file_index 행 제거 — UI 즉시 정합
+        if cleaned:
+            for i in range(0, len(cleaned), 500):
+                part = tuple(cleaned[i:i + 500])
+                db.execute(_sql_text(
+                    "DELETE FROM file_index "
+                    "WHERE collector_id = :cid AND rel_path IN :paths"
+                ), {"cid": int(cid), "paths": part})
+            db.commit()
+
+        try:
+            from backend.services.audit_logger import log_audit
+            log_audit(
+                action_type="data",
+                action=f"storage.local.cleanup.{action}",
+                target_type="import_collector",
+                target_name=f"{ic.id}:{ic.name}",
+                result="success" if not errors else ("failure" if not cleaned else "partial"),
+                detail={
+                    "collectorId": ic.id, "basePath": ic.local_path,
+                    "action": action, "cleaned": len(cleaned),
+                    "errors": errors[:20],
+                },
+            )
+        except Exception:
+            pass
+
+        return _ok({
+            "status": "ready", "dryRun": False, "action": action,
+            "cleaned": len(cleaned), "failed": len(errors),
+            "skippedChanged": changed, "skippedNotMigrated": not_migrated,
+            "errors": errors[:20],
+        })
     finally:
         db.close()
 

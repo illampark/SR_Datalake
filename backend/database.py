@@ -27,6 +27,9 @@ def _migrate_add_columns():
         ("import_collector", "local_path", "VARCHAR(1000)", "''"),
         ("import_collector", "file_patterns", "JSON", "'[\"*\"]'"),
         ("import_collector", "recursive", "BOOLEAN", "true"),
+        # local_path import 후 소스 정리 정책 (MinIO 정본화) — 기존 행은 keep 유지
+        ("import_collector", "post_import_action", "VARCHAR(20)", "'keep'"),
+        ("import_collector", "archive_subdir", "VARCHAR(200)", "'.imported'"),
         # TagMetadata 거버넌스 필드
         ("tag_metadata", "description", "TEXT", "''"),
         ("tag_metadata", "owner", "VARCHAR(100)", "''"),
