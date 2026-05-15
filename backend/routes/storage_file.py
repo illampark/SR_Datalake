@@ -498,6 +498,87 @@ def _guess_inline_mime(ext):
     }.get(ext.lower(), "application/octet-stream")
 
 
+# Excel 미리보기 메모리 폭증 방지 — 50MB 초과는 binary 폴백
+_MAX_OPENPYXL_BYTES = 50 * 1024 * 1024
+_PREVIEW_EXCEL_EXTS = (".xlsx", ".xlsm")
+
+
+def _render_preview_payload(read_bytes, size, ext, raw_url, object_name, bucket,
+                            sheet=None, max_bytes=_PREVIEW_MAX_BYTES_DEFAULT,
+                            max_rows=100, content_type=None):
+    """공유 미리보기 렌더러 — MinIO/local 양쪽이 같은 응답 shape을 만들도록 추출.
+
+    read_bytes(n): 첫 n바이트만 lazy fetch. n=None 이면 전체 (xlsx 등).
+    응답 shape는 image | pdf | table | text | binary 중 하나.
+    """
+    ext = (ext or "").lower()
+    base = {
+        "objectName": object_name,
+        "bucket": bucket,
+        "size": size,
+        "extension": ext,
+    }
+
+    if ext in _PREVIEW_IMAGE_EXTS:
+        mt = content_type if (content_type and content_type != "application/octet-stream") else _guess_inline_mime(ext)
+        return {"kind": "image", **base, "mimeType": mt, "rawUrl": raw_url}
+
+    if ext in _PREVIEW_PDF_EXTS:
+        return {"kind": "pdf", **base, "rawUrl": raw_url}
+
+    if ext in _PREVIEW_EXCEL_EXTS:
+        if size and size > _MAX_OPENPYXL_BYTES:
+            return {"kind": "binary", **base, "rawUrl": raw_url,
+                    "message": f"엑셀 파일이 너무 큽니다 ({size//(1024*1024)} MB > 50 MB). 다운로드해서 확인하세요."}
+        try:
+            raw = read_bytes(None)
+        except Exception as e:
+            return {"kind": "binary", **base, "rawUrl": raw_url,
+                    "message": f"파일 읽기 실패: {e}"}
+        try:
+            from io import BytesIO
+            import openpyxl
+            wb = openpyxl.load_workbook(BytesIO(raw), read_only=True, data_only=True)
+            try:
+                sheets = list(wb.sheetnames)
+                cur = sheet if (sheet and sheet in sheets) else (sheets[0] if sheets else "")
+                ws = wb[cur] if cur else None
+                headers, rows = None, []
+                if ws is not None:
+                    for ri, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                        if ri == 1:
+                            headers = [(str(c).strip() if c is not None else f"col_{i}") for i, c in enumerate(row)]
+                            continue
+                        if all(c is None for c in row):
+                            continue
+                        rows.append([(v.isoformat() if hasattr(v, "isoformat") else v) for v in row])
+                        if len(rows) >= max_rows:
+                            break
+            finally:
+                wb.close()
+            return {"kind": "table", **base, "sheets": sheets, "currentSheet": cur,
+                    "headers": headers or [], "rows": rows, "previewRows": len(rows),
+                    "truncated": len(rows) >= max_rows, "rawUrl": raw_url}
+        except Exception as e:
+            logger.warning("excel 미리보기 실패 %s: %s", object_name, e)
+            return {"kind": "binary", **base, "rawUrl": raw_url, "error": str(e)}
+
+    if ext not in _PREVIEW_BINARY_EXTS and (ext in _PREVIEW_TEXT_EXTS or size <= 4096):
+        read_size = max(1, min(size, max_bytes))
+        try:
+            data = read_bytes(read_size)
+        except Exception as e:
+            return {"kind": "binary", **base, "rawUrl": raw_url,
+                    "message": f"파일 읽기 실패: {e}"}
+        content, detected_encoding = _decode_text_preview(data)
+        return {"kind": "text", **base,
+                "previewBytes": len(data), "truncated": size > read_size,
+                "content": content, "detectedEncoding": detected_encoding}
+
+    return {"kind": "binary", **base, "rawUrl": raw_url,
+            "message": "이 파일 형식은 직접 미리보기를 지원하지 않습니다. 다운로드해서 확인하세요."}
+
+
 @file_bp.route("/preview", methods=["GET"])
 def preview_file():
     """파일 미리보기 — 텍스트 컨텐츠 일부 또는 raw 스트리밍 URL 반환."""
@@ -521,125 +602,24 @@ def preview_file():
             f"&objectName={object_name}"
         )
 
-        if ext in _PREVIEW_IMAGE_EXTS:
-            mt = stat.content_type
-            if not mt or mt == "application/octet-stream":
-                mt = _guess_inline_mime(ext)
-            return _ok({
-                "kind": "image",
-                "objectName": object_name,
-                "bucket": bucket,
-                "size": size,
-                "extension": ext,
-                "mimeType": mt,
-                "rawUrl": raw_url,
-            })
-
-        if ext in _PREVIEW_PDF_EXTS:
-            return _ok({
-                "kind": "pdf",
-                "objectName": object_name,
-                "bucket": bucket,
-                "size": size,
-                "extension": ext,
-                "rawUrl": raw_url,
-            })
-
-        if ext == ".xlsx":
-            sheet = request.args.get("sheet") or ""
-            max_rows = request.args.get("maxRows", 100, type=int)
+        def read_bytes(n):
+            resp = client.get_object(bucket, object_name)
             try:
-                resp = client.get_object(bucket, object_name)
+                return resp.read() if n is None else resp.read(n)
+            finally:
                 try:
-                    raw = resp.read()
-                finally:
                     resp.close()
                     resp.release_conn()
-            except Exception as e:
-                return _err(f"파일 읽기 실패: {e}", "READ_ERROR", 500)
-            try:
-                from io import BytesIO
-                import openpyxl
-                wb = openpyxl.load_workbook(BytesIO(raw), read_only=True, data_only=True)
-                try:
-                    sheets = list(wb.sheetnames)
-                    cur = sheet if (sheet and sheet in sheets) else sheets[0]
-                    ws = wb[cur]
-                    headers, rows = None, []
-                    for ri, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                        if ri == 1:
-                            headers = [(str(c).strip() if c is not None else f"col_{i}") for i, c in enumerate(row)]
-                            continue
-                        if all(c is None for c in row):
-                            continue
-                        rows.append([
-                            (v.isoformat() if hasattr(v, "isoformat") else v)
-                            for v in row
-                        ])
-                        if len(rows) >= max_rows:
-                            break
-                finally:
-                    wb.close()
-                return _ok({
-                    "kind": "table",
-                    "objectName": object_name,
-                    "bucket": bucket,
-                    "size": size,
-                    "extension": ext,
-                    "sheets": sheets,
-                    "currentSheet": cur,
-                    "headers": headers or [],
-                    "rows": rows,
-                    "previewRows": len(rows),
-                    "truncated": len(rows) >= max_rows,
-                    "rawUrl": raw_url,
-                })
-            except Exception as e:
-                logger.warning("xlsx 미리보기 실패 %s: %s", object_name, e)
-                return _ok({
-                    "kind": "binary",
-                    "objectName": object_name,
-                    "bucket": bucket,
-                    "size": size,
-                    "extension": ext,
-                    "rawUrl": raw_url,
-                    "error": str(e),
-                })
+                except Exception:
+                    pass
 
-        if ext not in _PREVIEW_BINARY_EXTS and (ext in _PREVIEW_TEXT_EXTS or size <= 4096):
-            read_size = max(1, min(size, max_bytes))
-            data = b""
-            try:
-                resp = client.get_object(bucket, object_name)
-                try:
-                    data = resp.read(read_size)
-                finally:
-                    resp.close()
-                    resp.release_conn()
-            except Exception as e:
-                return _err(f"파일 읽기 실패: {e}", "READ_ERROR", 500)
-            content, detected_encoding = _decode_text_preview(data)
-            return _ok({
-                "kind": "text",
-                "objectName": object_name,
-                "bucket": bucket,
-                "size": size,
-                "previewBytes": len(data),
-                "truncated": size > read_size,
-                "content": content,
-                "extension": ext,
-                "detectedEncoding": detected_encoding,
-            })
-
-        return _ok({
-            "kind": "binary",
-            "objectName": object_name,
-            "bucket": bucket,
-            "size": size,
-            "extension": ext,
-            "rawUrl": raw_url,
-            "message": "이 파일 형식은 직접 미리보기를 지원하지 않습니다. 다운로드해서 확인하세요.",
-        })
+        return _ok(_render_preview_payload(
+            read_bytes, size, ext, raw_url, object_name, bucket,
+            sheet=request.args.get("sheet") or "",
+            max_bytes=max_bytes,
+            max_rows=request.args.get("maxRows", 100, type=int),
+            content_type=stat.content_type,
+        ))
     except Exception as e:
         return _err(str(e), "SERVER_ERROR", 500)
 
@@ -1011,6 +991,76 @@ def download_local_file():
         if not full or not os.path.isfile(full):
             return _err("파일을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return send_file(full, as_attachment=True, download_name=os.path.basename(full))
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/preview", methods=["GET"])
+def preview_local_file():
+    """local_path 파일 미리보기 — MinIO 미리보기와 동일 응답 shape.
+
+    Query: collectorId, path(상대), maxBytes, sheet, maxRows
+    """
+    db = SessionLocal()
+    try:
+        cid = request.args.get("collectorId", type=int)
+        rel = (request.args.get("path", "") or "").strip().lstrip("/")
+        if not cid or not rel:
+            return _err("collectorId와 path가 필요합니다.", "VALIDATION")
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+        full = _safe_join(ic.local_path, rel)
+        if not full:
+            return _err("경로가 base 디렉토리를 벗어납니다.", "INVALID_PATH", 400)
+        if not os.path.isfile(full):
+            return _err(f"파일을 찾을 수 없습니다: {rel}", "NOT_FOUND", 404)
+
+        size = os.path.getsize(full)
+        ext = os.path.splitext(full)[1].lower()
+        from urllib.parse import quote
+        raw_url = (
+            f"/api/storage/file/local/raw?collectorId={cid}"
+            f"&path={quote(rel, safe='/')}"
+        )
+
+        def read_bytes(n):
+            with open(full, "rb") as fp:
+                return fp.read() if n is None else fp.read(n)
+
+        return _ok(_render_preview_payload(
+            read_bytes, size, ext, raw_url, rel, "(local)",
+            sheet=request.args.get("sheet") or "",
+            max_bytes=request.args.get("maxBytes", _PREVIEW_MAX_BYTES_DEFAULT, type=int),
+            max_rows=request.args.get("maxRows", 100, type=int),
+        ))
+    except Exception as e:
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@file_bp.route("/local/raw", methods=["GET"])
+def raw_local_file():
+    """local_path 파일 원본 inline 스트리밍 (image/PDF 미리보기 src 용)."""
+    db = SessionLocal()
+    try:
+        cid = request.args.get("collectorId", type=int)
+        rel = (request.args.get("path", "") or "").strip().lstrip("/")
+        if not cid or not rel:
+            return _err("collectorId와 path가 필요합니다.", "VALIDATION")
+        ic, err = _resolve_collector(db, cid)
+        if err:
+            return err
+        full = _safe_join(ic.local_path, rel)
+        if not full:
+            return _err("경로가 base 디렉토리를 벗어납니다.", "INVALID_PATH", 400)
+        if not os.path.isfile(full):
+            return _err("파일을 찾을 수 없습니다.", "NOT_FOUND", 404)
+        ext = os.path.splitext(full)[1].lower()
+        mt = _guess_inline_mime(ext)
+        return send_file(full, mimetype=mt, as_attachment=False,
+                         download_name=os.path.basename(full))
     finally:
         db.close()
 

@@ -2312,6 +2312,7 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
                     "path": rel_path,
                     "modifiedAt": mod_dt.isoformat(),
                     "isLocal": True,
+                    "collectorId": ic_row.id,
                 }
                 cumulative_files.append(file_info)
                 # items 선정: 검색 모드면 전체 매칭, 아니면 현재 레벨만
@@ -2376,6 +2377,7 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
         "catalog": {"id": c.id, "name": c.name, "connectorType": c.connector_type},
         "sourceMode": "local_path",
         "localPath": base_path,
+        "localCollectorId": ic_row.id,
     })
 
 
