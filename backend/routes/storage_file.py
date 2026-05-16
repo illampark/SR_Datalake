@@ -1164,16 +1164,165 @@ def local_minio_status():
         db.close()
 
 
+def _cleanup_progress_path(cid):
+    return f"/tmp/sdl_cleanup_{int(cid)}.json"
+
+
+def _cleanup_progress_read(cid):
+    """정리 작업 진행 상태 읽기. 없거나 손상 시 None."""
+    try:
+        with open(_cleanup_progress_path(cid), "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except (FileNotFoundError, ValueError):
+        return None
+    except Exception:
+        return None
+
+
+def _cleanup_progress_write(cid, data):
+    """진행 상태를 작은 파일로 atomic 기록 — 컨테이너 내 모든 워커가 폴링으로 공유."""
+    data["updatedAt"] = datetime.utcnow().isoformat()
+    try:
+        p = _cleanup_progress_path(cid)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(data, f, default=str)
+        os.replace(tmp, p)
+    except Exception as e:
+        logger.warning("cleanup progress write cid=%s: %s", cid, e)
+
+
+def _run_cleanup_job(cid, bucket, action, local_path, archive_subdir, name):
+    """백그라운드 정리 작업 — migrated 파일 archive/delete + file_index 행 삭제.
+
+    HTTP 요청에서 동기로 돌리면 대형 collector(수만 파일)는 gunicorn timeout(120s)
+    에 워커가 죽으므로 daemon 스레드에서 처리하고, 진행 상태는 /tmp 파일로 노출한다
+    (GET /local/cleanup-status 로 폴링). file_index 행은 500개 배치로 커밋해
+    중간에 끊겨도 재실행이 이어서 처리한다.
+    """
+    from sqlalchemy import text as _sql_text
+    cid = int(cid)
+    db = SessionLocal()
+    prog = {
+        "collectorId": cid, "status": "running", "action": action,
+        "total": 0, "done": 0, "cleaned": 0, "failed": 0,
+        "skippedChanged": 0, "skippedNotMigrated": 0,
+        "startedAt": datetime.utcnow().isoformat(), "errors": [],
+    }
+    try:
+        # 1) 매칭 — file_index 전체를 MinIO import/{cid}/ 와 대조
+        objs = _minio_import_objects(bucket, cid, blocking=True)
+        by_rel, by_name = _import_match_index(objs, cid)
+        rows = db.execute(_sql_text(
+            "SELECT rel_path, size FROM file_index "
+            "WHERE collector_id = :cid AND is_dir = false"
+        ), {"cid": cid}).fetchall()
+        migrated = []
+        changed = not_migrated = 0
+        for r in rows:
+            st = _import_match_status(r[0], r[1], by_rel, by_name)
+            if st == "migrated":
+                migrated.append(r[0])
+            elif st == "changed":
+                changed += 1
+            else:
+                not_migrated += 1
+        prog.update(total=len(migrated), skippedChanged=changed,
+                    skippedNotMigrated=not_migrated)
+        _cleanup_progress_write(cid, prog)
+
+        # 2) archive/delete + file_index 행 삭제 (500개 배치 커밋)
+        archive_base = os.path.join(local_path, archive_subdir)
+        errors = []
+        cleaned_total = 0
+        batch = []
+
+        def _flush_batch():
+            if not batch:
+                return
+            part = tuple(batch)
+            db.execute(_sql_text(
+                "DELETE FROM file_index "
+                "WHERE collector_id = :cid AND rel_path IN :paths"
+            ), {"cid": cid, "paths": part})
+            db.commit()
+            batch.clear()
+
+        for idx, rel in enumerate(migrated, 1):
+            rel = (rel or "").strip().lstrip("/")
+            full = _safe_join(local_path, rel)
+            ok = False
+            if not full:
+                errors.append({"path": rel, "error": "경로가 base 디렉토리를 벗어납니다"})
+            elif not os.path.isfile(full):
+                ok = True  # 이미 사라짐 — file_index 행만 정리
+            else:
+                try:
+                    if action == "delete":
+                        os.remove(full)
+                        ok = True
+                    else:
+                        dest = _safe_join(archive_base, rel)
+                        if not dest:
+                            errors.append({"path": rel, "error": "보관 경로 계산 실패"})
+                        else:
+                            os.makedirs(os.path.dirname(dest), exist_ok=True)
+                            shutil.move(full, dest)
+                            ok = True
+                except OSError as e:
+                    errors.append({"path": rel, "error": str(e)})
+            if ok:
+                batch.append(rel)
+                cleaned_total += 1
+            if len(batch) >= 500:
+                _flush_batch()
+            if idx % 200 == 0:
+                prog.update(done=idx, cleaned=cleaned_total,
+                            failed=len(errors), errors=errors[:20])
+                _cleanup_progress_write(cid, prog)
+        _flush_batch()
+
+        prog.update(status="done", done=len(migrated), cleaned=cleaned_total,
+                    failed=len(errors), errors=errors[:20],
+                    finishedAt=datetime.utcnow().isoformat())
+        _cleanup_progress_write(cid, prog)
+
+        try:
+            from backend.services.audit_logger import log_audit
+            log_audit(
+                action_type="data",
+                action=f"storage.local.cleanup.{action}",
+                target_type="import_collector",
+                target_name=f"{cid}:{name}",
+                result="success" if not errors else ("failure" if not cleaned_total else "partial"),
+                detail={"collectorId": cid, "basePath": local_path, "action": action,
+                        "cleaned": cleaned_total, "failed": len(errors),
+                        "errors": errors[:20]},
+            )
+        except Exception:
+            pass
+        logger.info("cleanup job cid=%s done: cleaned=%d failed=%d",
+                    cid, cleaned_total, len(errors))
+    except Exception as e:
+        logger.error("cleanup job cid=%s failed: %s", cid, e)
+        prog.update(status="error", error=str(e),
+                    finishedAt=datetime.utcnow().isoformat())
+        _cleanup_progress_write(cid, prog)
+    finally:
+        db.close()
+
+
 @file_bp.route("/local/cleanup-migrated", methods=["POST"])
 def local_cleanup_migrated():
     """MinIO 정본에 이관 완료된 local_path 파일을 일괄 정리 (보관 이동 / 삭제).
 
     안전 규칙:
       - migrated(동일 경로·크기 사본이 MinIO 에 존재) 상태만 정리 대상.
-      - changed(경로 동일·크기 상이) / not_migrated 는 절대 건드리지 않음.
-      - dryRun=true 면 대상 수만 집계, 파일은 변경하지 않음 (확인 다이얼로그용).
-
-    정리된 파일의 file_index 행도 함께 제거해 UI 가 즉시 정합되게 한다.
+      - changed / not_migrated 는 절대 건드리지 않음.
+      - dryRun=true 면 대상 수만 집계 (확인 다이얼로그용, 동기 응답).
+      - dryRun=false 면 백그라운드 daemon 스레드로 처리하고 즉시 반환 — 대형
+        collector(수만 파일)가 gunicorn timeout(120s)에 죽지 않게.
+        진행 상태는 GET /local/cleanup-status 폴링.
 
     Body: {collectorId, action: 'archive'|'delete', dryRun: bool}
     """
@@ -1193,101 +1342,78 @@ def local_cleanup_migrated():
             return err
         if (ic.target_type or "file").lower() != "file":
             return _err("target=file 수집기만 MinIO 이관 정리를 지원합니다.", "INVALID_MODE")
-
+        cid = int(cid)
         bucket = ic.target_bucket or "sdl-files"
-        objs = _minio_import_objects(bucket, int(cid), blocking=False)
+
+        objs = _minio_import_objects(bucket, cid, blocking=False)
         if objs is None:
-            _warm_import_objects(bucket, int(cid))
+            _warm_import_objects(bucket, cid)
             return _ok({"status": "warming"})
 
-        by_rel, by_name = _import_match_index(objs, int(cid))
-        rows = db.execute(_sql_text(
-            "SELECT rel_path, size FROM file_index "
-            "WHERE collector_id = :cid AND is_dir = false"
-        ), {"cid": int(cid)}).fetchall()
-
-        migrated = []
-        changed = not_migrated = 0
-        for r in rows:
-            st = _import_match_status(r[0], r[1], by_rel, by_name)
-            if st == "migrated":
-                migrated.append(r[0])
-            elif st == "changed":
-                changed += 1
-            else:
-                not_migrated += 1
-
-        # dryRun — 확인 다이얼로그용 집계만
+        # ── dryRun: 동기 집계 (확인 다이얼로그) ──
         if dry_run:
+            by_rel, by_name = _import_match_index(objs, cid)
+            rows = db.execute(_sql_text(
+                "SELECT rel_path, size FROM file_index "
+                "WHERE collector_id = :cid AND is_dir = false"
+            ), {"cid": cid}).fetchall()
+            migrated = changed = not_migrated = 0
+            for r in rows:
+                st = _import_match_status(r[0], r[1], by_rel, by_name)
+                if st == "migrated":
+                    migrated += 1
+                elif st == "changed":
+                    changed += 1
+                else:
+                    not_migrated += 1
             return _ok({
                 "status": "ready", "dryRun": True, "action": action,
-                "migratedCount": len(migrated),
+                "migratedCount": migrated,
                 "changedCount": changed, "notMigratedCount": not_migrated,
             })
 
-        # ── 실제 정리 ──
-        archive_subdir = ic.archive_subdir or ".imported"
-        archive_base = os.path.join(ic.local_path, archive_subdir)
-        cleaned, errors = [], []
-        for rel in migrated:
-            rel = (rel or "").strip().lstrip("/")
-            full = _safe_join(ic.local_path, rel)
-            if not full:
-                errors.append({"path": rel, "error": "경로가 base 디렉토리를 벗어납니다"})
-                continue
-            if not os.path.isfile(full):
-                # 이미 사라짐 — file_index 만 stale. 행 삭제 대상에 포함.
-                cleaned.append(rel)
-                continue
+        # ── 실제 정리: 이미 실행 중이면 진행 상태 반환 ──
+        prog = _cleanup_progress_read(cid)
+        if prog and prog.get("status") == "running":
+            # updatedAt 이 5분 넘게 멈춰 있으면 죽은 작업으로 보고 재시작 허용
+            stale = True
             try:
-                if action == "delete":
-                    os.remove(full)
-                else:
-                    dest = _safe_join(archive_base, rel)
-                    if not dest:
-                        errors.append({"path": rel, "error": "보관 경로 계산 실패"})
-                        continue
-                    os.makedirs(os.path.dirname(dest), exist_ok=True)
-                    shutil.move(full, dest)
-                cleaned.append(rel)
-            except OSError as e:
-                errors.append({"path": rel, "error": str(e)})
+                upd = datetime.fromisoformat(prog.get("updatedAt", ""))
+                stale = (datetime.utcnow() - upd).total_seconds() > 300
+            except ValueError:
+                pass
+            if not stale:
+                return _ok({"status": "running", "progress": prog})
 
-        # 정리 완료 파일의 file_index 행 제거 — UI 즉시 정합
-        if cleaned:
-            for i in range(0, len(cleaned), 500):
-                part = tuple(cleaned[i:i + 500])
-                db.execute(_sql_text(
-                    "DELETE FROM file_index "
-                    "WHERE collector_id = :cid AND rel_path IN :paths"
-                ), {"cid": int(cid), "paths": part})
-            db.commit()
-
-        try:
-            from backend.services.audit_logger import log_audit
-            log_audit(
-                action_type="data",
-                action=f"storage.local.cleanup.{action}",
-                target_type="import_collector",
-                target_name=f"{ic.id}:{ic.name}",
-                result="success" if not errors else ("failure" if not cleaned else "partial"),
-                detail={
-                    "collectorId": ic.id, "basePath": ic.local_path,
-                    "action": action, "cleaned": len(cleaned),
-                    "errors": errors[:20],
-                },
-            )
-        except Exception:
-            pass
-
-        return _ok({
-            "status": "ready", "dryRun": False, "action": action,
-            "cleaned": len(cleaned), "failed": len(errors),
-            "skippedChanged": changed, "skippedNotMigrated": not_migrated,
-            "errors": errors[:20],
-        })
+        # 백그라운드 작업 시작
+        init = {
+            "collectorId": cid, "status": "running", "action": action,
+            "total": 0, "done": 0, "cleaned": 0, "failed": 0,
+            "skippedChanged": 0, "skippedNotMigrated": 0,
+            "startedAt": datetime.utcnow().isoformat(), "errors": [],
+        }
+        _cleanup_progress_write(cid, init)
+        threading.Thread(
+            target=_run_cleanup_job,
+            args=(cid, bucket, action, ic.local_path,
+                  ic.archive_subdir or ".imported", ic.name),
+            name=f"cleanup-{cid}", daemon=True,
+        ).start()
+        return _ok({"status": "started"})
     finally:
         db.close()
+
+
+@file_bp.route("/local/cleanup-status", methods=["GET"])
+def local_cleanup_status():
+    """이관 완료 정리 작업의 진행 상태 — UI 폴링용. Query: collectorId."""
+    cid = request.args.get("collectorId", type=int)
+    if not cid:
+        return _err("collectorId가 필요합니다.", "VALIDATION")
+    prog = _cleanup_progress_read(cid)
+    if not prog:
+        return _ok({"status": "idle"})
+    return _ok(prog)
 
 
 @file_bp.route("/local/browse", methods=["GET"])

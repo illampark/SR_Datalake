@@ -2279,6 +2279,9 @@
       "cleanup_skipped": "변경됨 {c}개, 미이관 {k}개는 안전을 위해 제외됩니다.",
       "cleanup_exec": "정리 실행",
       "cleanup_running": "정리 중…",
+      "cleanup_preparing": "정리 대상 집계 중…",
+      "cleanup_progress": "정리 중 — {d} / {t} ({p}%)",
+      "cleanup_bg_note": "이 창을 닫아도 정리는 백그라운드에서 계속됩니다.",
       "cleanup_done": "{n}개 파일을 정리했습니다.",
       "cleanup_failed_n": "({n}개 실패)"
     },

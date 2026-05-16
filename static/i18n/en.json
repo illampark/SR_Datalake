@@ -2279,6 +2279,9 @@
       "cleanup_skipped": "{c} changed and {k} not-migrated file(s) are skipped for safety.",
       "cleanup_exec": "Run cleanup",
       "cleanup_running": "Cleaning…",
+      "cleanup_preparing": "Counting files to clean…",
+      "cleanup_progress": "Cleaning — {d} / {t} ({p}%)",
+      "cleanup_bg_note": "Cleanup continues in the background even if you close this window.",
       "cleanup_done": "Cleaned up {n} file(s).",
       "cleanup_failed_n": "({n} failed)"
     },

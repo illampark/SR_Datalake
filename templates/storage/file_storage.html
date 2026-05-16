@@ -711,24 +711,61 @@ function _runCleanup(cid, action) {
     contentType: 'application/json',
     data: JSON.stringify({ collectorId: parseInt(cid, 10), action: action, dryRun: false })
   }).done(function(res) {
-    closeModal();
     if (!res || !res.success || !res.data) {
+      closeModal();
       showToast((res && res.error && res.error.message) || __t('common.error'), 'error');
       return;
     }
     var d = res.data;
-    if (d.status === 'warming') { showToast(__t('page.file_storage.cleanup_warming'), 'info'); return; }
-    var msg = __t('page.file_storage.cleanup_done').replace('{n}', d.cleaned || 0);
-    if (d.failed) msg += ' ' + __t('page.file_storage.cleanup_failed_n').replace('{n}', d.failed);
-    showToast(msg, d.failed ? 'warning' : 'success');
-    selectedFiles = {};
-    loadFiles();
-    loadLocalCollectors();
-    loadStatus();
+    if (d.status === 'warming') {
+      closeModal();
+      showToast(__t('page.file_storage.cleanup_warming'), 'info');
+      return;
+    }
+    // started/running — 정리는 백그라운드에서 진행. 진행 상태 폴링.
+    _pollCleanup(parseInt(cid, 10));
   }).fail(function() {
     closeModal();
     showToast(__t('common.error'), 'error');
   });
+}
+
+/* 정리 작업 진행 폴링 — 서버 백그라운드 작업이라 이 창을 닫아도 정리는 계속된다. */
+function _pollCleanup(cid) {
+  $.getJSON(API + '/local/cleanup-status', { collectorId: cid })
+    .done(function(res) {
+      var p = (res && res.data) || {};
+      if (p.status === 'running') {
+        var total = p.total || 0, done = p.done || 0;
+        var pct = total > 0 ? Math.floor(done * 100 / total) : 0;
+        var txt = total > 0
+          ? __t('page.file_storage.cleanup_progress')
+              .replace('{d}', done).replace('{t}', total).replace('{p}', pct)
+          : __t('page.file_storage.cleanup_preparing');
+        $('#modal-body').html(
+          '<p><i class="fas fa-spinner fa-spin"></i> ' + txt + '</p>' +
+          '<div style="background:var(--bg-subtle,#eee);border-radius:4px;height:8px;overflow:hidden;margin:8px 0">' +
+            '<div style="background:#1e7e34;height:8px;width:' + pct + '%;transition:width .3s"></div></div>' +
+          '<p class="fs-12 text-muted">' + __t('page.file_storage.cleanup_bg_note') + '</p>');
+        $('#modal-footer').html(
+          '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>');
+        setTimeout(function() { _pollCleanup(cid); }, 2000);
+      } else if (p.status === 'done') {
+        closeModal();
+        var msg = __t('page.file_storage.cleanup_done').replace('{n}', p.cleaned || 0);
+        if (p.failed) msg += ' ' + __t('page.file_storage.cleanup_failed_n').replace('{n}', p.failed);
+        showToast(msg, p.failed ? 'warning' : 'success');
+        selectedFiles = {};
+        loadFiles(); loadLocalCollectors(); loadStatus();
+      } else if (p.status === 'error') {
+        closeModal();
+        showToast(p.error || __t('common.error'), 'error');
+      } else {
+        closeModal();
+        loadFiles();
+      }
+    })
+    .fail(function() { setTimeout(function() { _pollCleanup(cid); }, 3000); });
 }
 
 /* ── local_path 파일 다운로드/삭제 ── */
