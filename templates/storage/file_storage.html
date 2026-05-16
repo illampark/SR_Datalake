@@ -633,8 +633,19 @@ function applyMinioStatus(cid, files, retry) {
     var d = res.data;
     if (d.applicable === false) { $('.ms-badge').empty(); return; }
     if (d.status === 'warming') {
-      if (retry < 4) setTimeout(function() { applyMinioStatus(reqCid, files, retry + 1); }, 2500);
-      else $('.ms-badge').empty();
+      // MinIO import/{cid}/ 목록 워밍 중. 대형 collector 는 cold 캐시 LIST 가
+      // 수십 초 걸리므로 백오프로 길게 재시도하고, 끝내 미완이면 배지를 비우는
+      // 대신 '확인 지연' 으로 둬서 고장처럼 안 보이게 한다 (백그라운드 워밍은
+      // 완주하므로 잠시 후 새로고침하면 표시됨).
+      var MAX_RETRY = 16;
+      if (retry < MAX_RETRY) {
+        var delay = Math.min(2000 + retry * 1500, 12000);  // 2s → 12s 백오프
+        setTimeout(function() { applyMinioStatus(reqCid, files, retry + 1); }, delay);
+      } else {
+        $('.ms-badge').html('<span class="tag" style="opacity:.6" title="' +
+          __t('page.file_storage.minio_slow_help') + '"><i class="fas fa-clock"></i> ' +
+          __t('page.file_storage.minio_slow') + '</span>');
+      }
       return;
     }
     var items = d.items || {};

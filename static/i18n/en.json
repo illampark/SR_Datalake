@@ -2268,6 +2268,8 @@
       "minio_changed_help": "MinIO has the same path but a different size — modified after import. Verify before cleanup.",
       "minio_not_migrated": "Not migrated",
       "minio_not_migrated_help": "No copy in MinIO (canonical) — not imported yet.",
+      "minio_slow": "Check delayed",
+      "minio_slow_help": "MinIO listing is taking a while. Background processing continues — refresh shortly to see migration status.",
       "btn_cleanup_migrated": "Clean up migrated",
       "cleanup_help": "Bulk-clean files already migrated to MinIO (archive or delete).",
       "cleanup_warming": "Checking MinIO migration status — please try again shortly.",

@@ -2268,6 +2268,8 @@
       "minio_changed_help": "MinIO에 같은 경로의 파일이 있으나 크기가 다릅니다 — 가져오기 후 수정됨. 정리 전 확인하세요.",
       "minio_not_migrated": "미이관",
       "minio_not_migrated_help": "MinIO 정본에 사본이 없습니다 — 아직 가져오지 않았습니다.",
+      "minio_slow": "확인 지연",
+      "minio_slow_help": "MinIO 목록 집계가 오래 걸리고 있습니다. 백그라운드 처리는 계속 진행되므로 잠시 후 새로고침하면 이관 여부가 표시됩니다.",
       "btn_cleanup_migrated": "이관 완료 정리",
       "cleanup_help": "MinIO 정본에 이관 완료된 파일을 일괄 정리(보관 이동/삭제)합니다.",
       "cleanup_warming": "MinIO 이관 여부 확인 중입니다. 잠시 후 다시 시도하세요.",

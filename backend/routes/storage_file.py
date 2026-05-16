@@ -403,17 +403,20 @@ _import_warm_lock = threading.Lock()
 _import_warming = set()
 
 
-def _minio_import_objects(bucket, cid, blocking=True):
+def _minio_import_objects(bucket, cid, blocking=True, force=False):
     """import/{cid}/ 아래 MinIO 객체 목록 [{key,size}] — TTL 캐시.
 
     NFS 위 MinIO list 비용을 캐시로 차단. blocking=False 면 miss 시 None.
+    force=True 면 캐시가 유효해도 무시하고 재나열한다 — 백그라운드 사전 워머가
+    TTL 만료 전 미리 갱신할 때 사용 (사용자가 cold 캐시 LIST 를 안 만나게).
     """
     key = f"import_objs:{bucket}:{cid}"
-    cached, _age = _cache_get(key)
-    if cached is not None:
-        return cached
-    if not blocking:
-        return None
+    if not force:
+        cached, _age = _cache_get(key)
+        if cached is not None:
+            return cached
+        if not blocking:
+            return None
     objs = []
     try:
         client = _get_minio()

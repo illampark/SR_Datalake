@@ -40,6 +40,10 @@ INTERVAL_MIN = int(os.environ.get("FILE_INDEXER_INTERVAL_MIN", "5"))
 BATCH_SIZE = int(os.environ.get("FILE_INDEXER_BATCH_SIZE", "200"))
 SCAN_TIMEOUT_SEC = int(os.environ.get("FILE_INDEXER_TIMEOUT_SEC", "1800"))  # 30분
 DISABLED = os.environ.get("FILE_INDEXER_DISABLED", "0") == "1"
+# import/{cid}/ 객체 목록 캐시를 TTL(storage_file._MINIO_CACHE_TTL_SEC, 기본 30분)
+# 만료 전 미리 갱신하는 기준 나이. 이 값보다 오래된 캐시는 워머가 재나열한다.
+# 반드시 캐시 TTL 보다 작아야 cold 캐시 윈도우가 생기지 않는다.
+IMPORT_WARM_REFRESH_AGE = int(os.environ.get("IMPORT_WARM_REFRESH_AGE_SEC", "1080"))  # 18분
 # Leader election advisory-lock key (전역). 한 워커만 lock 을 잡아 스케줄 실행.
 LEADER_LOCK_KEY = 0x46494C45494E4458  # 'FILEINDX'
 
@@ -154,9 +158,49 @@ def _warmup_minio_cache() -> None:
             except Exception:
                 pass
         d2 = time.time() - t0
-        logger.info("minio cache warmup: summary=%.1fs browse=%.1fs", d1, d2)
+        t0 = time.time()
+        n_imp = _warmup_import_objects(sf)
+        d3 = time.time() - t0
+        logger.info("minio cache warmup: summary=%.1fs browse=%.1fs import_objs=%.1fs(%d개)",
+                    d1, d2, d3, n_imp)
     except Exception as e:
         logger.warning("minio cache warmup failed: %s", e)
+
+
+def _warmup_import_objects(sf) -> int:
+    """local_path + target=file collector 들의 import/{cid}/ 객체 목록을 미리 캐시.
+
+    이관 여부 배지(/local/minio-status)·일괄 정리(/local/cleanup-migrated)가 NFS 위
+    cold 캐시 LIST(대형 collector 는 수십 초~분) 를 사용자 요청 경로에서 만나지
+    않게 한다. TTL 만료 전(IMPORT_WARM_REFRESH_AGE)에 미리 재나열 → 항상 cache hit.
+
+    leader 워커에서만 호출되므로 워커 간 중복 LIST 가 없다.
+    반환: 이번에 실제로 재나열한 collector 수.
+    """
+    db = SessionLocal()
+    try:
+        from backend.models.collector import ImportCollector
+        rows = (db.query(ImportCollector)
+                .filter(ImportCollector.source_mode == "local_path").all())
+        targets = [(r.target_bucket or "sdl-files", r.id) for r in rows
+                   if (r.target_type or "file").lower() == "file"]
+    except Exception as e:
+        logger.warning("import_objs warmup: collector 조회 실패: %s", e)
+        return 0
+    finally:
+        db.close()
+
+    warmed = 0
+    for bucket, cid in targets:
+        cached, age = sf._cache_get(f"import_objs:{bucket}:{cid}")
+        if cached is not None and age is not None and age < IMPORT_WARM_REFRESH_AGE:
+            continue  # 아직 신선 — 재나열 불필요
+        try:
+            sf._minio_import_objects(bucket, cid, blocking=True, force=True)
+            warmed += 1
+        except Exception as e:
+            logger.warning("import_objs warmup cid=%s 실패: %s", cid, e)
+    return warmed
 
 
 def scan_all_collectors() -> None:
