@@ -169,17 +169,19 @@ def _classify(filename):
 # ──────────────────────────────────────────────
 # STR-011: GET /api/storage/file/status
 # ──────────────────────────────────────────────
-def _minio_bucket_summary_cached(blocking=True):
+def _minio_bucket_summary_cached(blocking=True, force=False):
     """모든 버킷 (총 사이즈, 객체 수) — TTL 캐시. NFS 위 MinIO 비용 차단.
 
     blocking=True (기본): 캐시 miss 시 직접 list_objects 호출 (느림, 5~10분).
     blocking=False: 캐시 miss 시 None 반환 — worker timeout 회피, 백그라운드 워머가 채우는 동안.
+    force=True: 유효 캐시를 무시하고 재나열 — TTL 만료 전 사전 워밍용.
     """
-    cached, _age = _cache_get("minio_bucket_summary")
-    if cached is not None:
-        return cached
-    if not blocking:
-        return None
+    if not force:
+        cached, _age = _cache_get("minio_bucket_summary")
+        if cached is not None:
+            return cached
+        if not blocking:
+            return None
     summary = {"total_size": 0, "total_objects": 0, "bucket_details": [], "error": None}
     try:
         client = _get_minio()
@@ -359,16 +361,18 @@ def get_storage_status():
 # ──────────────────────────────────────────────
 # STR-012: GET /api/storage/file/browse
 # ──────────────────────────────────────────────
-def _minio_browse_cached(bucket, path, blocking=True):
+def _minio_browse_cached(bucket, path, blocking=True, force=False):
     """버킷의 (path prefix) 아래 모든 객체 메타데이터 — TTL 캐시.
     NFS 위 173k 객체 list 비용을 캐시. blocking=False 면 miss 시 None.
+    force=True 면 유효 캐시를 무시하고 재나열 — TTL 만료 전 사전 워밍용.
     """
     key = f"browse:{bucket}:{path or ''}"
-    cached, _age = _cache_get(key)
-    if cached is not None:
-        return cached
-    if not blocking:
-        return None
+    if not force:
+        cached, _age = _cache_get(key)
+        if cached is not None:
+            return cached
+        if not blocking:
+            return None
     items = []
     try:
         client = _get_minio()

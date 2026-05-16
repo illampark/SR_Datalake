@@ -145,29 +145,45 @@ def _scheduler_loop(stop_event: threading.Event) -> None:
 def _warmup_minio_cache() -> None:
     """MinIO list 캐시를 미리 채워 사용자 첫 호출이 timeout 받지 않게.
     NFS 위 MinIO 163k 객체 list 가 5~10분 걸리므로 leader-only 백그라운드에서 처리.
+
+    순서: browse/summary(핵심 스토리지 UI — /browse·/status)를 먼저, import_objs
+    (이관 배지/정리)를 뒤로. 대형 collector(예: collector 8 — 13만+ 객체, LIST
+    수 분)의 import_objs 워밍이 browse 재나열을 막지 못하게 한다.
     """
     try:
         from backend.routes import storage_file as sf
-        # import/{cid}/ 워밍을 가장 먼저 — cold 상태의 summary/browse 워밍은 각각
-        # 10분+ 걸리므로 뒤에 두면 이관 여부 배지가 재시작 후 30분 가까이 cold.
-        # import_objs 를 선행시켜 배지 캐시가 가장 먼저 복구되게 한다.
+        t0 = time.time()
+        _warmup_browse_summary(sf)
+        d_bs = time.time() - t0
         t0 = time.time()
         n_imp = _warmup_import_objects(sf)
         d_imp = time.time() - t0
-        t0 = time.time()
-        sf._minio_bucket_summary_cached()
-        d1 = time.time() - t0
-        t0 = time.time()
-        for bucket in ("sdl-files", "sdl-archive", "sdl-backup"):
-            try:
-                sf._minio_browse_cached(bucket, "")
-            except Exception:
-                pass
-        d2 = time.time() - t0
-        logger.info("minio cache warmup: import_objs=%.1fs(%d개) summary=%.1fs browse=%.1fs",
-                    d_imp, n_imp, d1, d2)
+        logger.info("minio cache warmup: browse/summary=%.1fs import_objs=%.1fs(%d개)",
+                    d_bs, d_imp, n_imp)
     except Exception as e:
         logger.warning("minio cache warmup failed: %s", e)
+
+
+def _warmup_browse_summary(sf) -> None:
+    """browse(3 버킷) + summary 를 TTL 만료 전 미리 재나열.
+
+    유효 캐시라도 age >= IMPORT_WARM_REFRESH_AGE 면 force 재나열 — /browse·/status
+    가 TTL(30분) 만료 직후 cold 윈도우(워머가 다시 채울 때까지)를 만나지 않게 한다.
+    재나열 중에도 직전 캐시가 유효하므로 사용자 응답은 끊기지 않는다.
+    """
+    try:
+        cached, age = sf._cache_get("minio_bucket_summary")
+        force = cached is None or age is None or age >= IMPORT_WARM_REFRESH_AGE
+        sf._minio_bucket_summary_cached(force=force)
+    except Exception as e:
+        logger.warning("summary warmup 실패: %s", e)
+    for bucket in ("sdl-files", "sdl-archive", "sdl-backup"):
+        try:
+            cached, age = sf._cache_get(f"browse:{bucket}:")
+            force = cached is None or age is None or age >= IMPORT_WARM_REFRESH_AGE
+            sf._minio_browse_cached(bucket, "", force=force)
+        except Exception as e:
+            logger.warning("browse warmup %s 실패: %s", bucket, e)
 
 
 def _warmup_import_objects(sf) -> int:
