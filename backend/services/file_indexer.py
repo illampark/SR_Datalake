@@ -148,6 +148,12 @@ def _warmup_minio_cache() -> None:
     """
     try:
         from backend.routes import storage_file as sf
+        # import/{cid}/ 워밍을 가장 먼저 — cold 상태의 summary/browse 워밍은 각각
+        # 10분+ 걸리므로 뒤에 두면 이관 여부 배지가 재시작 후 30분 가까이 cold.
+        # import_objs 를 선행시켜 배지 캐시가 가장 먼저 복구되게 한다.
+        t0 = time.time()
+        n_imp = _warmup_import_objects(sf)
+        d_imp = time.time() - t0
         t0 = time.time()
         sf._minio_bucket_summary_cached()
         d1 = time.time() - t0
@@ -158,11 +164,8 @@ def _warmup_minio_cache() -> None:
             except Exception:
                 pass
         d2 = time.time() - t0
-        t0 = time.time()
-        n_imp = _warmup_import_objects(sf)
-        d3 = time.time() - t0
-        logger.info("minio cache warmup: summary=%.1fs browse=%.1fs import_objs=%.1fs(%d개)",
-                    d1, d2, d3, n_imp)
+        logger.info("minio cache warmup: import_objs=%.1fs(%d개) summary=%.1fs browse=%.1fs",
+                    d_imp, n_imp, d1, d2)
     except Exception as e:
         logger.warning("minio cache warmup failed: %s", e)
 
