@@ -155,7 +155,8 @@ def require_login():
 
     우선순위: 화이트리스트 경로 → 세션 → API 키 → 실패 시 401/리다이렉트.
     """
-    allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/")
+    allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/",
+                     "/api/storage/file/minio-events")
     if any(request.path == p or request.path.startswith(p) for p in allowed_paths):
         return None
     # 외부 커넥터 콜백은 인증 없이 허용
@@ -212,7 +213,8 @@ def enforce_rbac():
     예외 매트릭스는 backend/services/rbac.py 참조.
     """
     # 인증 면제 경로 (login/static/callback) 는 require_login 에서 이미 통과
-    allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/")
+    allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/",
+                     "/api/storage/file/minio-events")
     if any(request.path == p or request.path.startswith(p) for p in allowed_paths):
         return None
     if "/callback" in request.path:

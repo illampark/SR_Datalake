@@ -12,3 +12,4 @@ from backend.models.backup import BackupHistory  # noqa: F401
 from backend.models.gateway import ApiAccessLog, ApiKey  # noqa: F401
 from backend.models.notice import Notice  # noqa: F401
 from backend.models.file_index import FileIndex, FileIndexState  # noqa: F401
+from backend.models.minio_object import MinioObject  # noqa: F401

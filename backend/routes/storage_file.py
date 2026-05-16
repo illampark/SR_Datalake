@@ -532,6 +532,26 @@ def browse_files():
         return _err(f"파일 목록 조회 실패: {e}", "SERVER_ERROR", 500)
 
 
+@file_bp.route("/minio-events", methods=["POST"])
+def minio_events():
+    """MinIO Bucket Notification(webhook) 수신 → minio_object 인덱스 갱신.
+
+    MinIO 가 호출하므로 세션이 없다 — app.py 의 require_login/enforce_rbac
+    화이트리스트에 등록돼 있고, 공유 비밀(MINIO_WEBHOOK_TOKEN) Bearer 토큰으로
+    검증한다. 설계: claudedocs/minio-event-index-design.md
+    """
+    from backend.config import MINIO_WEBHOOK_TOKEN
+    if (not MINIO_WEBHOOK_TOKEN
+            or request.headers.get("Authorization", "") != f"Bearer {MINIO_WEBHOOK_TOKEN}"):
+        return _err("인증 실패", "UNAUTHORIZED", 401)
+    try:
+        from backend.services.minio_indexer import handle_events
+        return _ok(handle_events(request.get_json(silent=True) or {}))
+    except Exception as e:
+        logger.warning("minio-events 처리 오류: %s", e)
+        return _err(str(e), "SERVER_ERROR", 500)
+
+
 # ──────────────────────────────────────────────
 # STR-013: GET /api/storage/file/stats
 # ──────────────────────────────────────────────
