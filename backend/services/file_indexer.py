@@ -44,6 +44,9 @@ DISABLED = os.environ.get("FILE_INDEXER_DISABLED", "0") == "1"
 # 만료 전 미리 갱신하는 기준 나이. 이 값보다 오래된 캐시는 워머가 재나열한다.
 # 반드시 캐시 TTL 보다 작아야 cold 캐시 윈도우가 생기지 않는다.
 IMPORT_WARM_REFRESH_AGE = int(os.environ.get("IMPORT_WARM_REFRESH_AGE_SEC", "1080"))  # 18분
+# MinIO 인덱스 reconcile(전체 LIST 대조로 누락 이벤트 보정) 간격 — 약 1일.
+RECONCILE_INTERVAL_SEC = int(os.environ.get("MINIO_RECONCILE_INTERVAL_SEC", str(23 * 3600)))
+_RECONCILE_TS_FILE = os.environ.get("MINIO_RECONCILE_TS_FILE", "/tmp/sdl_minio_reconcile.ts")
 # Leader election advisory-lock key (전역). 한 워커만 lock 을 잡아 스케줄 실행.
 LEADER_LOCK_KEY = 0x46494C45494E4458  # 'FILEINDX'
 
@@ -124,6 +127,26 @@ def stop_scheduler() -> None:
         _stop_event.set()
 
 
+def _reconcile_if_due() -> None:
+    """MinIO 인덱스 reconcile 을 약 1일 1회 실행 — 웹훅 누락 이벤트 드리프트 보정.
+
+    leader 워커의 스케줄러에서만 호출. 마지막 실행 시각을 타임스탬프 파일로 추적 —
+    파일이 없으면(컨테이너 재생성 직후) 곧 1회 실행돼 배포 윈도우 중 누락분을 보정.
+    """
+    try:
+        ts = _RECONCILE_TS_FILE
+        if os.path.exists(ts) and (time.time() - os.path.getmtime(ts)) < RECONCILE_INTERVAL_SEC:
+            return
+        from backend.services.minio_indexer import reconcile
+        t0 = time.time()
+        result = reconcile()
+        with open(ts, "w") as f:
+            f.write(str(time.time()))
+        logger.info("minio reconcile 완료 (%.1fs): %s", time.time() - t0, result)
+    except Exception as e:
+        logger.warning("minio reconcile 실패: %s", e)
+
+
 def _scheduler_loop(stop_event: threading.Event) -> None:
     # 부팅 직후 즉시 1회 스캔 (다른 worker 들은 advisory lock 으로 wait → skip)
     try:
@@ -131,6 +154,7 @@ def _scheduler_loop(stop_event: threading.Event) -> None:
         scan_all_collectors()
         # MinIO list 캐시도 미리 채움 — UI 요청은 항상 cache hit
         _warmup_minio_cache()
+        _reconcile_if_due()
     except Exception as e:
         logger.warning("initial scan failed: %s", e)
 
@@ -138,6 +162,7 @@ def _scheduler_loop(stop_event: threading.Event) -> None:
         try:
             scan_all_collectors()
             _warmup_minio_cache()
+            _reconcile_if_due()
         except Exception as e:
             logger.warning("periodic scan failed: %s", e)
 

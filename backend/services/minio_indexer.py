@@ -175,3 +175,92 @@ def backfill(buckets=None, batch_size=1000):
     finally:
         db.close()
     return result
+
+
+def reconcile(buckets=None):
+    """MinIO 전체 LIST 와 minio_object 테이블을 대조해 드리프트를 보정 (Phase 6).
+
+    웹훅 누락 이벤트(앱 다운·네트워크 단절 중 발생)에 대한 안전망 — 저빈도(약
+    1일 1회) 실행. file_indexer 스케줄러(leader 전용)가 호출한다.
+      - MinIO 에 있고 테이블에 없음 → insert
+      - 테이블에 있고 MinIO 에 없음 → delete
+      - 둘 다 있고 size 불일치 → update
+    반환: {bucket: {"added","removed","updated","total"}}.
+    """
+    from backend.config import MINIO_BUCKETS
+    from backend.services.minio_client import get_minio_client
+    from sqlalchemy import text as _sql_text
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    buckets = buckets or MINIO_BUCKETS
+    result = {}
+    db = SessionLocal()
+    try:
+        client = get_minio_client(db)
+        now = datetime.utcnow()
+        for bucket in buckets:
+            stats = {"added": 0, "removed": 0, "updated": 0, "total": 0}
+            try:
+                # MinIO 현재 상태
+                live = {}
+                for obj in client.list_objects(bucket, recursive=True):
+                    key = obj.object_name or ""
+                    if key.endswith("/") or not os.path.basename(key):
+                        continue
+                    lm = obj.last_modified
+                    if lm is not None and getattr(lm, "tzinfo", None) is not None:
+                        lm = lm.astimezone(timezone.utc).replace(tzinfo=None)
+                    live[key] = (int(obj.size or 0), lm, (obj.etag or "").strip('"')[:64])
+                stats["total"] = len(live)
+                # 테이블 현재 상태
+                tbl = {r[0]: int(r[1] or 0) for r in db.execute(_sql_text(
+                    "SELECT object_name, size FROM minio_object WHERE bucket = :b"
+                ), {"b": bucket}).fetchall()}
+                live_keys, tbl_keys = set(live), set(tbl)
+
+                # 삭제 — 테이블엔 있고 MinIO 엔 없음
+                stale = list(tbl_keys - live_keys)
+                for i in range(0, len(stale), 1000):
+                    part = tuple(stale[i:i + 1000])
+                    db.execute(_sql_text(
+                        "DELETE FROM minio_object WHERE bucket = :b AND object_name IN :ks"
+                    ), {"b": bucket, "ks": part})
+                    stats["removed"] += len(part)
+
+                # 추가 — MinIO 엔 있고 테이블엔 없음
+                batch = []
+                for key in (live_keys - tbl_keys):
+                    size, lm, etag = live[key]
+                    name, parent, ftype, ext = _parse_key(key)
+                    batch.append(dict(
+                        bucket=bucket, object_name=key, name=name, parent_path=parent,
+                        ftype=ftype, extension=ext, size=size, etag=etag,
+                        content_type="", last_modified=lm, event_seq="", indexed_at=now))
+                    if len(batch) >= 1000:
+                        db.execute(pg_insert(MinioObject).values(batch)
+                                   .on_conflict_do_nothing(index_elements=["bucket", "object_name"]))
+                        stats["added"] += len(batch)
+                        batch.clear()
+                if batch:
+                    db.execute(pg_insert(MinioObject).values(batch)
+                               .on_conflict_do_nothing(index_elements=["bucket", "object_name"]))
+                    stats["added"] += len(batch)
+
+                # 갱신 — 둘 다 있고 size 불일치
+                for key in (live_keys & tbl_keys):
+                    size, lm, etag = live[key]
+                    if size != tbl[key]:
+                        db.execute(_sql_text(
+                            "UPDATE minio_object SET size=:s, last_modified=:lm, etag=:e, "
+                            "indexed_at=:n WHERE bucket=:b AND object_name=:k"
+                        ), {"s": size, "lm": lm, "e": etag, "n": now, "b": bucket, "k": key})
+                        stats["updated"] += 1
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning("reconcile bucket=%s 실패: %s", bucket, e)
+            result[bucket] = stats
+            logger.info("reconcile bucket=%s: %s", bucket, stats)
+    finally:
+        db.close()
+    return result
