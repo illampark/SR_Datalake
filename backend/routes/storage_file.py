@@ -10,7 +10,7 @@ from flask import Blueprint, request, jsonify, send_file
 from minio.error import S3Error
 from backend.database import SessionLocal
 from backend.models.storage import FileCleanupPolicy
-from backend.config import MINIO_BUCKETS
+from backend.config import MINIO_BUCKETS, MINIO_INDEX_MODE
 from backend.services.audit_logger import audit_route
 from backend.services.minio_client import get_minio_client, get_minio_config
 
@@ -213,26 +213,44 @@ def get_storage_status():
     db = SessionLocal()
     cfg = get_minio_config(db)
     try:
-        # ── 1) MinIO 사용량 (TTL 캐시, miss 시 placeholder 반환) ──
-        summary = _minio_bucket_summary_cached(blocking=False)
-        if summary is None:
-            # 캐시 미스 — 백그라운드 워머가 채우는 중. worker 죽지 않게 즉시 응답.
-            minio_status = "warming"
+        # ── 1) MinIO 사용량 ──
+        if MINIO_INDEX_MODE == "table":
+            # minio_object 인덱스 집계 — LIST·캐시·워밍 불필요.
+            from sqlalchemy import text as _sql_text1
+            agg = {r[0]: (int(r[1]), int(r[2])) for r in db.execute(_sql_text1(
+                "SELECT bucket, COUNT(*), COALESCE(SUM(size),0) FROM minio_object GROUP BY bucket"
+            )).fetchall()}
+            minio_total_size = minio_total_objects = 0
+            bucket_details = []
+            for b in MINIO_BUCKETS:
+                c, s = agg.get(b, (0, 0))
+                minio_total_objects += c
+                minio_total_size += s
+                bucket_details.append({"bucket": b, "size_bytes": s,
+                                       "size_display": _fmt_bytes(s), "object_count": c})
+            minio_status = "connected"
             minio_error = None
-            minio_total_size = 0
-            minio_total_objects = 0
-            bucket_details = [{"bucket": b, "size_bytes": 0, "size_display": "-", "object_count": 0}
-                              for b in MINIO_BUCKETS]
         else:
-            minio_total_size = summary["total_size"]
-            minio_total_objects = summary["total_objects"]
-            bucket_details = summary["bucket_details"]
-            if summary["error"]:
-                minio_status = "disconnected"
-                minio_error = summary["error"]
-            else:
-                minio_status = "connected"
+            # cache 모드: TTL 캐시, miss 시 placeholder 반환
+            summary = _minio_bucket_summary_cached(blocking=False)
+            if summary is None:
+                # 캐시 미스 — 백그라운드 워머가 채우는 중. worker 죽지 않게 즉시 응답.
+                minio_status = "warming"
                 minio_error = None
+                minio_total_size = 0
+                minio_total_objects = 0
+                bucket_details = [{"bucket": b, "size_bytes": 0, "size_display": "-", "object_count": 0}
+                                  for b in MINIO_BUCKETS]
+            else:
+                minio_total_size = summary["total_size"]
+                minio_total_objects = summary["total_objects"]
+                bucket_details = summary["bucket_details"]
+                if summary["error"]:
+                    minio_status = "disconnected"
+                    minio_error = summary["error"]
+                else:
+                    minio_status = "connected"
+                    minio_error = None
 
         # ── 2) local_path import_collector 들의 디스크 사용량 (file_index SQL) ──
         # 이전엔 모든 collector 의 os.walk 로 stat → NFS 위에서 분 단위 timeout 위험.
@@ -413,7 +431,21 @@ def _minio_import_objects(bucket, cid, blocking=True, force=False):
     NFS 위 MinIO list 비용을 캐시로 차단. blocking=False 면 miss 시 None.
     force=True 면 캐시가 유효해도 무시하고 재나열한다 — 백그라운드 사전 워머가
     TTL 만료 전 미리 갱신할 때 사용 (사용자가 cold 캐시 LIST 를 안 만나게).
+
+    MINIO_INDEX_MODE=table 이면 minio_object 인덱스에서 직접 조회 — 캐시·LIST·
+    워밍 불필요. 항상 리스트 반환(None 없음)이라 호출부의 warming 분기는 미동작.
     """
+    if MINIO_INDEX_MODE == "table":
+        from sqlalchemy import text as _sql_text
+        db = SessionLocal()
+        try:
+            rows = db.execute(_sql_text(
+                "SELECT object_name, size FROM minio_object "
+                "WHERE bucket = :b AND object_name LIKE :pfx"
+            ), {"b": bucket, "pfx": f"import/{cid}/%"}).fetchall()
+            return [{"key": r[0], "size": int(r[1] or 0)} for r in rows]
+        finally:
+            db.close()
     key = f"import_objs:{bucket}:{cid}"
     if not force:
         cached, _age = _cache_get(key)
@@ -497,6 +529,42 @@ def _import_match_status(rel, size, by_rel, by_name):
     return "not_migrated"
 
 
+def _table_browse(bucket, file_type, search, page, size):
+    """minio_object 인덱스에서 /browse 결과 — 필터·정렬·페이지네이션을 SQL 로 처리.
+    반환: (items, total). search 는 호출부에서 이미 lower-case.
+    """
+    from sqlalchemy import text as _sql_text
+    db = SessionLocal()
+    try:
+        where = "bucket = :b"
+        params = {"b": bucket}
+        if file_type:
+            where += " AND ftype = :t"
+            params["t"] = file_type
+        if search:
+            where += " AND LOWER(name) LIKE :q"
+            params["q"] = f"%{search}%"
+        total = int(db.execute(_sql_text(
+            f"SELECT COUNT(*) FROM minio_object WHERE {where}"), params).scalar() or 0)
+        pp = dict(params, lim=size, off=max(page - 1, 0) * size)
+        rows = db.execute(_sql_text(
+            f"SELECT object_name, name, parent_path, ftype, extension, size, last_modified "
+            f"FROM minio_object WHERE {where} "
+            f"ORDER BY last_modified DESC NULLS LAST, name ASC LIMIT :lim OFFSET :off"
+        ), pp).fetchall()
+        items = [{
+            "name": r[1], "objectName": r[0], "type": r[3] or "other",
+            "extension": r[4] or "", "size": int(r[5] or 0),
+            "sizeDisplay": _fmt_bytes(int(r[5] or 0)),
+            "path": "/" + r[2] + "/" if r[2] else "/",
+            "bucket": bucket,
+            "modifiedAt": r[6].isoformat() if r[6] else None,
+        } for r in rows]
+        return items, total
+    finally:
+        db.close()
+
+
 @file_bp.route("/browse", methods=["GET"])
 def browse_files():
     try:
@@ -506,6 +574,11 @@ def browse_files():
         search = request.args.get("search", "").lower()
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", 50, type=int)
+
+        # MINIO_INDEX_MODE=table: minio_object 인덱스에서 SQL 로 필터·정렬·페이지네이션.
+        if MINIO_INDEX_MODE == "table":
+            items, total = _table_browse(bucket, file_type, search, page, size)
+            return _ok(items, {"page": page, "size": size, "total": total, "bucket": bucket})
 
         all_items = _minio_browse_cached(bucket, path, blocking=False)
         if all_items is None:
@@ -565,6 +638,31 @@ def get_file_stats():
     모든 캐시가 비어있으면 warming 으로 응답.
     """
     try:
+        # MINIO_INDEX_MODE=table: minio_object 인덱스에서 유형별 집계 (GROUP BY).
+        if MINIO_INDEX_MODE == "table":
+            from sqlalchemy import text as _sql_text
+            db = SessionLocal()
+            try:
+                rows = db.execute(_sql_text(
+                    "SELECT COALESCE(NULLIF(ftype, ''), 'other'), COUNT(*), COALESCE(SUM(size),0) "
+                    "FROM minio_object GROUP BY 1"
+                )).fetchall()
+            finally:
+                db.close()
+            stats = []
+            for ftype, cnt, tot in rows:
+                tot = int(tot or 0)
+                stats.append({
+                    "type": ftype,
+                    "label": FILE_TYPE_LABELS.get(ftype, ftype),
+                    "count": int(cnt or 0),
+                    "totalSizeBytes": tot,
+                    "totalSizeGB": round(tot / (1024 ** 3), 4),
+                    "totalSizeDisplay": _fmt_bytes(tot),
+                })
+            stats.sort(key=lambda x: x["totalSizeBytes"], reverse=True)
+            return _ok({"stats": stats, "snapshot_at": datetime.utcnow().isoformat()})
+
         # 짧은 TTL 의 결과 캐시 (UI 가 자주 호출하므로 결과만 짧게 보관)
         cached, _age = _cache_get("file_stats")
         if cached is not None:
