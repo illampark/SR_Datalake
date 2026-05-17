@@ -207,3 +207,57 @@ environment:
 - 검증: 백필 행수 대조, 이벤트 정합, reconcile diff
 권장: Phase 1~4 를 먼저 배포해 테이블을 그림자(shadow)로 채우며 정합을 관찰한 뒤
 Phase 5 컷오버.
+
+## 14. 구현 상태 (2026-05-17)
+
+Phase 1~7 모두 staging·KETI prod 배포·검증 완료. 커밋 `6120768` 기준 구 캐시/워머
+코드 제거까지 끝나, MinIO 객체 조회는 전적으로 `minio_object` 이벤트 인덱스로 동작.
+
+| Phase | 내용 | 커밋 |
+|-------|------|------|
+| 1·2 | minio_object 모델 + 웹훅 수신·handle_events | f3eef67 |
+| 3 | MinIO Bucket Notification 설정 (webhook 타깃 + 버킷 구독) | 인프라 |
+| 4 | backfill — 기존 163,525 객체 적재 | 183a5db |
+| 5 | 소비처 컷오버 (/browse·/status·/stats·이관여부·정리) | 01c226d |
+| 6 | reconcile 드리프트 안전망 (file_indexer 스케줄, ~1일) | 887b15b |
+| 7 | 구 캐시·워머 코드 제거, MINIO_INDEX_MODE 플래그 제거 | 6120768 |
+
+## 15. 운영 안정성 강화 방안
+
+### 현재 안전장치
+- **웹훅 누락**: MinIO `queue_dir` 스테이징·재전송 → 1차, `reconcile()` 약 1일 1회 → 2차
+- **이벤트 순서 역전**: `event_seq`(sequencer) 가드
+- **핸들러 견고성**: 레코드별 try/except, 배치 단위 트랜잭션 (실패 시 전체 롤백 →
+  MinIO 가 재시도, upsert/delete 라 멱등)
+- **인덱스 무결성**: `UNIQUE(bucket, object_name)`
+
+### P1 — 우선 보완 권장
+
+**(a) reconcile 대량 삭제 가드** ⚠️
+`reconcile()` 는 "MinIO LIST 에 없으면 테이블에서 삭제"한다. `list_objects` 가
+예외를 던지면 버킷이 skip 되지만, **예외 없이 빈 결과**가 오면 그 버킷의 인덱스
+전체가 삭제될 수 있다. → live 객체 수가 0 이거나 테이블 대비 큰 비율(예: 50%↑)
+감소 시 삭제를 중단하고 WARN — transient LIST 이상으로부터 인덱스 보호.
+
+**(b) 인덱스 상태 가시화**
+웹훅이 조용히 끊겨도 reconcile(최대 23h) 전까지 드러나지 않는다. →
+`GET /api/storage/file/minio-index-status`: 테이블 행수, 마지막 이벤트 수신 시각,
+마지막 reconcile 시각·결과(added/removed/updated). reconcile 가 매번 큰 드리프트를
+보고하면 = 웹훅이 새는 신호.
+
+### P2 — 권장
+
+**(c) queue_dir 영속화**: 현재 `/tmp/minio-notify` 는 컨테이너 휘발성 — MinIO 재시작
+시 대기 이벤트 유실(reconcile 가 보정). 영속 볼륨으로 옮기면 무손실.
+
+**(d) reconcile 경량화·단축**: 23h 는 길다. 버킷별 `COUNT(*)` 만 비교(MinIO Prometheus
+`minio_bucket_usage_object_total` vs 테이블)하는 경량 체크를 짧은 주기로 → 차이 크면
+전체 reconcile 트리거. 드리프트 감지 지연 단축.
+
+**(e) 수동 reconcile 라우트**: 운영자가 관리 API 로 즉시 트리거 (현재 스케줄만).
+
+### P3 — 문서화·장기
+- 버킷 버저닝 활성화 시 `DeleteMarkerCreated` 등 추가 이벤트 처리 필요 (현재 미사용 전제)
+- `handle_events`·`reconcile`·`backfill` 자동 테스트 추가
+- `queue_limit`(10만) 초과 시 이벤트 드롭 — sdl-app 장기 다운 대비 알림
+- `MINIO_WEBHOOK_TOKEN` 회전 절차: minio·sdl-app env 동시 갱신 후 양쪽 재기동
