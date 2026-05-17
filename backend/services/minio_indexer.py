@@ -9,6 +9,7 @@ minio_object 테이블이 실시간 인덱스가 된다.
 """
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from urllib.parse import unquote_plus
 
@@ -17,6 +18,9 @@ from backend.models.minio_object import MinioObject
 from backend.services.file_indexer import _classify
 
 logger = logging.getLogger(__name__)
+
+# reconcile 결과 상태 파일 — file_indexer 스케줄러·수동 트리거·/minio-index-status 공유.
+RECONCILE_STATE_FILE = os.environ.get("MINIO_RECONCILE_TS_FILE", "/tmp/sdl_minio_reconcile.ts")
 
 
 def _parse_key(object_name):
@@ -217,9 +221,21 @@ def reconcile(buckets=None):
                     "SELECT object_name, size FROM minio_object WHERE bucket = :b"
                 ), {"b": bucket}).fetchall()}
                 live_keys, tbl_keys = set(live), set(tbl)
+                stale = list(tbl_keys - live_keys)
+
+                # 대량 삭제 가드 — LIST 이상(예외 없는 빈 결과 등)으로 큰 인덱스가
+                # 통째로 지워지는 것 방지. 50행 이상 인덱스에서 절반 넘게 사라진 듯
+                # 보이면 의심 → 보정 생략 + WARN (소규모 버킷은 가드 미적용).
+                if len(tbl_keys) >= 50 and (not live_keys
+                                            or len(stale) / len(tbl_keys) > 0.5):
+                    logger.warning("reconcile bucket=%s SKIP — 의심스러운 LIST "
+                                   "(live=%d table=%d stale=%d), 인덱스 보호",
+                                   bucket, len(live_keys), len(tbl_keys), len(stale))
+                    stats["skipped"] = True
+                    result[bucket] = stats
+                    continue
 
                 # 삭제 — 테이블엔 있고 MinIO 엔 없음
-                stale = list(tbl_keys - live_keys)
                 for i in range(0, len(stale), 1000):
                     part = tuple(stale[i:i + 1000])
                     db.execute(_sql_text(
@@ -263,4 +279,22 @@ def reconcile(buckets=None):
             logger.info("reconcile bucket=%s: %s", bucket, stats)
     finally:
         db.close()
+    return result
+
+
+def run_reconcile(trigger="scheduled"):
+    """reconcile() 실행 후 결과를 상태 파일(RECONCILE_STATE_FILE)에 JSON 기록.
+
+    file_indexer 스케줄러와 수동 트리거 라우트가 공통 사용 — /minio-index-status
+    가 이 파일을 읽어 마지막 reconcile 시각·결과를 노출한다.
+    """
+    import json as _json
+    t0 = time.time()
+    result = reconcile()
+    try:
+        with open(RECONCILE_STATE_FILE, "w") as f:
+            _json.dump({"ts": time.time(), "elapsed": round(time.time() - t0, 1),
+                        "result": result, "trigger": trigger}, f)
+    except Exception as e:
+        logger.warning("reconcile 상태 파일 기록 실패: %s", e)
     return result

@@ -40,8 +40,8 @@ INTERVAL_MIN = int(os.environ.get("FILE_INDEXER_INTERVAL_MIN", "5"))
 BATCH_SIZE = int(os.environ.get("FILE_INDEXER_BATCH_SIZE", "200"))
 SCAN_TIMEOUT_SEC = int(os.environ.get("FILE_INDEXER_TIMEOUT_SEC", "1800"))  # 30분
 DISABLED = os.environ.get("FILE_INDEXER_DISABLED", "0") == "1"
-# MinIO 인덱스 reconcile(전체 LIST 대조로 누락 이벤트 보정) 간격 — 약 1일.
-RECONCILE_INTERVAL_SEC = int(os.environ.get("MINIO_RECONCILE_INTERVAL_SEC", str(23 * 3600)))
+# MinIO 인덱스 reconcile(전체 LIST 대조로 누락 이벤트 보정) 간격 — 기본 6시간.
+RECONCILE_INTERVAL_SEC = int(os.environ.get("MINIO_RECONCILE_INTERVAL_SEC", str(6 * 3600)))
 _RECONCILE_TS_FILE = os.environ.get("MINIO_RECONCILE_TS_FILE", "/tmp/sdl_minio_reconcile.ts")
 # Leader election advisory-lock key (전역). 한 워커만 lock 을 잡아 스케줄 실행.
 LEADER_LOCK_KEY = 0x46494C45494E4458  # 'FILEINDX'
@@ -133,11 +133,9 @@ def _reconcile_if_due() -> None:
         ts = _RECONCILE_TS_FILE
         if os.path.exists(ts) and (time.time() - os.path.getmtime(ts)) < RECONCILE_INTERVAL_SEC:
             return
-        from backend.services.minio_indexer import reconcile
+        from backend.services.minio_indexer import run_reconcile
         t0 = time.time()
-        result = reconcile()
-        with open(ts, "w") as f:
-            f.write(str(time.time()))
+        result = run_reconcile("scheduled")
         logger.info("minio reconcile 완료 (%.1fs): %s", time.time() - t0, result)
     except Exception as e:
         logger.warning("minio reconcile 실패: %s", e)

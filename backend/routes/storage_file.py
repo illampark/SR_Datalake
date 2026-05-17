@@ -378,6 +378,67 @@ def minio_events():
         return _err(str(e), "SERVER_ERROR", 500)
 
 
+@file_bp.route("/minio-index-status", methods=["GET"])
+def minio_index_status():
+    """MinIO 객체 인덱스(minio_object) 상태 — 모니터링용.
+
+    버킷별 행수·용량·마지막 인덱싱 시각 + 마지막 reconcile 결과. 웹훅이 조용히
+    끊겨도 reconcile 결과의 큰 드리프트(added/removed)로 감지할 수 있게 한다.
+    """
+    db = SessionLocal()
+    try:
+        from sqlalchemy import text as _sql_text
+        rows = db.execute(_sql_text(
+            "SELECT bucket, COUNT(*), COALESCE(SUM(size),0), MAX(indexed_at) "
+            "FROM minio_object GROUP BY bucket ORDER BY bucket"
+        )).fetchall()
+        buckets = [{
+            "bucket": r[0], "objectCount": int(r[1]), "sizeBytes": int(r[2] or 0),
+            "sizeDisplay": _fmt_bytes(int(r[2] or 0)),
+            "lastIndexedAt": r[3].isoformat() if r[3] else None,
+        } for r in rows]
+        last_indexed = max((b["lastIndexedAt"] for b in buckets if b["lastIndexedAt"]),
+                           default=None)
+        reconcile = None
+        try:
+            from backend.services.minio_indexer import RECONCILE_STATE_FILE
+            with open(RECONCILE_STATE_FILE, "r", encoding="utf-8") as f:
+                rc = _json.load(f)
+            reconcile = {
+                "at": datetime.utcfromtimestamp(rc["ts"]).isoformat() if rc.get("ts") else None,
+                "elapsedSec": rc.get("elapsed"),
+                "trigger": rc.get("trigger"),
+                "result": rc.get("result"),
+            }
+        except Exception:
+            pass
+        return _ok({
+            "totalObjects": sum(b["objectCount"] for b in buckets),
+            "buckets": buckets,
+            "lastIndexedAt": last_indexed,
+            "lastReconcile": reconcile,
+        })
+    finally:
+        db.close()
+
+
+@file_bp.route("/minio-reconcile", methods=["POST"])
+def minio_reconcile_trigger():
+    """MinIO 인덱스 reconcile 수동 트리거 (admin) — 백그라운드 실행, 즉시 반환.
+
+    결과는 /minio-index-status 의 lastReconcile 로 확인.
+    """
+    def _run():
+        try:
+            from backend.services.minio_indexer import run_reconcile
+            run_reconcile("manual")
+        except Exception as e:
+            logger.warning("manual reconcile 실패: %s", e)
+    threading.Thread(target=_run, name="manual-reconcile", daemon=True).start()
+    return _ok({"started": True,
+                "message": "reconcile 백그라운드 실행 시작 — 결과는 minio-index-status 참조"})
+
+
 # ──────────────────────────────────────────────
 # STR-013: GET /api/storage/file/stats
 # ──────────────────────────────────────────────
