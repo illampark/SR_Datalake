@@ -249,18 +249,19 @@ def _get_rdbms_size(db):
 
 
 def _get_minio_size():
-    """MinIO 파일 스토리지 전체 버킷 사이즈 합산 (bytes).
+    """MinIO 파일 스토리지 전체 버킷 사이즈 합산 (bytes) — minio_object 인덱스 집계.
 
-    storage_file._minio_bucket_summary_cached 의 파일 캐시(/tmp/sdl_minio_cache.json)
-    를 재사용. 직접 list_objects(recursive=True) 호출하면 NFS 위 163k 객체에서
-    5~10분 + gunicorn worker timeout 위험. 캐시 miss 면 0 반환 (워머가 채우는 중).
+    이벤트 기반 인덱스(claudedocs/minio-event-index-design.md) 도입 후 LIST·캐시
+    없이 SQL 합계로 즉답.
     """
     try:
-        from backend.routes.storage_file import _minio_bucket_summary_cached
-        summary = _minio_bucket_summary_cached(blocking=False)
-        if summary is None:
-            return 0
-        return int(summary.get("total_size", 0))
+        from sqlalchemy import text as _sql_text
+        db = _db()
+        try:
+            return int(db.execute(_sql_text(
+                "SELECT COALESCE(SUM(size), 0) FROM minio_object")).scalar() or 0)
+        finally:
+            db.close()
     except Exception:
         return 0
 

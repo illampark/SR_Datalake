@@ -16,7 +16,6 @@ MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
 MINIO_BUCKETS = ["sdl-files", "sdl-archive", "sdl-backup"]
 # MinIO 이벤트 기반 객체 인덱스 (claudedocs/minio-event-index-design.md)
 MINIO_WEBHOOK_TOKEN = os.getenv("MINIO_WEBHOOK_TOKEN", "")   # webhook 수신 공유 비밀
-MINIO_INDEX_MODE = os.getenv("MINIO_INDEX_MODE", "cache")    # cache | table (Phase 5 컷오버)
 
 # Benthos (Redpanda Connect) Streams API
 BENTHOS_BIN = os.getenv("BENTHOS_BIN", os.path.expanduser("~/.local/bin/redpanda-connect"))
