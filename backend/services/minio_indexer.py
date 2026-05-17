@@ -109,3 +109,69 @@ def handle_events(payload):
     finally:
         db.close()
     return {"applied": applied, "deleted": deleted, "skipped": skipped}
+
+
+def backfill(buckets=None, batch_size=1000):
+    """기존 MinIO 객체를 전체 LIST 해 minio_object 에 1회 적재 (Phase 4).
+
+    웹훅(Phase 3)이 켜진 뒤 실행 — 백필 도중 도착한 이벤트와 겹쳐도 안전하다:
+    handle_events 는 SELECT-후-upsert 라 더 신선한 이벤트 데이터가 우선되고,
+    backfill 은 ON CONFLICT DO NOTHING 으로 이미 인덱싱된 객체를 건드리지 않는다.
+
+    느린 작업(수만~수십만 객체 LIST) — HTTP 요청이 아닌 운영 명령/백그라운드로 실행.
+    반환: {bucket: 적재 건수}.
+    """
+    from backend.config import MINIO_BUCKETS
+    from backend.services.minio_client import get_minio_client
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    buckets = buckets or MINIO_BUCKETS
+    result = {}
+    db = SessionLocal()
+    try:
+        client = get_minio_client(db)
+        now = datetime.utcnow()
+        for bucket in buckets:
+            n = 0
+            batch = []
+
+            def _flush():
+                nonlocal n
+                if not batch:
+                    return
+                db.execute(pg_insert(MinioObject).values(batch)
+                           .on_conflict_do_nothing(index_elements=["bucket", "object_name"]))
+                db.commit()
+                n += len(batch)
+                batch.clear()
+
+            try:
+                for obj in client.list_objects(bucket, recursive=True):
+                    key = obj.object_name or ""
+                    if key.endswith("/"):
+                        continue
+                    name, parent, ftype, ext = _parse_key(key)
+                    if not name:
+                        continue
+                    lm = obj.last_modified
+                    if lm is not None and getattr(lm, "tzinfo", None) is not None:
+                        lm = lm.astimezone(timezone.utc).replace(tzinfo=None)
+                    batch.append(dict(
+                        bucket=bucket, object_name=key, name=name,
+                        parent_path=parent, ftype=ftype, extension=ext,
+                        size=int(obj.size or 0),
+                        etag=(obj.etag or "").strip('"')[:64],
+                        content_type="", last_modified=lm,
+                        event_seq="", indexed_at=now,
+                    ))
+                    if len(batch) >= batch_size:
+                        _flush()
+                _flush()
+            except Exception as e:
+                db.rollback()
+                logger.warning("backfill bucket=%s 실패: %s", bucket, e)
+            result[bucket] = n
+            logger.info("backfill bucket=%s: %d 객체 적재", bucket, n)
+    finally:
+        db.close()
+    return result
