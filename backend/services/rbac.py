@@ -41,8 +41,12 @@ RBAC_ALLOWED_FOR_ALL_PATHS = (
 # 주의: API GET 엔드포인트는 메인 대시보드/카탈로그 등에서 폭넓게 재사용되므로
 # 시스템 모니터링·스토리지의 경우 HTML 페이지만 차단하고 API GET 은 그대로 둔다.
 ADMIN_ONLY_GET_PATHS = (
-    "/api/monitoring/logs/audit",
-    "/monitoring/logs/audit",
+    "/api/monitoring/logs/audit",  # legacy 경로 — 미사용
+    "/monitoring/logs/audit",  # legacy
+    "/api/monitoring/audit",  # Phase 4 실제 라우트
+    "/api/monitoring/syslog",  # 시스템 로그도 보호
+    "/api/monitoring/audit/stats",
+    "/api/monitoring/audit/export",
     "/api/admin/login-history",
     "/api/admin/users",
     "/api/admin/login-policy",
@@ -118,37 +122,42 @@ def require_role(min_role):
 
 
 def enforce_request_rbac():
-    """app.before_request 단계에서 호출. 인증은 이미 통과한 상태라 가정.
+    """app.before_request 단계 — Phase 8 4-role 직접 가드.
 
-    반환값:
-      - None  : 통과
-      - tuple : Flask 응답(403)
+    - GET/HEAD/OPTIONS: tenant_viewer 이상 (인증된 모두). 단 ADMIN_ONLY_GET_PATHS 는 tenant_admin.
+    - 변경 메서드: tenant_editor 이상. 화이트리스트(self-service)는 통과.
+                  ADMIN_ONLY_GET_PATHS 와 동일 prefix 의 변경 작업은 tenant_admin.
+    - super_admin 은 자동 통과 (tenant_role_at_least 가 처리).
+
+    legacy 2-role (current_role) 은 더 이상 가드에 사용되지 않음.
+    notice.py 등 ad-hoc 호출처는 별도 마이그레이션 (TODO).
     """
     method = request.method
     path = request.path
 
-    # 인증 면제 경로(static/login)는 require_login 단계에서 이미 None 반환.
-    # 여기 도달했다는 것은 인증 통과 = role 결정 가능.
-
-    role = current_role()
-
-    # 1) GET/HEAD/OPTIONS: 기본 viewer 이상 허용. 단, admin-only GET 경로는 admin.
+    # GET/HEAD/OPTIONS: tenant_viewer 이상 (= 인증 통과면 모두). admin-only GET 만 tenant_admin.
     if method in ("GET", "HEAD", "OPTIONS"):
         for prefix in ADMIN_ONLY_GET_PATHS:
             if path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?"):
-                if role != "admin":
+                if not tenant_role_at_least("tenant_admin"):
                     return _forbidden()
                 break
         return None
 
-    # 2) 변경 메서드 (POST/PUT/PATCH/DELETE 등):
-    #    화이트리스트(self-service) → 모든 로그인 사용자 허용
+    # 변경 메서드: 화이트리스트는 통과.
     for prefix in RBAC_ALLOWED_FOR_ALL_PATHS:
         if path == prefix or path.startswith(prefix + "/"):
             return None
 
-    #    그 외 변경은 admin 만
-    if role != "admin":
+    # ADMIN_ONLY 경로의 변경은 tenant_admin
+    for prefix in ADMIN_ONLY_GET_PATHS:
+        if path == prefix or path.startswith(prefix + "/"):
+            if not tenant_role_at_least("tenant_admin"):
+                return _forbidden()
+            return None
+
+    # 그 외 변경은 tenant_editor 이상
+    if not tenant_role_at_least("tenant_editor"):
         return _forbidden()
     return None
 
