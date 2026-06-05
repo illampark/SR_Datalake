@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Float
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from backend.database import Base
 from backend.models._mixins import TenantScopedMixin
@@ -7,9 +7,12 @@ from backend.models._mixins import TenantScopedMixin
 
 class MqttConnector(Base, TenantScopedMixin):
     __tablename__ = "mqtt_connector"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="mqtt_connector_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
     description = Column(String(500), default="")
     host = Column(String(200), nullable=False, default="localhost")
     port = Column(Integer, nullable=False, default=1883)
@@ -86,9 +89,12 @@ class MqttTag(Base, TenantScopedMixin):
 
 class DbConnector(Base, TenantScopedMixin):
     __tablename__ = "db_connector"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="db_connector_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
     description = Column(String(500), default="")
     db_type = Column(String(20), nullable=False, default="mysql")   # oracle / mssql / postgresql / mysql
     host = Column(String(200), nullable=False, default="localhost")
@@ -186,9 +192,12 @@ class DbTag(Base, TenantScopedMixin):
 
 class FileCollector(Base, TenantScopedMixin):
     __tablename__ = "file_collector"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="file_collector_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
     description = Column(String(500), default="")
     # SFTP 접속 정보
     sftp_host = Column(String(200), nullable=False, default="localhost")
@@ -269,9 +278,12 @@ class FileCollector(Base, TenantScopedMixin):
 
 class OpcuaConnector(Base, TenantScopedMixin):
     __tablename__ = "opcua_connector"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="opcua_connector_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
     description = Column(String(500), default="")
     server_url = Column(String(500), nullable=False, default="opc.tcp://localhost:4840")
     namespace_index = Column(Integer, default=2)
@@ -353,9 +365,12 @@ class OpcuaTag(Base, TenantScopedMixin):
 
 class ModbusConnector(Base, TenantScopedMixin):
     __tablename__ = "modbus_connector"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="modbus_connector_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
     description = Column(String(500), default="")
     modbus_type = Column(String(10), nullable=False, default="tcp")
     host = Column(String(200), default="localhost")
@@ -450,9 +465,12 @@ class ModbusTag(Base, TenantScopedMixin):
 
 class ApiConnector(Base, TenantScopedMixin):
     __tablename__ = "api_connector"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="api_connector_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
     description = Column(String(500), default="")
     base_url = Column(String(1000), nullable=False)
     auth_type = Column(String(20), default="none")          # none / basic / bearer / apikey / oauth2
@@ -552,9 +570,12 @@ class ApiEndpoint(Base, TenantScopedMixin):
 
 class ImportCollector(Base, TenantScopedMixin):
     __tablename__ = "import_collector"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="import_collector_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
     description = Column(String(500), default="")
     # 가져오기 설정
     import_type = Column(String(20), nullable=False, default="csv")  # csv / json / sql_dump
