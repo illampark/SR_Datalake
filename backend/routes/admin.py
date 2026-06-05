@@ -190,9 +190,30 @@ def list_users():
         db.close()
 
 
+# Phase 8: tenant_role → legacy role 매핑 (UI 일부가 아직 legacy role 참조)
+_TENANT_TO_LEGACY = {
+    "tenant_admin":  "admin",
+    "tenant_editor": "engineer",
+    "tenant_viewer": "viewer",
+}
+_TENANT_ROLES = ("tenant_admin", "tenant_editor", "tenant_viewer")
+
+
 @admin_bp.route("/users", methods=["POST"])
 def create_user():
-    """사용자 생성"""
+    """사용자 생성 (Phase 8 4-role).
+
+    body:
+      - username, displayName, email, password : 기본
+      - tenantRole : tenant_admin / tenant_editor / tenant_viewer (기본: tenant_viewer)
+      - isSuper    : True 이면 super_admin (super_admin 만 설정 가능)
+    동작:
+      - User row 생성 (user.role=legacy 매핑, is_super=isSuper)
+      - 현 tenant 에 TenantMembership 자동 부여
+    """
+    from backend.models.tenant import TenantMembership
+    from backend.services.rbac import is_super
+    from backend.services.tenant_filter import _current_tenant_id
     db = SessionLocal()
     try:
         body = request.get_json(force=True)
@@ -200,38 +221,52 @@ def create_user():
         display_name = (body.get("displayName") or "").strip()
         email = (body.get("email") or "").strip()
         password = (body.get("password") or "").strip()
-        role = (body.get("role") or "viewer").strip()
+        tenant_role = (body.get("tenantRole") or "tenant_viewer").strip()
+        want_super = bool(body.get("isSuper", False))
 
         if not username or not display_name:
             return _err("사용자 ID와 이름은 필수입니다.")
         if not password:
             return _err("비밀번호는 필수입니다.")
-        if role not in [r["key"] for r in _ROLES]:
+        if tenant_role not in _TENANT_ROLES:
             return _err("유효하지 않은 역할입니다.")
+        if want_super and not is_super():
+            return _err("super_admin 권한 부여는 super_admin 만 가능합니다.",
+                        "FORBIDDEN", 403)
 
-        # 중복 체크
         exists = db.query(User).filter(User.username == username).first()
         if exists:
             return _err("이미 존재하는 사용자 ID입니다.")
 
-        # 비밀번호 정책 체크
         min_len = _get_policy_int(db, "login.password_min_length", 8)
         if len(password) < min_len:
             return _err("비밀번호는 최소 %d자 이상이어야 합니다." % min_len)
+
+        legacy_role = _TENANT_TO_LEGACY.get(tenant_role, "viewer")
+        tid = _current_tenant_id()
 
         user = User(
             username=username,
             display_name=display_name,
             email=email,
             password_hash=generate_password_hash(password),
-            role=role,
+            role=legacy_role,
+            is_super=want_super,
         )
         db.add(user)
+        db.flush()
+
+        db.add(TenantMembership(
+            user_id=user.id, tenant_id=tid, role=tenant_role,
+        ))
         db.commit()
         db.refresh(user)
-        logger.info("사용자 생성: %s (%s)", username, role)
-        log_audit("user", "user.create", "user", username,
-                  detail={"role": role, "displayName": display_name})
+        logger.info("사용자 생성: %s (tenant=%d / %s / super=%s)",
+                    username, tid, tenant_role, want_super)
+        log_audit("user", "user.create", "user", username, detail={
+            "tenantId": tid, "tenantRole": tenant_role,
+            "isSuper": want_super, "displayName": display_name,
+        })
         return _ok(user.to_dict())
     except Exception as e:
         db.rollback()
@@ -243,7 +278,16 @@ def create_user():
 
 @admin_bp.route("/users/<int:user_id>", methods=["PUT"])
 def update_user(user_id):
-    """사용자 수정"""
+    """사용자 수정 (Phase 8).
+
+    body:
+      - displayName, email, enabled : 기존과 동일
+      - tenantRole : 현 tenant 의 membership.role 갱신 (없으면 생성)
+      - isSuper    : super_admin 만 설정 가능 (user.is_super 갱신)
+    """
+    from backend.models.tenant import TenantMembership
+    from backend.services.rbac import is_super
+    from backend.services.tenant_filter import _current_tenant_id
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.id == user_id).first()
@@ -255,18 +299,41 @@ def update_user(user_id):
             user.display_name = body["displayName"].strip()
         if "email" in body:
             user.email = body["email"].strip()
-        if "role" in body:
-            role = body["role"].strip()
-            if role in [r["key"] for r in _ROLES]:
-                user.role = role
         if "enabled" in body:
             user.enabled = bool(body["enabled"])
+
+        # tenantRole: 현 tenant 의 membership 갱신/생성
+        if "tenantRole" in body:
+            tenant_role = (body.get("tenantRole") or "").strip()
+            if tenant_role not in _TENANT_ROLES:
+                return _err("유효하지 않은 역할입니다.")
+            tid = _current_tenant_id()
+            m = (db.query(TenantMembership)
+                   .filter(TenantMembership.user_id == user_id,
+                           TenantMembership.tenant_id == tid).first())
+            if m:
+                m.role = tenant_role
+            else:
+                db.add(TenantMembership(
+                    user_id=user_id, tenant_id=tid, role=tenant_role,
+                ))
+            # 레거시 user.role 도 함께 갱신 (UI 일부 fallback)
+            user.role = _TENANT_TO_LEGACY.get(tenant_role, user.role)
+
+        # isSuper: super_admin 만
+        if "isSuper" in body:
+            if not is_super():
+                return _err("super_admin 권한 변경은 super_admin 만 가능합니다.",
+                            "FORBIDDEN", 403)
+            user.is_super = bool(body["isSuper"])
 
         db.commit()
         db.refresh(user)
         logger.info("사용자 수정: %s", user.username)
         log_audit("user", "user.update", "user", user.username,
-                  detail={k: body[k] for k in body if k in ("displayName", "email", "role", "enabled")})
+                  detail={k: body[k] for k in body
+                          if k in ("displayName", "email", "enabled",
+                                   "tenantRole", "isSuper")})
         return _ok(user.to_dict())
     except Exception as e:
         db.rollback()
