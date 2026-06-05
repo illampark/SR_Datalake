@@ -1,17 +1,25 @@
-"""RBAC (Role-Based Access Control) — 단순 2-role 정책
+"""RBAC (Role-Based Access Control) — 2-role 정책 + 4-role 확장 준비 (Phase 1)
 
-현재 정책: admin(전체 권한) / viewer(조회·다운로드 전용).
-레거시 enum 값(engineer/operator)은 admin으로 해석한다(기존 데이터 보호 + 호환성).
+현재 정책 (Phase 1 시점, MULTITENANT_MODE=off):
+- admin(전체 권한) / viewer(조회·다운로드 전용)
+- 레거시 enum 값(engineer/operator)은 admin으로 해석 (기존 데이터 보호 + 호환성)
 
 원칙:
 - GET / HEAD / OPTIONS: 인증된 모든 사용자 허용 (단, ADMIN_ONLY_GET_PATHS 예외)
 - POST / PUT / PATCH / DELETE: admin 만 (단, RBAC_ALLOWED_FOR_ALL_PATHS 예외)
 - API 키 인증: admin 동등으로 간주(현재 키별 권한 미구현)
 
-향후 3-role 이상으로 확장 시: ROLE_RANK 에 새 값 추가 + ADMIN_ONLY_GET_PATHS / 매핑 보강.
+Phase 1 신규 (claudedocs/rbac-target-v1.md):
+- 4-role 등급(TENANT_ROLE_RANK) 정의를 준비 — 현재는 미사용 (Phase 2 이후 활용)
+- 레거시 → 4-role 매핑(map_legacy_role_to_tenant_role)
+- 이 두 가지는 단일테넌트 동작에 영향이 없도록 add-only 변경
 """
 from functools import wraps
 from flask import session, jsonify, g, request, redirect
+
+# ────────────────────────────────────────────────────────────────────────
+# Phase 0 (현 운영) — 2-role 정책. 변경 금지.
+# ────────────────────────────────────────────────────────────────────────
 
 # 권한 등급(높을수록 강함)
 ROLE_RANK = {
@@ -142,3 +150,43 @@ def enforce_request_rbac():
     if role != "admin":
         return _forbidden()
     return None
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Phase 1 (add-only) — 4-role 등급 정의. 아직 어디서도 호출되지 않는다.
+# 활용은 Phase 2 (세션 컨텍스트) 이후. 정의만 두는 이유: 모델·마이그레이션에서
+# 동일 문자열을 참조해야 하므로 단일 진실의 원천이 필요.
+#
+# 참조: claudedocs/rbac-target-v1.md § 2 - 권한 매트릭스
+# ────────────────────────────────────────────────────────────────────────
+
+TENANT_ROLE_RANK = {
+    "tenant_viewer":  0,
+    "tenant_editor":  1,
+    "tenant_admin":   2,
+    "super_admin":    3,
+}
+
+
+def map_legacy_role_to_tenant_role(raw) -> str:
+    """레거시 user.role → 4-role 매핑 (Phase 1 마이그레이션·시드 시 사용).
+
+    매핑 규칙 (rbac-target-v1.md § 1 R5):
+      admin    → tenant_admin
+      viewer   → tenant_viewer
+      engineer → tenant_editor   ← 원래 의도 살림
+      operator → tenant_editor   ← 원래 의도 살림
+      그 외/없음 → tenant_viewer (안전 기본값)
+
+    super_admin 은 user.is_super 컬럼으로 별도 표현하므로 여기서 매핑하지 않는다.
+    """
+    if not raw:
+        return "tenant_viewer"
+    v = str(raw).strip().lower()
+    if v == "admin":
+        return "tenant_admin"
+    if v in ("engineer", "operator"):
+        return "tenant_editor"
+    if v == "viewer":
+        return "tenant_viewer"
+    return "tenant_viewer"

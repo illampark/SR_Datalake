@@ -8,6 +8,7 @@ from backend.models.catalog import DataCatalog, CatalogSearchTag  # noqa: F401
 from backend.models.integration import ExternalConnection  # noqa: F401
 from backend.models.alarm import AlarmRule, AlarmEvent, AlarmChannel  # noqa: F401
 from backend.models.user import User, LoginHistory, AdminSetting  # noqa: F401
+from backend.models.tenant import Tenant, TenantMembership, TENANT_ROLES  # noqa: F401
 from backend.models.backup import BackupHistory  # noqa: F401
 from backend.models.gateway import ApiAccessLog, ApiKey  # noqa: F401
 from backend.models.notice import Notice  # noqa: F401

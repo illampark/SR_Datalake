@@ -15,6 +15,7 @@ class User(Base):
     email = Column(String(200), default="")
     password_hash = Column(String(200), nullable=False)
     role = Column(String(30), default="viewer")  # admin / engineer / operator / viewer
+    is_super = Column(Boolean, nullable=False, default=False)  # super_admin (cross-tenant) 표식 — Phase 1
     enabled = Column(Boolean, default=True)
     login_fail_count = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
@@ -29,6 +30,7 @@ class User(Base):
             "displayName": self.display_name,
             "email": self.email,
             "role": self.role,
+            "isSuper": bool(self.is_super),
             "enabled": self.enabled,
             "loginFailCount": self.login_fail_count,
             "lockedUntil": self.locked_until.strftime("%Y-%m-%d %H:%M:%S") if self.locked_until else None,
