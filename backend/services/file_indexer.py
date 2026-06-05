@@ -368,7 +368,10 @@ def _upsert_batch(db, batch: list[dict]) -> None:
 def _update_state(db, collector_id: int, **fields) -> None:
     state = db.query(FileIndexState).get(int(collector_id))
     if not state:
-        state = FileIndexState(collector_id=int(collector_id))
+        # Phase 4 - 백그라운드 컨텍스트에 g.tenant_id 없으므로 collector 로부터 명시 주입
+        ic = db.query(ImportCollector).get(int(collector_id))
+        _tid = getattr(ic, "tenant_id", 1) if ic else 1
+        state = FileIndexState(collector_id=int(collector_id), tenant_id=_tid)
         db.add(state)
         db.flush()
     for k, v in fields.items():

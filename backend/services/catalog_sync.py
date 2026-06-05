@@ -159,13 +159,17 @@ def sync_pipeline_catalogs(db, pipeline_id, pipeline_name, steps):
                 cat.access_url = info["access_url"]
                 cat.format = info["format"]
             else:
-                # 새 카탈로그 생성
+                # 새 카탈로그 생성 - tenant_id 는 pipeline 으로부터 명시 주입 (백그라운드 안전)
+                from backend.models.pipeline import Pipeline as _Pipeline
+                _pipe = db.query(_Pipeline).get(int(pipeline_id))
+                _tid = getattr(_pipe, "tenant_id", 1) if _pipe else 1
                 cat = DataCatalog(
                     name=f"{info['tag_name']} (Pipeline {pipeline_name} — {_SINK_LABELS.get(sink_type, sink_type)})",
                     description=f"파이프라인 '{pipeline_name}'의 {_SINK_LABELS.get(sink_type, sink_type)} 싱크 출력 데이터",
                     connector_type="pipeline",
                     connector_id=pipeline_id,
                     pipeline_id=pipeline_id,
+                    tenant_id=_tid,
                     sink_type=sink_type,
                     tag_name=info["tag_name"],
                     owner="시스템 자동",
