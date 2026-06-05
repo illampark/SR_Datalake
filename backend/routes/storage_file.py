@@ -555,6 +555,13 @@ def upload_file():
 
         bucket = request.form.get("bucket", bucket_for("files"))
         path = request.form.get("path", "").strip("/")
+        # Phase 5 - cross-tenant 업로드 차단
+        from backend.services.minio_buckets import parse_tenant_from_bucket
+        from backend.services.tenant_filter import _current_tenant_id
+        from flask import g as _g
+        _bt = parse_tenant_from_bucket(bucket)
+        if _bt is not None and _bt != _current_tenant_id() and not getattr(_g, "is_super", False):
+            return _err(f"bucket {bucket} 권한 없음", "FORBIDDEN", 403)
 
         client = _get_minio()
 

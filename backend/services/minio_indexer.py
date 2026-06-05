@@ -16,6 +16,7 @@ from urllib.parse import unquote_plus
 from backend.database import SessionLocal
 from backend.models.minio_object import MinioObject
 from backend.services.file_indexer import _classify
+from backend.services.minio_buckets import parse_tenant_from_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,10 @@ def handle_events(payload):
                     last_modified=_parse_event_time(rec.get("eventTime")),
                     event_seq=seq, indexed_at=datetime.utcnow(),
                 )
+                # Phase 5 - webhook 컨텍스트엔 g.tenant_id 없으므로 bucket 이름에서 추출
+                _tid = parse_tenant_from_bucket(bucket)
+                if _tid is not None:
+                    vals["tenant_id"] = _tid
                 if row is None:
                     db.add(MinioObject(bucket=bucket, object_name=key, **vals))
                 else:

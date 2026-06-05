@@ -83,12 +83,38 @@ def ensure_tenant_buckets(client, tenant_id: int) -> dict[str, str]:
             if not client.bucket_exists(name):
                 client.make_bucket(name)
         except Exception as e:
-            # 멱등 — 동시 생성 race condition 시 무시
+            # 멱등 - 동시 생성 race condition 시 무시
             import logging
             logging.getLogger(__name__).warning(
                 "ensure_tenant_buckets: %s 생성 실패 (이미 존재 가능): %s", name, e,
             )
+        # MinIO event subscription (webhook -> minio_object 인덱스)
+        try:
+            _subscribe_bucket_events(client, name)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "ensure_tenant_buckets: %s 이벤트 구독 실패: %s", name, e,
+            )
     return result
+
+
+def _subscribe_bucket_events(client, bucket: str) -> None:
+    """버킷에 MinIO webhook 이벤트 구독 (PUT/DELETE).
+
+    sdl-files 등 legacy 버킷은 minio-init 이 셋업했지만 신규 t-N-* 는
+    프로비저닝 시점에 명시 구독해야 minio_object 인덱스가 채워진다.
+    """
+    from minio.notificationconfig import (
+        NotificationConfig, QueueConfig,
+    )
+    cfg = NotificationConfig(
+        queue_config_list=[QueueConfig(
+            events=["s3:ObjectCreated:*", "s3:ObjectRemoved:*"],
+            queue="arn:minio:sqs::PRIMARY:webhook",
+        )]
+    )
+    client.set_bucket_notification(bucket, cfg)
 
 
 def drop_tenant_buckets(client, tenant_id: int, force: bool = False) -> None:
