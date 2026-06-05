@@ -15,6 +15,7 @@ from backend.models.collector import (
 )
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
 
@@ -76,7 +77,7 @@ def list_pipelines():
         size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
 
-        q = db.query(Pipeline)
+        q = filter_by_tenant(db.query(Pipeline), Pipeline)
         if status_filter:
             q = q.filter(Pipeline.status == status_filter)
 
@@ -92,7 +93,7 @@ def list_pipelines():
 def get_pipeline(pid):
     db = _db()
     try:
-        p = db.query(Pipeline).get(pid)
+        p = get_by_id_tenant(db, Pipeline, pid)
         if not p:
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
         d = p.to_dict()
@@ -191,7 +192,7 @@ def create_pipeline():
 def update_pipeline(pid):
     db = _db()
     try:
-        p = db.query(Pipeline).get(pid)
+        p = get_by_id_tenant(db, Pipeline, pid)
         if not p:
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -257,7 +258,7 @@ def update_pipeline(pid):
 def delete_pipeline(pid):
     db = _db()
     try:
-        p = db.query(Pipeline).get(pid)
+        p = get_by_id_tenant(db, Pipeline, pid)
         if not p:
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
         # 실행 중이면 먼저 정지
@@ -292,7 +293,7 @@ def delete_pipeline(pid):
 def start_pipeline(pid):
     db = _db()
     try:
-        p = db.query(Pipeline).get(pid)
+        p = get_by_id_tenant(db, Pipeline, pid)
         if not p:
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
         if p.status == "running":
@@ -321,7 +322,7 @@ def start_pipeline(pid):
 def stop_pipeline(pid):
     db = _db()
     try:
-        p = db.query(Pipeline).get(pid)
+        p = get_by_id_tenant(db, Pipeline, pid)
         if not p:
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
         if p.status != "running":
@@ -355,7 +356,7 @@ def run_pipeline_file_source(pid):
 
     db = _db()
     try:
-        p = db.query(Pipeline).get(pid)
+        p = get_by_id_tenant(db, Pipeline, pid)
         if not p:
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
         if p.status != "running":
@@ -403,7 +404,7 @@ def run_pipeline_file_source(pid):
 def pipeline_status(pid):
     db = _db()
     try:
-        p = db.query(Pipeline).get(pid)
+        p = get_by_id_tenant(db, Pipeline, pid)
         if not p:
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -430,7 +431,7 @@ def pipeline_errors(pid):
     from sqlalchemy import text as _sql_text
     db = _db()
     try:
-        if not db.query(Pipeline).get(pid):
+        if not get_by_id_tenant(db, Pipeline, pid):
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         page = max(request.args.get("page", 1, type=int), 1)
@@ -610,7 +611,7 @@ def create_normalize_rule():
 def get_normalize_rule(rid):
     db = _db()
     try:
-        r = db.query(NormalizeRule).get(rid)
+        r = get_by_id_tenant(db, NormalizeRule, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -625,7 +626,7 @@ def get_normalize_rule(rid):
 def update_normalize_rule(rid):
     db = _db()
     try:
-        r = db.query(NormalizeRule).get(rid)
+        r = get_by_id_tenant(db, NormalizeRule, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         body = request.get_json(force=True)
@@ -660,7 +661,7 @@ def update_normalize_rule(rid):
 def delete_normalize_rule(rid):
     db = _db()
     try:
-        r = db.query(NormalizeRule).get(rid)
+        r = get_by_id_tenant(db, NormalizeRule, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(r)
@@ -718,7 +719,7 @@ def create_unit_conversion():
 def get_unit_conversion(rid):
     db = _db()
     try:
-        r = db.query(UnitConversion).get(rid)
+        r = get_by_id_tenant(db, UnitConversion, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -733,7 +734,7 @@ def get_unit_conversion(rid):
 def update_unit_conversion(rid):
     db = _db()
     try:
-        r = db.query(UnitConversion).get(rid)
+        r = get_by_id_tenant(db, UnitConversion, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         body = request.get_json(force=True)
@@ -770,7 +771,7 @@ def update_unit_conversion(rid):
 def delete_unit_conversion(rid):
     db = _db()
     try:
-        r = db.query(UnitConversion).get(rid)
+        r = get_by_id_tenant(db, UnitConversion, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(r)
@@ -829,7 +830,7 @@ def create_filter_rule():
 def get_filter_rule(rid):
     db = _db()
     try:
-        r = db.query(FilterRule).get(rid)
+        r = get_by_id_tenant(db, FilterRule, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -844,7 +845,7 @@ def get_filter_rule(rid):
 def update_filter_rule(rid):
     db = _db()
     try:
-        r = db.query(FilterRule).get(rid)
+        r = get_by_id_tenant(db, FilterRule, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         body = request.get_json(force=True)
@@ -883,7 +884,7 @@ def update_filter_rule(rid):
 def delete_filter_rule(rid):
     db = _db()
     try:
-        r = db.query(FilterRule).get(rid)
+        r = get_by_id_tenant(db, FilterRule, rid)
         if not r:
             return _err("규칙을 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(r)
@@ -941,7 +942,7 @@ def create_anomaly_config():
 def get_anomaly_config(rid):
     db = _db()
     try:
-        r = db.query(AnomalyConfig).get(rid)
+        r = get_by_id_tenant(db, AnomalyConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -956,7 +957,7 @@ def get_anomaly_config(rid):
 def update_anomaly_config(rid):
     db = _db()
     try:
-        r = db.query(AnomalyConfig).get(rid)
+        r = get_by_id_tenant(db, AnomalyConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         body = request.get_json(force=True)
@@ -993,7 +994,7 @@ def update_anomaly_config(rid):
 def delete_anomaly_config(rid):
     db = _db()
     try:
-        r = db.query(AnomalyConfig).get(rid)
+        r = get_by_id_tenant(db, AnomalyConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(r)
@@ -1049,7 +1050,7 @@ def create_aggregate_config():
 def get_aggregate_config(rid):
     db = _db()
     try:
-        r = db.query(AggregateConfig).get(rid)
+        r = get_by_id_tenant(db, AggregateConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -1064,7 +1065,7 @@ def get_aggregate_config(rid):
 def update_aggregate_config(rid):
     db = _db()
     try:
-        r = db.query(AggregateConfig).get(rid)
+        r = get_by_id_tenant(db, AggregateConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         body = request.get_json(force=True)
@@ -1097,7 +1098,7 @@ def update_aggregate_config(rid):
 def delete_aggregate_config(rid):
     db = _db()
     try:
-        r = db.query(AggregateConfig).get(rid)
+        r = get_by_id_tenant(db, AggregateConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(r)
@@ -1153,7 +1154,7 @@ def create_enrich_config():
 def get_enrich_config(rid):
     db = _db()
     try:
-        r = db.query(EnrichConfig).get(rid)
+        r = get_by_id_tenant(db, EnrichConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -1168,7 +1169,7 @@ def get_enrich_config(rid):
 def update_enrich_config(rid):
     db = _db()
     try:
-        r = db.query(EnrichConfig).get(rid)
+        r = get_by_id_tenant(db, EnrichConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         body = request.get_json(force=True)
@@ -1201,7 +1202,7 @@ def update_enrich_config(rid):
 def delete_enrich_config(rid):
     db = _db()
     try:
-        r = db.query(EnrichConfig).get(rid)
+        r = get_by_id_tenant(db, EnrichConfig, rid)
         if not r:
             return _err("설정을 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(r)
@@ -1258,7 +1259,7 @@ def create_script_config():
 def get_script_config(rid):
     db = _db()
     try:
-        r = db.query(ScriptConfig).get(rid)
+        r = get_by_id_tenant(db, ScriptConfig, rid)
         if not r:
             return _err("스크립트를 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -1273,7 +1274,7 @@ def get_script_config(rid):
 def update_script_config(rid):
     db = _db()
     try:
-        r = db.query(ScriptConfig).get(rid)
+        r = get_by_id_tenant(db, ScriptConfig, rid)
         if not r:
             return _err("스크립트를 찾을 수 없습니다.", "NOT_FOUND", 404)
         body = request.get_json(force=True)
@@ -1308,7 +1309,7 @@ def update_script_config(rid):
 def delete_script_config(rid):
     db = _db()
     try:
-        r = db.query(ScriptConfig).get(rid)
+        r = get_by_id_tenant(db, ScriptConfig, rid)
         if not r:
             return _err("스크립트를 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(r)
