@@ -3,9 +3,10 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Text, Float, BigInteger, Index
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class BackupHistory(Base):
+class BackupHistory(Base, TenantScopedMixin):
     """백업/복구 실행 이력"""
     __tablename__ = "backup_history"
 

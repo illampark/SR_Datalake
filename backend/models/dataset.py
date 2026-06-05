@@ -5,9 +5,10 @@ from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Text, Float, JSON, BigInteger,
 )
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class DatasetRequest(Base):
+class DatasetRequest(Base, TenantScopedMixin):
     """데이터셋 추출 요청 — 다중 태그 대량 데이터 Export 관리"""
     __tablename__ = "dataset_request"
 

@@ -16,9 +16,10 @@ from sqlalchemy import (
 )
 
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class FileIndex(Base):
+class FileIndex(Base, TenantScopedMixin):
     __tablename__ = "file_index"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
@@ -41,7 +42,7 @@ class FileIndex(Base):
     )
 
 
-class FileIndexState(Base):
+class FileIndexState(Base, TenantScopedMixin):
     """인덱서 상태 — collector 별 마지막 스캔 정보"""
     __tablename__ = "file_index_state"
 

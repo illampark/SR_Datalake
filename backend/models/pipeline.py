@@ -2,13 +2,14 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Float
 from sqlalchemy.orm import relationship
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
 # ══════════════════════════════════════════════
 # Pipeline 정의 모델
 # ══════════════════════════════════════════════
 
-class Pipeline(Base):
+class Pipeline(Base, TenantScopedMixin):
     __tablename__ = "pipeline"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -59,7 +60,7 @@ class Pipeline(Base):
         }
 
 
-class PipelineStep(Base):
+class PipelineStep(Base, TenantScopedMixin):
     """파이프라인 처리 단계 (순서대로 실행)"""
     __tablename__ = "pipeline_step"
 
@@ -96,7 +97,7 @@ class PipelineStep(Base):
         }
 
 
-class PipelineBinding(Base):
+class PipelineBinding(Base, TenantScopedMixin):
     """파이프라인-커넥터 바인딩 (어떤 커넥터의 어떤 태그들을 파이프라인에 연결)"""
     __tablename__ = "pipeline_binding"
 
@@ -126,7 +127,7 @@ class PipelineBinding(Base):
 # 전처리 모듈 설정 모델 (재사용 가능한 규칙 세트)
 # ══════════════════════════════════════════════
 
-class NormalizeRule(Base):
+class NormalizeRule(Base, TenantScopedMixin):
     """데이터 정규화 규칙"""
     __tablename__ = "normalize_rule"
 
@@ -152,7 +153,7 @@ class NormalizeRule(Base):
         }
 
 
-class UnitConversion(Base):
+class UnitConversion(Base, TenantScopedMixin):
     """단위 변환 규칙"""
     __tablename__ = "unit_conversion"
 
@@ -180,7 +181,7 @@ class UnitConversion(Base):
         }
 
 
-class FilterRule(Base):
+class FilterRule(Base, TenantScopedMixin):
     """필터링 규칙"""
     __tablename__ = "filter_rule"
 
@@ -210,7 +211,7 @@ class FilterRule(Base):
         }
 
 
-class AnomalyConfig(Base):
+class AnomalyConfig(Base, TenantScopedMixin):
     """이상치 탐지 설정"""
     __tablename__ = "anomaly_config"
 
@@ -238,7 +239,7 @@ class AnomalyConfig(Base):
         }
 
 
-class AggregateConfig(Base):
+class AggregateConfig(Base, TenantScopedMixin):
     """집계 설정"""
     __tablename__ = "aggregate_config"
 
@@ -262,7 +263,7 @@ class AggregateConfig(Base):
         }
 
 
-class EnrichConfig(Base):
+class EnrichConfig(Base, TenantScopedMixin):
     """데이터 보강 설정"""
     __tablename__ = "enrich_config"
 
@@ -286,7 +287,7 @@ class EnrichConfig(Base):
         }
 
 
-class ScriptConfig(Base):
+class ScriptConfig(Base, TenantScopedMixin):
     """커스텀 스크립트 설정"""
     __tablename__ = "script_config"
 

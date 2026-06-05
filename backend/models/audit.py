@@ -3,9 +3,10 @@
 from datetime import datetime
 from sqlalchemy import Column, BigInteger, String, DateTime, JSON, Index
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class AuditLog(Base):
+class AuditLog(Base, TenantScopedMixin):
     """감사 로그 — 사용자의 모든 주요 행위를 기록"""
     __tablename__ = "audit_log"
 

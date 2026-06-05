@@ -18,9 +18,10 @@ from sqlalchemy import (
 )
 
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class MinioObject(Base):
+class MinioObject(Base, TenantScopedMixin):
     __tablename__ = "minio_object"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)

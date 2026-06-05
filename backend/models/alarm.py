@@ -3,9 +3,10 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, Float, JSON
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class AlarmRule(Base):
+class AlarmRule(Base, TenantScopedMixin):
     """알람 규칙 정의"""
     __tablename__ = "alarm_rule"
 
@@ -30,7 +31,7 @@ class AlarmRule(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-class AlarmEvent(Base):
+class AlarmEvent(Base, TenantScopedMixin):
     """발생한 알람 이벤트 이력"""
     __tablename__ = "alarm_event"
 
@@ -49,7 +50,7 @@ class AlarmEvent(Base):
     resolved_at = Column(DateTime, nullable=True)
 
 
-class AlarmChannel(Base):
+class AlarmChannel(Base, TenantScopedMixin):
     """알림 발송 채널"""
     __tablename__ = "alarm_channel"
 

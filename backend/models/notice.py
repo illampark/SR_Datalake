@@ -3,9 +3,10 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class Notice(Base):
+class Notice(Base, TenantScopedMixin):
     """대시보드 공지사항"""
     __tablename__ = "notice"
 

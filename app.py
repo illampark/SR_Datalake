@@ -147,6 +147,12 @@ setup_db_logging()
 from backend.services.api_access_logger import setup_access_logging
 setup_access_logging(app)
 
+# Phase 3: Tenant cross-write guard (SQLAlchemy before_flush event).
+# MULTITENANT_MODE=off 일 때는 노옵. on 일 땐 g.tenant_id 기반으로
+# cross-tenant write 를 자동 차단 (claudedocs/multitenant-test-policy.md § 2.2).
+from backend.services.tenant_guard import install_tenant_guard
+install_tenant_guard()
+
 
 # ── Authentication Middleware ──
 @app.before_request

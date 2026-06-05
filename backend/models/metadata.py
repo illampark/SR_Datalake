@@ -1,13 +1,14 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, Float, JSON
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
 # ══════════════════════════════════════════════
 # 시스템 수준 메타데이터 (자동 생성/관리)
 # ══════════════════════════════════════════════
 
-class TagMetadata(Base):
+class TagMetadata(Base, TenantScopedMixin):
     """태그 메타데이터 — 커넥터가 수집 시작할 때 자동 등록, 수집 중 자동 갱신"""
     __tablename__ = "tag_metadata"
 
@@ -82,7 +83,7 @@ class TagMetadata(Base):
         }
 
 
-class DataLineage(Base):
+class DataLineage(Base, TenantScopedMixin):
     """데이터 계보 — 파이프라인 실행 시 자동 기록 (배치 단위)"""
     __tablename__ = "data_lineage"
 

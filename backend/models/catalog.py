@@ -3,13 +3,14 @@ from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, T
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import relationship
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
 # ══════════════════════════════════════════════
 # 사용자 수준 데이터 카탈로그 (수동 관리)
 # ══════════════════════════════════════════════
 
-class DataCatalog(Base):
+class DataCatalog(Base, TenantScopedMixin):
     """데이터 카탈로그 — 사용자가 직접 등록/관리하는 데이터 자산 목록"""
     __tablename__ = "data_catalog"
 
@@ -71,7 +72,7 @@ class DataCatalog(Base):
         }
 
 
-class CatalogSearchTag(Base):
+class CatalogSearchTag(Base, TenantScopedMixin):
     """카탈로그 검색 태그 — 사용자가 카탈로그 항목에 붙이는 검색용 키워드"""
     __tablename__ = "catalog_search_tag"
 
@@ -95,7 +96,7 @@ class CatalogSearchTag(Base):
 # 데이터 레시피 (사용자 생성 데이터)
 # ══════════════════════════════════════════════
 
-class DataRecipe(Base):
+class DataRecipe(Base, TenantScopedMixin):
     """데이터 레시피 — SQL 기반 데이터 변환/집계 정의"""
     __tablename__ = "data_recipe"
 
@@ -149,7 +150,7 @@ class DataRecipe(Base):
         }
 
 
-class AggregatedData(Base):
+class AggregatedData(Base, TenantScopedMixin):
     """레시피 실행 결과 — 스냅샷 모드에서 저장되는 행 데이터"""
     __tablename__ = "aggregated_data"
 

@@ -5,9 +5,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class TsdbConfig(Base):
+class TsdbConfig(Base, TenantScopedMixin):
     __tablename__ = "tsdb_config"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -54,7 +55,7 @@ class TsdbConfig(Base):
         }
 
 
-class DownsamplingPolicy(Base):
+class DownsamplingPolicy(Base, TenantScopedMixin):
     __tablename__ = "downsampling_policy"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -89,7 +90,7 @@ class DownsamplingPolicy(Base):
         }
 
 
-class RdbmsConfig(Base):
+class RdbmsConfig(Base, TenantScopedMixin):
     __tablename__ = "rdbms_config"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -133,7 +134,7 @@ class RdbmsConfig(Base):
         }
 
 
-class FileCleanupPolicy(Base):
+class FileCleanupPolicy(Base, TenantScopedMixin):
     __tablename__ = "file_cleanup_policy"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -160,7 +161,7 @@ class FileCleanupPolicy(Base):
         }
 
 
-class WarmAggregatedData(Base):
+class WarmAggregatedData(Base, TenantScopedMixin):
     __tablename__ = "warm_aggregated_data"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -191,7 +192,7 @@ class WarmAggregatedData(Base):
         }
 
 
-class RetentionPolicy(Base):
+class RetentionPolicy(Base, TenantScopedMixin):
     __tablename__ = "retention_policy"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -253,7 +254,7 @@ class RetentionPolicy(Base):
         }
 
 
-class RetentionExecutionLog(Base):
+class RetentionExecutionLog(Base, TenantScopedMixin):
     __tablename__ = "retention_execution_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -282,7 +283,7 @@ class RetentionExecutionLog(Base):
         }
 
 
-class TimeSeriesData(Base):
+class TimeSeriesData(Base, TenantScopedMixin):
     """내부 시계열DB — 파이프라인 싱크에서 기록하는 시계열 데이터 포인트"""
     __tablename__ = "time_series_data"
 

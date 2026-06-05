@@ -6,9 +6,10 @@ from sqlalchemy import BigInteger, Column, DateTime, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 
 from backend.database import Base
+from backend.models._mixins import NullableTenantScopedMixin
 
 
-class SystemLog(Base):
+class SystemLog(Base, NullableTenantScopedMixin):
     __tablename__ = "system_log"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)

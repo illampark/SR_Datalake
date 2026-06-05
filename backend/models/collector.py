@@ -2,9 +2,10 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Float
 from sqlalchemy.orm import relationship
 from backend.database import Base
+from backend.models._mixins import TenantScopedMixin
 
 
-class MqttConnector(Base):
+class MqttConnector(Base, TenantScopedMixin):
     __tablename__ = "mqtt_connector"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -54,7 +55,7 @@ class MqttConnector(Base):
         return f"mqtt-{self.id}"
 
 
-class MqttTag(Base):
+class MqttTag(Base, TenantScopedMixin):
     __tablename__ = "mqtt_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -83,7 +84,7 @@ class MqttTag(Base):
 # DB Connector Models
 # ══════════════════════════════════════════════
 
-class DbConnector(Base):
+class DbConnector(Base, TenantScopedMixin):
     __tablename__ = "db_connector"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -156,7 +157,7 @@ class DbConnector(Base):
         return f"db-{self.id}"
 
 
-class DbTag(Base):
+class DbTag(Base, TenantScopedMixin):
     __tablename__ = "db_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -183,7 +184,7 @@ class DbTag(Base):
 # File Collector Models
 # ══════════════════════════════════════════════
 
-class FileCollector(Base):
+class FileCollector(Base, TenantScopedMixin):
     __tablename__ = "file_collector"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -266,7 +267,7 @@ class FileCollector(Base):
 # OPC-UA Connector Models
 # ══════════════════════════════════════════════
 
-class OpcuaConnector(Base):
+class OpcuaConnector(Base, TenantScopedMixin):
     __tablename__ = "opcua_connector"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -321,7 +322,7 @@ class OpcuaConnector(Base):
         return f"opcua-{self.id}"
 
 
-class OpcuaTag(Base):
+class OpcuaTag(Base, TenantScopedMixin):
     __tablename__ = "opcua_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -350,7 +351,7 @@ class OpcuaTag(Base):
 # Modbus Connector Models
 # ══════════════════════════════════════════════
 
-class ModbusConnector(Base):
+class ModbusConnector(Base, TenantScopedMixin):
     __tablename__ = "modbus_connector"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -414,7 +415,7 @@ class ModbusConnector(Base):
         return f"modbus-{self.id}"
 
 
-class ModbusTag(Base):
+class ModbusTag(Base, TenantScopedMixin):
     __tablename__ = "modbus_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -447,7 +448,7 @@ class ModbusTag(Base):
 # API Connector Models (MES/ERP/SCADA REST API)
 # ══════════════════════════════════════════════
 
-class ApiConnector(Base):
+class ApiConnector(Base, TenantScopedMixin):
     __tablename__ = "api_connector"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -512,7 +513,7 @@ class ApiConnector(Base):
         return f"api-{self.id}"
 
 
-class ApiEndpoint(Base):
+class ApiEndpoint(Base, TenantScopedMixin):
     __tablename__ = "api_endpoint"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -549,7 +550,7 @@ class ApiEndpoint(Base):
 # Import Collector Model (오프라인 데이터 가져오기)
 # ══════════════════════════════════════════════
 
-class ImportCollector(Base):
+class ImportCollector(Base, TenantScopedMixin):
     __tablename__ = "import_collector"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
