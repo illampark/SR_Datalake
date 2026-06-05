@@ -157,6 +157,28 @@ def _validate_where_clause(s):
 catalog_bp = Blueprint("catalog", __name__, url_prefix="/api/catalog")
 
 
+def _check_catalog_connector_xref(db, body):
+    """body 에 connector_type/connector_id 가 있고 그게 다른 tenant 의 것이면 거부."""
+    ctype = (body.get("connectorType") or "").lower()
+    cid = body.get("connectorId")
+    if not ctype or not cid:
+        return None
+    from backend.models.collector import (
+        MqttConnector, DbConnector, OpcuaConnector, ModbusConnector,
+        ApiConnector, FileCollector,
+    )
+    _MODELS = {
+        "mqtt": MqttConnector, "db": DbConnector, "opcua": OpcuaConnector,
+        "modbus": ModbusConnector, "api": ApiConnector, "file": FileCollector,
+    }
+    model = _MODELS.get(ctype)
+    if not model:
+        return None
+    if not get_by_id_tenant(db, model, cid):
+        return (f"connector {ctype}/{cid} 없거나 권한 없음", "FORBIDDEN", 403)
+    return None
+
+
 def _ok(data=None, meta=None):
     resp = {"success": True, "data": data, "error": None}
     if meta:
@@ -306,6 +328,9 @@ def update_catalog(cid):
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        _xref_err = _check_catalog_connector_xref(db, body)
+        if _xref_err:
+            return _err(_xref_err[0], _xref_err[1], _xref_err[2])
         fields = {
             "name": "name", "description": "description",
             "connectorType": "connector_type", "connectorId": "connector_id",

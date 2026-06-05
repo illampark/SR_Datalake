@@ -19,6 +19,38 @@ from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
 
+def _validate_step_config_xref(db, steps):
+    """Step config 내 sink ID 가 같은 tenant 의 것인지 검증.
+
+    검사 대상:
+    - internal_tsdb_sink: config.tsdbId
+    - internal_rdbms_sink: config.rdbmsId
+    - internal_file_sink: config.bucket (parse_tenant_from_bucket 로 확인)
+
+    반환: 에러 시 (msg, code, status) tuple, OK면 None.
+    """
+    from backend.models.storage import TsdbConfig, RdbmsConfig
+    from backend.services.minio_buckets import parse_tenant_from_bucket
+    from backend.services.tenant_filter import _current_tenant_id
+    from flask import g as _g
+    cur_tid = _current_tenant_id()
+    is_super = bool(getattr(_g, "is_super", False))
+    for st in steps:
+        mt = (st.get("moduleType") or "").lower()
+        cfg = st.get("config") or {}
+        if mt == "internal_tsdb_sink" and cfg.get("tsdbId"):
+            if not get_by_id_tenant(db, TsdbConfig, cfg["tsdbId"]):
+                return f"tsdb {cfg['tsdbId']} 없거나 권한 없음", "FORBIDDEN", 403
+        elif mt == "internal_rdbms_sink" and cfg.get("rdbmsId"):
+            if not get_by_id_tenant(db, RdbmsConfig, cfg["rdbmsId"]):
+                return f"rdbms {cfg['rdbmsId']} 없거나 권한 없음", "FORBIDDEN", 403
+        elif mt == "internal_file_sink" and cfg.get("bucket"):
+            bt = parse_tenant_from_bucket(cfg["bucket"])
+            if bt is not None and bt != cur_tid and not is_super:
+                return f"bucket {cfg['bucket']} 권한 없음", "FORBIDDEN", 403
+    return None
+
+
 
 def _ok(data=None, meta=None):
     resp = {"success": True, "data": data, "error": None}
@@ -143,6 +175,11 @@ def create_pipeline():
         p.input_topic = f"sdl/raw/#"
         p.output_topic = f"sdl/processed/{p.id}/#"
 
+        # Phase 4+ step config cross-tenant 가드
+        _err_xref = _validate_step_config_xref(db, body.get("steps", []))
+        if _err_xref:
+            return _err(_err_xref[0], _err_xref[1], _err_xref[2])
+
         # Steps 추가
         for i, step_data in enumerate(body.get("steps", [])):
             db.add(PipelineStep(
@@ -224,6 +261,11 @@ def update_pipeline(pid):
             if js_key in body:
                 setattr(p, col, body[js_key])
 
+        # Phase 4+ step config cross-tenant 가드 (PUT)
+        if "steps" in body:
+            _err_xref = _validate_step_config_xref(db, body["steps"])
+            if _err_xref:
+                return _err(_err_xref[0], _err_xref[1], _err_xref[2])
         # Steps 교체
         if "steps" in body:
             db.query(PipelineStep).filter_by(pipeline_id=pid).delete()
