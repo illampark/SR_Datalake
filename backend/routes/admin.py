@@ -50,15 +50,16 @@ def _get_setting_val(db, key, fallback=""):
 # 역할 정의 (고정 4종)
 # ──────────────────────────────────────────────
 
+# Phase 8: 4-role 기준 (rbac-target-v1.md § 2)
 _ROLES = [
-    {"key": "admin",    "name": "시스템 관리자", "badge": "danger",
-     "desc": "전체 시스템 관리 및 설정 권한. 사용자 관리, 보안 설정, 인프라 관리 포함."},
-    {"key": "engineer", "name": "엔지니어",     "badge": "primary",
-     "desc": "데이터 수집, 파이프라인 관리, 커넥터 설정 및 모니터링 권한."},
-    {"key": "operator", "name": "운영자",       "badge": "success",
-     "desc": "모니터링, 알람 관리, 로그 조회 및 기본 운영 권한."},
-    {"key": "viewer",   "name": "뷰어",         "badge": "warning",
-     "desc": "대시보드 및 모니터링 데이터 조회만 가능. 설정 변경 불가."},
+    {"key": "super_admin",  "name": "Super 관리자",   "badge": "danger",
+     "desc": "Cross-tenant. 테넌트 CRUD, impersonate, 시스템 전역 설정, 백업·복구. user.is_super=True 로 식별."},
+    {"key": "tenant_admin", "name": "Tenant 관리자",  "badge": "primary",
+     "desc": "자기 테넌트의 모든 변경 권한 + 멤버 초대·역할 변경 + API 키 발급. 시스템 전역 설정/백업/테넌트 관리는 제외."},
+    {"key": "tenant_editor","name": "Tenant 작성자",  "badge": "success",
+     "desc": "자기 테넌트의 데이터 수집·파이프라인·카탈로그 작성·수정·실행. 사용자 관리·시스템 설정 변경 불가."},
+    {"key": "tenant_viewer","name": "Tenant 뷰어",    "badge": "warning",
+     "desc": "자기 테넌트의 데이터 조회·다운로드만. 모든 변경 동작 차단."},
 ]
 
 # 기본 로그인 정책
@@ -379,22 +380,31 @@ def unlock_user(user_id):
 
 @admin_bp.route("/roles", methods=["GET"])
 def list_roles():
-    """역할 목록 + 역할별 사용자 수"""
+    """역할 목록 + 역할별 사용자 수 (Phase 8 4-role).
+
+    super_admin   -> app_user.is_super = TRUE
+    tenant_*      -> tenant_membership.role 별 distinct user 수
+    """
+    from backend.models.tenant import TenantMembership
     db = SessionLocal()
     try:
-        counts = dict(
-            db.query(User.role, func.count(User.id))
-            .group_by(User.role).all()
+        super_count = (db.query(func.count(User.id))
+                         .filter(User.is_super == True).scalar()) or 0
+        mem_counts = dict(
+            db.query(TenantMembership.role,
+                     func.count(func.distinct(TenantMembership.user_id)))
+              .group_by(TenantMembership.role).all()
         )
-        roles = []
-        for r in _ROLES:
-            roles.append({
-                "key": r["key"],
-                "name": r["name"],
-                "badge": r["badge"],
-                "desc": r["desc"],
-                "userCount": counts.get(r["key"], 0),
-            })
+        cnt = {
+            "super_admin":   super_count,
+            "tenant_admin":  int(mem_counts.get("tenant_admin", 0) or 0),
+            "tenant_editor": int(mem_counts.get("tenant_editor", 0) or 0),
+            "tenant_viewer": int(mem_counts.get("tenant_viewer", 0) or 0),
+        }
+        roles = [{
+            "key": r["key"], "name": r["name"], "badge": r["badge"],
+            "desc": r["desc"], "userCount": cnt.get(r["key"], 0),
+        } for r in _ROLES]
         return _ok({"roles": roles})
     finally:
         db.close()
