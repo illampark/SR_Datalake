@@ -10,6 +10,7 @@ from backend.models.collector import (
     MqttConnector, ApiConnector, FileCollector, DbConnector,
 )
 from backend.models.pipeline import Pipeline, PipelineStep
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ def get_batch_settings():
         connectors = []
         for type_key, model_cls, label in CONNECTOR_TYPES:
             try:
-                rows = db.query(model_cls).all()
+                rows = filter_by_tenant(db.query(model_cls), model_cls).all()
                 for r in rows:
                     d = r.to_dict()
                     connectors.append({
@@ -130,7 +131,7 @@ def get_batch_settings():
         # 2) 파이프라인 싱크 배치 설정
         pipelines = []
         try:
-            for p in db.query(Pipeline).order_by(Pipeline.id).all():
+            for p in filter_by_tenant(db.query(Pipeline), Pipeline).order_by(Pipeline.id).all():
                 sink_step = _find_sink_step(p)
                 if sink_step:
                     sc = sink_step.config or {}
@@ -188,7 +189,7 @@ def update_connector_batch(connector_id):
 
     db = SessionLocal()
     try:
-        row = db.query(model_cls).filter(model_cls.id == connector_id).first()
+        row = get_by_id_tenant(db, model_cls, connector_id)
         if not row:
             return _err(f"커넥터를 찾을 수 없습니다 (type={conn_type}, id={connector_id})", status=404)
 
@@ -255,7 +256,7 @@ def update_pipeline_batch(pipeline_id):
 
     db = SessionLocal()
     try:
-        pipeline = db.query(Pipeline).filter(Pipeline.id == pipeline_id).first()
+        pipeline = get_by_id_tenant(db, Pipeline, pipeline_id)
         if not pipeline:
             return _err(f"파이프라인을 찾을 수 없습니다 (id={pipeline_id})", status=404)
 

@@ -15,6 +15,7 @@ from backend.models.pipeline import Pipeline
 from backend.models.metadata import DataLineage, TagMetadata
 from backend.services import mqtt_manager
 from backend.services import pipeline_engine
+from backend.services.tenant_filter import filter_by_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def get_performance():
         # ── 1) 커넥터별 성능 ──
         for type_key, model_cls, label, metric_col, metric_dict_key, metric_label, last_at_col in CONNECTOR_MODELS:
             try:
-                rows = db.query(model_cls).all()
+                rows = filter_by_tenant(db.query(model_cls), model_cls).all()
                 for r in rows:
                     mc = getattr(r, metric_col, 0) or 0
                     ec = getattr(r, "error_count", 0) or 0
@@ -90,7 +91,7 @@ def get_performance():
         active_pipelines = 0
         try:
             runtime = pipeline_engine.get_all_status()
-            all_pipelines = db.query(Pipeline).order_by(Pipeline.id).all()
+            all_pipelines = filter_by_tenant(db.query(Pipeline), Pipeline).order_by(Pipeline.id).all()
             for p in all_pipelines:
                 rt = runtime.get(p.id, {})
                 stats = rt.get("stats", {})
@@ -128,12 +129,12 @@ def get_performance():
         latency = {"avg": 0, "min": 0, "max": 0, "sampleCount": 0}
         try:
             one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-            result = db.query(
+            result = filter_by_tenant(db.query(
                 func.avg(DataLineage.processing_ms),
                 func.min(DataLineage.processing_ms),
                 func.max(DataLineage.processing_ms),
                 func.count(DataLineage.id),
-            ).filter(DataLineage.created_at >= one_hour_ago).first()
+            ), DataLineage).filter(DataLineage.created_at >= one_hour_ago).first()
 
             if result and result[3] > 0:
                 latency = {
@@ -148,12 +149,12 @@ def get_performance():
         # ── 5) 데이터 품질 (TagMetadata 집계) ──
         quality = {"avgScore": 0, "avgNullRatio": 0, "avgAnomalyRatio": 0, "activeTagCount": 0}
         try:
-            result = db.query(
+            result = filter_by_tenant(db.query(
                 func.avg(TagMetadata.quality_score),
                 func.avg(TagMetadata.null_ratio),
                 func.avg(TagMetadata.anomaly_ratio),
                 func.count(TagMetadata.id),
-            ).filter(TagMetadata.is_active == True).first()  # noqa: E712
+            ), TagMetadata).filter(TagMetadata.is_active == True).first()  # noqa: E712
 
             if result and result[3] > 0:
                 quality = {

@@ -18,6 +18,7 @@ from backend.services import benthos_manager as bm
 from backend.services import mqtt_manager
 from backend.services import pipeline_engine
 from backend.services import file_scanner
+from backend.services.tenant_filter import filter_by_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def engine_status():
 
         for type_key, model_cls, label, metric_field, metric_label in CONNECTOR_MODELS:
             try:
-                rows = db.query(model_cls).all()
+                rows = filter_by_tenant(db.query(model_cls), model_cls).all()
                 for r in rows:
                     d = r.to_dict()
                     sid = r.benthos_stream_id()
@@ -124,7 +125,7 @@ def engine_status():
         pipelines_out = []
         try:
             runtime = pipeline_engine.get_all_status()
-            all_pipelines = db.query(Pipeline).order_by(Pipeline.id).all()
+            all_pipelines = filter_by_tenant(db.query(Pipeline), Pipeline).order_by(Pipeline.id).all()
             for p in all_pipelines:
                 rt = runtime.get(p.id, {})
                 stats = rt.get("stats", {})
@@ -150,7 +151,7 @@ def engine_status():
         # ── 5) 파일 스캐너 ──
         file_scanners_out = []
         try:
-            file_collectors = db.query(FileCollector).all()
+            file_collectors = filter_by_tenant(db.query(FileCollector), FileCollector).all()
             for fc in file_collectors:
                 fs_status = file_scanner.get_scanner_status(fc.id)
                 file_scanners_out.append({
@@ -162,7 +163,9 @@ def engine_status():
         except Exception as e:
             logger.warning("파일 스캐너 조회 실패: %s", e)
 
-        # ── 6) Benthos 요약 ──
+        # ── 6) Benthos 요약 (자기 tenant connector 의 stream 만) ──
+        my_sids = {c.get("benthosStreamId") for c in connectors if c.get("benthosStreamId")}
+        benthos_streams = {k: v for k, v in benthos_streams.items() if k in my_sids}
         total_benthos = len(benthos_streams)
         active_benthos = sum(1 for v in benthos_streams.values()
                             if isinstance(v, dict) and v.get("active"))
