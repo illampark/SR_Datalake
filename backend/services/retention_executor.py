@@ -27,6 +27,10 @@ from backend.services.minio_buckets import bucket_for
 logger = logging.getLogger(__name__)
 
 
+# TODO Phase 7: multi-tenant - execute_* uses .first() so picks one policy regardless of tenant.
+# Phase 7 should iterate active tenants and apply each tenant policy/sink separately.
+
+
 # ── Public API ──────────────────────────────────────
 
 
