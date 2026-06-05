@@ -16,10 +16,11 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
-EXPORT_BUCKET = "sdl-exports"
+EXPORT_BUCKET = bucket_for("exports")
 _PART_SIZE = 64 * 1024 * 1024   # MinIO multipart 최소 5MB, 64MB 가 안정 + 최대 640GB 객체
 _PROGRESS_COMMIT_EVERY_ROWS = 50_000
 _PROGRESS_COMMIT_EVERY_SEC = 5.0

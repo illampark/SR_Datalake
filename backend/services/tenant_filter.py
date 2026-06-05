@@ -24,7 +24,13 @@ from sqlalchemy.orm import Query, Session
 
 
 def _current_tenant_id() -> int:
-    """g.tenant_id (없으면 1) — 단일 진실의 원천."""
+    """g.tenant_id 우선, request context 밖이면 1 (legacy default tenant)."""
+    try:
+        from flask import has_request_context
+        if not has_request_context():
+            return 1
+    except Exception:
+        return 1
     return getattr(g, "tenant_id", 1) or 1
 
 

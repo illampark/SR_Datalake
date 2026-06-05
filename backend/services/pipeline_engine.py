@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from backend.services import mqtt_manager
 from backend.services.pipeline_modules import MODULE_REGISTRY, SINK_REGISTRY, process_message, flush_all_sink_buffers
 from backend.services import metadata_tracker
+from backend.services.minio_buckets import bucket_for
 
 # 파일 소스 step 타입 — start_pipeline 시 MQTT 구독을 건너뛰고 트리거 기반으로 동작
 _FILE_SOURCE_TYPES = {"import_source", "internal_file_source"}
@@ -923,7 +924,7 @@ def run_file_source(pipeline_id):
                 return {"ok": False, "error": f"Import collector {connector_id} 를 찾을 수 없습니다."}
 
             client = get_minio_client(db)
-            bucket = c.target_bucket or "sdl-files"
+            bucket = c.target_bucket or bucket_for("files")
             prefix = f"import/{connector_id}/"
 
             objects = list(client.list_objects(bucket, prefix=prefix, recursive=True))

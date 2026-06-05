@@ -17,6 +17,7 @@ import threading
 import requests
 import paramiko
 from datetime import datetime
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ def start_scanner(collector_id, sftp_host, sftp_port, sftp_username,
                   watch_path, file_patterns, recursive,
                   modified_only, poll_interval, post_action, archive_path,
                   encoding, parser_type, callback_url,
-                  storage_mode="parse", target_bucket="sdl-files",
+                  storage_mode="parse", target_bucket=bucket_for("files"),
                   target_path_prefix="raw/{collector_id}/{date}/"):
     """Start a background SFTP scanner thread for a collector."""
     if collector_id in _scanners and _scanners[collector_id].is_alive():
@@ -300,7 +301,7 @@ def _scan_loop(collector_id, sftp_host, sftp_port, sftp_username,
                watch_path, file_patterns, recursive,
                modified_only, poll_interval, post_action, archive_path,
                encoding, parser_type, callback_url, stop_event,
-               storage_mode="parse", target_bucket="sdl-files",
+               storage_mode="parse", target_bucket=bucket_for("files"),
                target_path_prefix="raw/{collector_id}/{date}/"):
     """Background SFTP scanning loop."""
     logger.info("SFTP scan loop started: id=%d, %s@%s:%d%s, interval=%ds, mode=%s",

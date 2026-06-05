@@ -7,6 +7,7 @@ from backend.models.collector import (
     MqttConnector, DbConnector, OpcuaConnector,
     ModbusConnector, ApiConnector, FileCollector,
 )
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ def _extract_sink_info(step):
             "sink_config_id": cfg.get("rdbmsId"),
         }
     elif module == "internal_file_sink":
-        bucket = cfg.get("bucket", "sdl-files")
+        bucket = cfg.get("bucket", bucket_for("files"))
         path_prefix = cfg.get("pathPrefix", "")
         file_format = cfg.get("fileFormat", "jsonl")
         return {

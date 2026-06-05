@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timedelta
 
 from sqlalchemy import func
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +218,7 @@ def _execute(request_id):
             from backend.services.minio_client import get_minio_client
             client = get_minio_client(db)
 
-            bucket = "sdl-files"
+            bucket = bucket_for("files")
             if not client.bucket_exists(bucket):
                 client.make_bucket(bucket)
 
@@ -266,7 +267,7 @@ def _execute(request_id):
         req.total_rows = written_rows
         req.file_size_bytes = file_size
         req.file_name = file_name
-        req.storage_bucket = "sdl-files" if uploaded_to_minio else "local"
+        req.storage_bucket = bucket_for("files") if uploaded_to_minio else "local"
         req.profile = profile_summary
         req.completed_at = datetime.utcnow()
         req.expires_at = datetime.utcnow() + timedelta(days=7)

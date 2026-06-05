@@ -22,6 +22,7 @@ from backend.models.storage import (
     WarmAggregatedData,
 )
 from backend.services.minio_client import get_minio_client
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ def execute_archiving():
 
         # MinIO 업로드
         client = _get_minio_client()
-        bucket_name = "sdl-archive"
+        bucket_name = bucket_for("archive")
         if not client.bucket_exists(bucket_name):
             client.make_bucket(bucket_name)
 
@@ -220,7 +221,7 @@ def execute_cold_expiry():
         cutoff = datetime.utcnow() - timedelta(days=cold_years * 365)
 
         client = _get_minio_client()
-        bucket_name = "sdl-archive"
+        bucket_name = bucket_for("archive")
 
         if not client.bucket_exists(bucket_name):
             error_msg = "sdl-archive 버킷이 존재하지 않습니다."

@@ -14,6 +14,7 @@ import math
 import statistics
 from collections import deque
 from datetime import datetime
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
@@ -1213,14 +1214,14 @@ def sink_internal_file(message, config):
     """내부 파일 스토리지 싱크 — MinIO에 파일(JSONL/CSV/JSON)로 데이터 기록
 
     config:
-      bucket: "sdl-files"                     (MinIO 버킷)
+      bucket: bucket_for("files")                     (MinIO 버킷)
       pathPrefix: "pipeline/"                  (경로 접두사)
       fileFormat: "jsonl" | "csv" | "json"     (파일 포맷)
       fileNamePattern: "pipeline_{pipeline_id}_{date}" (파일명 패턴)
       batchSize: 50                            (배치 크기)
     """
     pipeline_id = config.get("_pipeline_id", 0)
-    bucket = config.get("bucket") or "sdl-files"
+    bucket = config.get("bucket") or bucket_for("files")
     path_prefix = config.get("pathPrefix") or "pipeline/"
     file_format = config.get("fileFormat") or "jsonl"
     file_name_pattern = config.get("fileNamePattern") or "pipeline_{pipeline_id}_{date}"
@@ -1807,7 +1808,7 @@ def _transfer_actual_file(conn, file_meta, step_config):
 
     file_meta: {minio_bucket, minio_path, file_size, mime_type, original_path}
     """
-    minio_bucket = file_meta.get("minio_bucket", "sdl-files")
+    minio_bucket = file_meta.get("minio_bucket", bucket_for("files"))
     minio_path = file_meta.get("minio_path", "")
     if not minio_path:
         return

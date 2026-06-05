@@ -23,10 +23,11 @@ from backend.database import SessionLocal
 from backend.models.backup import BackupHistory
 from backend.config import DATABASE_URL
 from backend.services.minio_client import get_minio_client
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
-BACKUP_BUCKET = "sdl-backup"
+BACKUP_BUCKET = bucket_for("backup")
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _CONFIG_FILES = [
     "backend/config.py",
@@ -332,7 +333,7 @@ def _backup_minio_buckets(client, storage_key):
     total = 0
 
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for bucket_name in ("sdl-files", "sdl-archive"):
+        for bucket_name in (bucket_for("files"), bucket_for("archive")):
             if not client.bucket_exists(bucket_name):
                 continue
             for obj in client.list_objects(bucket_name, recursive=True):

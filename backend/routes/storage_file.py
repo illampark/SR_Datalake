@@ -14,6 +14,7 @@ from backend.config import MINIO_BUCKETS
 from backend.services.audit_logger import audit_route
 from backend.services.minio_client import get_minio_client, get_minio_config
 from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
@@ -487,7 +488,7 @@ def get_cleanup_policy():
                 "retention_days": 90,
                 "threshold_percent": 80.0,
                 "enabled": False,
-                "target_buckets": ["sdl-files", "sdl-archive"],
+                "target_buckets": [bucket_for("files"), bucket_for("archive")],
                 "target_extensions": [".log", ".tmp", ".csv"],
             })
         return _ok(policy.to_dict())
@@ -1028,7 +1029,7 @@ def local_minio_status():
             return _ok({"applicable": False, "targetType": target,
                         "status": "ready", "items": {}})
 
-        bucket = ic.target_bucket or "sdl-files"
+        bucket = ic.target_bucket or bucket_for("files")
         objs = _minio_import_objects(bucket, int(cid))
         by_rel, by_name = _import_match_index(objs, int(cid))
         items = {}
@@ -1230,7 +1231,7 @@ def local_cleanup_migrated():
         if (ic.target_type or "file").lower() != "file":
             return _err("target=file 수집기만 MinIO 이관 정리를 지원합니다.", "INVALID_MODE")
         cid = int(cid)
-        bucket = ic.target_bucket or "sdl-files"
+        bucket = ic.target_bucket or bucket_for("files")
 
         objs = _minio_import_objects(bucket, cid)
 

@@ -115,3 +115,24 @@ def list_tenant_schemas(session: Session) -> list[str]:
         "SELECT nspname FROM pg_namespace WHERE nspname LIKE 't\\_%' ESCAPE '\\' ORDER BY nspname"
     )).fetchall()
     return [r[0] for r in rows]
+
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Phase 5 - MinIO 버킷 자동 프로비저닝
+# ────────────────────────────────────────────────────────────────────────
+
+def provision_tenant_minio(tenant_id: int) -> dict:
+    """신규 tenant 의 MinIO 버킷 4 종을 생성한다.
+
+    super_admin 콘솔이 새 tenant 를 만들 때 create_tenant_schema 와 함께 호출.
+    tenant 1 은 legacy 버킷 (sdl-*) 을 그대로 사용하므로 호출되지 않는다.
+
+    반환: {role: bucket_name} dict
+    """
+    from backend.services.minio_buckets import ensure_tenant_buckets
+    from backend.services.minio_client import get_minio_client
+    if tenant_id == 1:
+        raise ValueError("tenant 1 uses legacy buckets - no provisioning")
+    client = get_minio_client()
+    return ensure_tenant_buckets(client, tenant_id)

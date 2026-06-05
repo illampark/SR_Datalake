@@ -20,6 +20,7 @@ import shutil
 import threading
 import zipfile
 from datetime import datetime
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +253,7 @@ def _execute_import_files(collector, file_data_list, db_session):
     from backend.models.catalog import DataCatalog
 
     cid = collector.id
-    bucket = collector.target_bucket or "sdl-files"
+    bucket = collector.target_bucket or bucket_for("files")
     prefix = f"import/{cid}/"
 
     try:
@@ -771,7 +772,7 @@ def _execute_files_mqtt_publish(collector, file_data_list, db_session):
     from backend.services import mqtt_manager
 
     cid = collector.id
-    bucket = collector.target_bucket or "sdl-files"
+    bucket = collector.target_bucket or bucket_for("files")
     date_prefix = datetime.utcnow().strftime("%Y%m%d")
     published = 0
 
@@ -838,7 +839,7 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
         if target_type == "file":
             from backend.services.minio_client import get_minio_client
             client = get_minio_client(db_session)
-            bucket = collector.target_bucket or "sdl-files"
+            bucket = collector.target_bucket or bucket_for("files")
             # 결정적 객체 키 — 날짜는 '소스 파일 mtime' 기준 (실행일 아님).
             # 같은 파일을 재import 하면 같은 키 → 덮어쓰기 → 중복 객체 누적 방지.
             if file_path and os.path.exists(file_path):
@@ -1506,7 +1507,7 @@ def _republish_files(collector, db_session):
     from backend.services.minio_client import get_minio_client
 
     cid = collector.id
-    bucket = collector.target_bucket or "sdl-files"
+    bucket = collector.target_bucket or bucket_for("files")
     prefix = f"import/{cid}/"
 
     collector.status = "running"
