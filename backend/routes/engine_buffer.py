@@ -9,7 +9,6 @@ from backend.services.pipeline_modules import (
     get_sink_buffer_status,
     get_agg_buffer_status,
     get_window_cache_status,
-    flush_all_sink_buffers,
     flush_single_sink_buffer,
     _pid_from_cache_key,
 )
@@ -99,18 +98,25 @@ def flush_all_buffers():
         total_before = sum(b["count"] for b in pre_status.values())
         buffer_count = len(pre_status)
 
-        # 자기 tenant 의 키만 순회하여 개별 flush
+        # 자기 tenant 의 키만 순회하여 개별 flush.
+        # per-key try/except 로 한 키 실패가 나머지 flush 를 막지 않게 한다.
         flushed_keys = []
+        failed_keys = []
         for key in list(pre_status.keys()):
-            c = flush_single_sink_buffer(key)
-            if c >= 0:
-                flushed_keys.append(key)
+            try:
+                c = flush_single_sink_buffer(key)
+                if c >= 0:
+                    flushed_keys.append(key)
+            except Exception as fe:
+                logger.error("flush_all_buffers: key=%s 실패 — %s", key, fe)
+                failed_keys.append(key)
 
-        logger.info("자기 tenant 싱크 버퍼 플러시 완료: %d개 버퍼, %d건",
-                    buffer_count, total_before)
+        logger.info("자기 tenant 싱크 버퍼 플러시: %d/%d 키 성공, 실패 %d, %d건",
+                    len(flushed_keys), buffer_count, len(failed_keys), total_before)
         return _ok({
             "message": "자기 테넌트 싱크 버퍼 플러시 완료",
             "flushedBuffers": len(flushed_keys),
+            "failedBuffers": len(failed_keys),
             "flushedItems": total_before,
         })
     except Exception as e:
