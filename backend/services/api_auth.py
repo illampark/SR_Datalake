@@ -1,8 +1,12 @@
-"""API 키 인증 모듈.
+"""API 키 인증 모듈 — Phase 6 v2.
 
 X-API-Key 헤더를 검증해 외부 시스템의 API 호출을 허용한다.
 세션 인증(UI 로그인)과 공존하며, 세션이 없는 /api/* 요청에 대해
 require_login 미들웨어가 호출한다.
+
+Phase 6 변경:
+- 인증 성공 시 g.tenant_id / g.tenant_role / g.scopes / g.is_super=False 세팅
+- ApiKey.revoked_at, ApiKey.tenant_id 등 새 컬럼 검증
 """
 
 import fnmatch
@@ -31,7 +35,7 @@ def authenticate_api_key():
     """X-API-Key 헤더 검증.
 
     Returns:
-        (True, None): 인증 성공, g.api_key_id 설정됨.
+        (True, None): 인증 성공, g.* 컨텍스트 세팅됨.
         (False, (code, message, status)): 인증 실패.
         (None, None): 헤더 없음 (호출자가 다른 인증 수단 시도).
     """
@@ -49,13 +53,21 @@ def authenticate_api_key():
             return False, ("INVALID_KEY", "유효하지 않은 API 키입니다.", 401)
         if not key.is_active:
             return False, ("KEY_DISABLED", "비활성화된 API 키입니다.", 403)
+        if key.revoked_at:
+            return False, ("KEY_REVOKED", "폐기된 API 키입니다.", 403)
         if key.expires_at and key.expires_at < datetime.utcnow():
             return False, ("KEY_EXPIRED", "만료된 API 키입니다.", 403)
         if not _match_allowed_paths(key.allowed_paths, request.path):
             return False, ("FORBIDDEN_PATH",
                            "이 API 키로 접근할 수 없는 경로입니다.", 403)
 
+        # Phase 6: tenant 컨텍스트 + role + scopes 전체 세팅
+        g.api_key_authenticated = True
         g.api_key_id = key.id
+        g.tenant_id = key.tenant_id
+        g.tenant_role = key.role or "tenant_viewer"
+        g.is_super = False                       # API 키는 super 불가 (D10/R4)
+        g.scopes = set(key.scopes or [])
 
         try:
             key.last_used_at = datetime.utcnow()

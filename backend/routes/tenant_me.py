@@ -252,3 +252,138 @@ def my_usage():
         return _ok({"tenant_id": tid, "counts": counts})
     finally:
         db.close()
+
+
+# ─────────────────────── API 키 v2 (Phase 6) ───────────────────────
+
+@tenant_me_bp.route("/api-keys", methods=["GET"])
+def list_api_keys():
+    """tenant 의 API 키 목록 (마스킹된 형태)."""
+    err = _require_tenant_admin()
+    if err is not None:
+        return err
+    from backend.models.gateway import ApiKey
+    db = SessionLocal()
+    try:
+        rows = (db.query(ApiKey)
+                  .filter_by(tenant_id=current_tenant_id())
+                  .order_by(ApiKey.id.desc()).all())
+        return _ok([k.to_dict() for k in rows])
+    finally:
+        db.close()
+
+
+@tenant_me_bp.route("/api-keys", methods=["POST"])
+def issue_api_key():
+    """신규 API 키 발급.
+
+    body: { name, role?, scopes?, allowedPaths?, expiresAt?, description? }
+    role: tenant_admin / tenant_editor / tenant_viewer (기본 viewer)
+    응답: 전체 키 값을 1회만 반환 (이후 마스킹).
+    """
+    err = _require_tenant_admin()
+    if err is not None:
+        return err
+    body = request.get_json(force=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return _err("name 필수", "VALIDATION")
+    role = body.get("role", "tenant_viewer")
+    if role not in TENANT_ROLES:
+        return _err(f"role 은 {TENANT_ROLES} 중 하나", "VALIDATION")
+
+    import secrets
+    raw = f"sdl_pk_{secrets.token_urlsafe(24)}"   # ~40자
+    prefix = raw[:12]                              # "sdl_pk_XXXX"
+
+    from backend.models.gateway import ApiKey
+    from datetime import datetime as _dt
+    db = SessionLocal()
+    try:
+        k = ApiKey(
+            name=name,
+            key_value=raw,
+            key_prefix=prefix,
+            description=body.get("description", ""),
+            allowed_paths=body.get("allowedPaths", "*"),
+            tenant_id=current_tenant_id(),
+            role=role,
+            scopes=body.get("scopes", []),
+            created_by=session.get("user_id"),
+            expires_at=_dt.fromisoformat(body["expiresAt"]) if body.get("expiresAt") else None,
+            is_active=True,
+        )
+        db.add(k)
+        db.commit()
+        db.refresh(k)
+        log_audit("tenant", "apikey.issue", "api_key", str(k.id),
+                  detail={"name": name, "role": role, "prefix": prefix})
+        # 전체 키는 응답에 1회만
+        d = k.to_dict()
+        d["secret"] = raw
+        return _ok(d), 201
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@tenant_me_bp.route("/api-keys/<int:kid>", methods=["PATCH"])
+def update_api_key(kid):
+    """키 메타 변경 (name/description/allowedPaths/expiresAt/is_active)."""
+    err = _require_tenant_admin()
+    if err is not None:
+        return err
+    body = request.get_json(force=True) or {}
+    from backend.models.gateway import ApiKey
+    from datetime import datetime as _dt
+    db = SessionLocal()
+    try:
+        k = (db.query(ApiKey)
+               .filter_by(id=kid, tenant_id=current_tenant_id())
+               .first())
+        if not k:
+            return _err("API 키 없음", "NOT_FOUND", 404)
+        if "name" in body: k.name = body["name"]
+        if "description" in body: k.description = body["description"]
+        if "allowedPaths" in body: k.allowed_paths = body["allowedPaths"]
+        if "isActive" in body: k.is_active = bool(body["isActive"])
+        if "expiresAt" in body:
+            k.expires_at = _dt.fromisoformat(body["expiresAt"]) if body["expiresAt"] else None
+        db.commit()
+        db.refresh(k)
+        log_audit("tenant", "apikey.update", "api_key", str(kid))
+        return _ok(k.to_dict())
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@tenant_me_bp.route("/api-keys/<int:kid>", methods=["DELETE"])
+def revoke_api_key(kid):
+    """API 키 폐기 (soft - revoked_at + is_active=False)."""
+    err = _require_tenant_admin()
+    if err is not None:
+        return err
+    from backend.models.gateway import ApiKey
+    from datetime import datetime as _dt
+    db = SessionLocal()
+    try:
+        k = (db.query(ApiKey)
+               .filter_by(id=kid, tenant_id=current_tenant_id())
+               .first())
+        if not k:
+            return _err("API 키 없음", "NOT_FOUND", 404)
+        k.revoked_at = _dt.utcnow()
+        k.is_active = False
+        db.commit()
+        log_audit("tenant", "apikey.revoke", "api_key", str(kid))
+        return _ok({"id": kid, "revoked": True})
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()

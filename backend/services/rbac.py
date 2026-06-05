@@ -69,14 +69,15 @@ def normalize_role(raw):
 
 
 def current_role():
-    """현재 요청의 정규화된 role 반환.
+    """현재 요청의 정규화된 legacy 2-role 반환.
 
-    API 키 인증은 viewer(읽기 전용) 로 고정한다.
-    외부에서 임베드되는 API 키 특성상 노출 위험이 높아 최소 권한 원칙 적용.
-    필요 시 키별 role 컬럼을 추가해 admin 키를 별도 발급하는 방식으로 확장 가능.
+    Phase 6: API 키 인증의 경우 키 record 의 4-role 을 2-role 로 매핑.
+    - tenant_admin -> admin
+    - tenant_editor / tenant_viewer -> viewer (변경 권한은 4-role 체계에서만)
     """
     if getattr(g, "api_key_authenticated", False):
-        return "viewer"
+        tr = getattr(g, "tenant_role", "tenant_viewer")
+        return "admin" if tr in ("tenant_admin", "super_admin") else "viewer"
     return normalize_role(session.get("role"))
 
 

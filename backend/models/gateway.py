@@ -1,10 +1,11 @@
-"""API Gateway 모델: 접근 로그, API 키"""
+"""API Gateway 모델: 접근 로그, API 키 (Phase 6 v2)."""
 
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Text, Boolean, DateTime, BigInteger, Index,
+    Column, Integer, String, Float, Text, Boolean, DateTime, BigInteger, Index, ForeignKey,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from backend.database import Base
 
 
@@ -48,6 +49,14 @@ class ApiAccessLog(Base):
 
 
 class ApiKey(Base):
+    """API 키 — Phase 6 v2.
+
+    - tenant_id 로 키별 1 tenant 고정 (D10)
+    - role 로 권한 등급 분리 (기존 viewer 고정 → 명시 선택)
+    - scopes 는 미세 권한 (1차 미적용, Phase 8 본격)
+    - key_prefix 는 UI 표시용 (전체 값은 발급 시 1회만 반환)
+    - revoked_at + is_active 로 폐기 상태 관리
+    """
     __tablename__ = "api_key"
 
     id            = Column(Integer, primary_key=True, autoincrement=True)
@@ -61,19 +70,41 @@ class ApiKey(Base):
     last_used_at  = Column(DateTime, nullable=True)
     request_count = Column(Integer, default=0)
 
+    # ── Phase 6 추가 ──
+    tenant_id  = Column(
+        BigInteger,
+        ForeignKey("tenant.id", ondelete="RESTRICT"),
+        nullable=False, default=1, server_default="1",
+    )
+    role       = Column(
+        String(30), nullable=False,
+        default="tenant_viewer", server_default="tenant_viewer",
+    )
+    scopes     = Column(JSONB, nullable=False, default=list, server_default="[]")
+    key_prefix = Column(String(16), nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_by = Column(Integer, ForeignKey("app_user.id"), nullable=True)
+
     def to_dict(self, mask_key=True):
         kv = self.key_value or ""
-        if mask_key and len(kv) > 12:
-            kv = kv[:8] + "..." + kv[-4:]
+        if mask_key:
+            # prefix + "..." + 마지막 4자
+            kv = (self.key_prefix or kv[:8]) + "..." + kv[-4:] if len(kv) > 12 else kv
         return {
             "id": self.id,
             "name": self.name,
             "keyValue": kv,
+            "keyPrefix": self.key_prefix or "",
             "description": self.description or "",
             "allowedPaths": self.allowed_paths or "*",
-            "isActive": self.is_active,
+            "isActive": self.is_active and self.revoked_at is None,
             "expiresAt": self.expires_at.strftime("%Y-%m-%d") if self.expires_at else None,
+            "revokedAt": self.revoked_at.strftime("%Y-%m-%d %H:%M:%S") if self.revoked_at else None,
             "createdAt": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else "",
+            "createdBy": self.created_by,
             "lastUsedAt": self.last_used_at.strftime("%Y-%m-%d %H:%M:%S") if self.last_used_at else None,
             "requestCount": self.request_count or 0,
+            "tenantId": self.tenant_id,
+            "role": self.role,
+            "scopes": self.scopes or [],
         }
