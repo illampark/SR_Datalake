@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request, session
 from backend.database import SessionLocal
 from backend.models.notice import Notice
 from backend.services.audit_logger import audit_route
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def list_notices():
     db = SessionLocal()
     try:
         now = datetime.utcnow()
-        q = db.query(Notice).filter(
+        q = filter_by_tenant(db.query(Notice), Notice).filter(
             (Notice.expires_at == None) | (Notice.expires_at > now)  # noqa: E711
         ).order_by(
             Notice.is_pinned.desc(),

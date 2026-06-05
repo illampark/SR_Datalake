@@ -17,6 +17,7 @@ from backend.services.backup_scheduler import (
     get_scheduler_status, get_schedule_options,
 )
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ def list_history():
         status_filter = request.args.get("status", "")
         op_filter = request.args.get("operation", "")
 
-        q = db.query(BackupHistory)
+        q = filter_by_tenant(db.query(BackupHistory), BackupHistory)
         if status_filter:
             q = q.filter(BackupHistory.status == status_filter)
         if op_filter:

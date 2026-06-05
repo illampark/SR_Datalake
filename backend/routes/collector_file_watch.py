@@ -7,6 +7,7 @@ from backend.services import file_scanner as fs
 from backend.services import mqtt_manager
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 file_watch_bp = Blueprint("collector_file_watch", __name__, url_prefix="/api/connectors/file")
 
@@ -62,7 +63,7 @@ def list_collectors():
         status_filter = request.args.get("status", "")
         search = (request.args.get("q") or "").strip()
 
-        q = db.query(FileCollector)
+        q = filter_by_tenant(db.query(FileCollector), FileCollector)
         if status_filter:
             q = q.filter(FileCollector.status == status_filter)
         if search:
@@ -91,7 +92,7 @@ def list_collectors():
 def get_collector(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
         d = c.to_dict()
@@ -171,7 +172,7 @@ def create_collector():
 def update_collector(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -270,7 +271,7 @@ def update_collector(cid):
 def delete_collector(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -300,7 +301,7 @@ def delete_collector(cid):
 def start_collector(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -351,7 +352,7 @@ def start_collector(cid):
 def stop_collector(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -373,7 +374,7 @@ def stop_collector(cid):
 def restart_collector(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -420,7 +421,7 @@ def restart_collector(cid):
 def test_collector(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -511,7 +512,7 @@ def test_sftp():
 def collector_status(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -538,7 +539,7 @@ def collector_status(cid):
 def list_files(cid):
     db = _db()
     try:
-        c = db.query(FileCollector).get(cid)
+        c = get_by_id_tenant(db, FileCollector, cid)
         if not c:
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -592,7 +593,7 @@ def file_callback():
         collector_id = body.get("collector_id")
 
         if collector_id:
-            c = db.query(FileCollector).get(collector_id)
+            c = get_by_id_tenant(db, FileCollector, collector_id)
             if c:
                 from backend.services.metadata_tracker import ensure_connector_catalog
                 ensure_connector_catalog("file", collector_id, c.name)

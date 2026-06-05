@@ -9,6 +9,7 @@ from backend.database import SessionLocal
 from backend.models.alarm import AlarmRule, AlarmEvent, AlarmChannel
 from backend.services import alarm_engine
 from backend.services.audit_logger import audit_route
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def list_events():
     """알람 이벤트 목록 (최신순, 최대 200건)"""
     db = SessionLocal()
     try:
-        q = db.query(AlarmEvent)
+        q = filter_by_tenant(db.query(AlarmEvent), AlarmEvent)
 
         severity = request.args.get("severity")
         if severity and severity != "all":
@@ -80,7 +81,7 @@ def list_events():
 def ack_event(event_id):
     db = SessionLocal()
     try:
-        ev = db.query(AlarmEvent).get(event_id)
+        ev = get_by_id_tenant(db, AlarmEvent, event_id)
         if not ev:
             return _err("이벤트를 찾을 수 없습니다", "NOT_FOUND", 404)
         ev.status = "acknowledged"
@@ -97,7 +98,7 @@ def ack_event(event_id):
 def resolve_event(event_id):
     db = SessionLocal()
     try:
-        ev = db.query(AlarmEvent).get(event_id)
+        ev = get_by_id_tenant(db, AlarmEvent, event_id)
         if not ev:
             return _err("이벤트를 찾을 수 없습니다", "NOT_FOUND", 404)
         ev.status = "resolved"
@@ -184,7 +185,7 @@ def create_rule():
 def update_rule(rule_id):
     db = SessionLocal()
     try:
-        rule = db.query(AlarmRule).get(rule_id)
+        rule = get_by_id_tenant(db, AlarmRule, rule_id)
         if not rule:
             return _err("규칙을 찾을 수 없습니다", "NOT_FOUND", 404)
         d = request.get_json(force=True)
@@ -204,7 +205,7 @@ def update_rule(rule_id):
 def delete_rule(rule_id):
     db = SessionLocal()
     try:
-        rule = db.query(AlarmRule).get(rule_id)
+        rule = get_by_id_tenant(db, AlarmRule, rule_id)
         if not rule:
             return _err("규칙을 찾을 수 없습니다", "NOT_FOUND", 404)
         db.delete(rule)
@@ -220,7 +221,7 @@ def delete_rule(rule_id):
 def toggle_rule(rule_id):
     db = SessionLocal()
     try:
-        rule = db.query(AlarmRule).get(rule_id)
+        rule = get_by_id_tenant(db, AlarmRule, rule_id)
         if not rule:
             return _err("규칙을 찾을 수 없습니다", "NOT_FOUND", 404)
         rule.enabled = not rule.enabled
@@ -285,7 +286,7 @@ def create_channel():
 def update_channel(channel_id):
     db = SessionLocal()
     try:
-        ch = db.query(AlarmChannel).get(channel_id)
+        ch = get_by_id_tenant(db, AlarmChannel, channel_id)
         if not ch:
             return _err("채널을 찾을 수 없습니다", "NOT_FOUND", 404)
         d = request.get_json(force=True)
@@ -304,7 +305,7 @@ def update_channel(channel_id):
 def delete_channel(channel_id):
     db = SessionLocal()
     try:
-        ch = db.query(AlarmChannel).get(channel_id)
+        ch = get_by_id_tenant(db, AlarmChannel, channel_id)
         if not ch:
             return _err("채널을 찾을 수 없습니다", "NOT_FOUND", 404)
         db.delete(ch)
@@ -320,7 +321,7 @@ def delete_channel(channel_id):
 def test_channel(channel_id):
     db = SessionLocal()
     try:
-        ch = db.query(AlarmChannel).get(channel_id)
+        ch = get_by_id_tenant(db, AlarmChannel, channel_id)
         if not ch:
             return _err("채널을 찾을 수 없습니다", "NOT_FOUND", 404)
         alarm_engine.send_test(ch)

@@ -6,6 +6,7 @@ from backend.models.collector import MqttConnector, MqttTag
 from backend.services import benthos_manager as bm
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 mqtt_bp = Blueprint("collector_mqtt", __name__, url_prefix="/api/connectors/mqtt")
 
@@ -37,7 +38,7 @@ def list_connectors():
         status_filter = request.args.get("status", "")
         search = (request.args.get("q") or "").strip()
 
-        q = db.query(MqttConnector)
+        q = filter_by_tenant(db.query(MqttConnector), MqttConnector)
         if status_filter:
             q = q.filter(MqttConnector.status == status_filter)
         if search:
@@ -74,7 +75,7 @@ def list_connectors():
 def get_connector(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
         d = c.to_dict()
@@ -144,7 +145,7 @@ def create_connector():
 def update_connector(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -204,7 +205,7 @@ def update_connector(cid):
 def delete_connector(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -235,7 +236,7 @@ def delete_connector(cid):
 def start_connector(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -278,7 +279,7 @@ def start_connector(cid):
 def stop_connector(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -301,7 +302,7 @@ def stop_connector(cid):
 def restart_connector(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -340,7 +341,7 @@ def restart_connector(cid):
 def test_connector(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -363,7 +364,7 @@ def test_connector(cid):
 def connector_status(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -390,7 +391,7 @@ def connector_status(cid):
 def list_tags(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -409,7 +410,7 @@ def list_tags(cid):
 def create_tag(cid):
     db = _db()
     try:
-        c = db.query(MqttConnector).get(cid)
+        c = get_by_id_tenant(db, MqttConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -507,7 +508,7 @@ def message_callback():
         connector_id = meta.get("connector_id")
 
         if connector_id:
-            c = db.query(MqttConnector).get(connector_id)
+            c = get_by_id_tenant(db, MqttConnector, connector_id)
             if c:
                 c.message_count = (c.message_count or 0) + 1
                 c.last_message_at = datetime.utcnow()
