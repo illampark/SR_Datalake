@@ -27,6 +27,9 @@ from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 
+# TODO Phase 7: 멀티테넌트 - BACKUP_BUCKET 은 import 시점 1회 평가 (tenant 1 의 sdl-backup 고정).
+# tenant 2+ 의 백업이 자기 버킷에 들어가려면 호출 함수가 tenant_id 인자를 받아
+# bucket_for("backup", tenant_id) 를 매 호출 시점에 평가해야 함.
 BACKUP_BUCKET = bucket_for("backup")
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _CONFIG_FILES = [
