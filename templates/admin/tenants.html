@@ -385,7 +385,7 @@ function doImpersonate(tid, slug) {
   fetch('/api/sys/impersonate/start', {
     method:'POST', headers:{'Content-Type':'application/json'},
     credentials:'same-origin',
-    body: JSON.stringify({tenant_id: tid, reason: reason.trim()})
+    body: JSON.stringify({tenantId: tid, reason: reason.trim()})
   }).then(r=>r.json()).then(d => {
     if (d.success) { alert('impersonate 진입: ' + slug); location.href = '/'; }
     else alert('실패: ' + (d.error && d.error.message));

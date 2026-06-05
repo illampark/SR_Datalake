@@ -2,6 +2,7 @@ import logging
 import random
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
+from backend.services.api_compat import normalize_camel_to_snake
 from sqlalchemy import func, text as _sql_text
 from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, DownsamplingPolicy
@@ -92,6 +93,7 @@ def create_instance():
     db = _db()
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         if not body.get("name") or not body.get("host"):
             return _err("name과 host는 필수 항목입니다.", "VALIDATION")
 
@@ -137,6 +139,7 @@ def update_instance(tsdb_id):
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         for field in [
             "name", "db_type", "host", "port", "organization", "bucket",
             "database_name", "username", "password", "api_token",
@@ -346,6 +349,7 @@ def create_downsampling(tsdb_id):
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         if not body.get("policy_name"):
             return _err("policy_name은 필수 항목입니다.", "VALIDATION")
 
@@ -415,6 +419,7 @@ def update_downsampling(tsdb_id, policy_id):
             return _err("다운샘플링 정책을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         for field in [
             "policy_name", "source_retention", "target_retention",
             "aggregate_functions", "aggregation_period", "target_data", "enabled",
@@ -474,6 +479,7 @@ def execute_query(tsdb_id):
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         query_text = body.get("query", "").strip()
         if not query_text:
             return _err("쿼리를 입력해주세요.", "VALIDATION")
@@ -599,6 +605,7 @@ def delete_data(tsdb_id):
     (전체 TRUNCATE 방지).
     """
     body = request.get_json(silent=True) or {}
+    body = normalize_camel_to_snake(body)
     pid = body.get("pipeline_id")
     meas = (body.get("measurement") or "").strip()
     before_ts = (body.get("before_ts") or "").strip()

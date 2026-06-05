@@ -7,6 +7,7 @@ import time
 import psutil
 from datetime import datetime
 from flask import Blueprint, request, jsonify, send_file
+from backend.services.api_compat import normalize_camel_to_snake
 from minio.error import S3Error
 from backend.database import SessionLocal
 from backend.models.storage import FileCleanupPolicy
@@ -503,6 +504,7 @@ def update_cleanup_policy():
     db = _db()
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
 
         ret = body.get("retentionDays") or body.get("retention_days")
         thr = body.get("thresholdPercent") or body.get("threshold_percent")
@@ -834,6 +836,7 @@ def delete_files_batch():
     """
     try:
         body = request.get_json(force=True) or {}
+        body = normalize_camel_to_snake(body)
         files = body.get("files") or []
         if not isinstance(files, list) or not files:
             return _err("삭제할 파일 목록이 비어있습니다.", "VALIDATION")
@@ -870,6 +873,7 @@ def delete_files_batch():
 def delete_file():
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         bucket = body.get("bucket", bucket_for("files"))
         object_name = body.get("objectName") or body.get("object_name")
 
@@ -1022,6 +1026,7 @@ def local_minio_status():
     db = SessionLocal()
     try:
         body = request.get_json(silent=True) or {}
+        body = normalize_camel_to_snake(body)
         cid = body.get("collectorId")
         files = body.get("files") or []
         if not cid:
@@ -1225,6 +1230,7 @@ def local_cleanup_migrated():
     try:
         from sqlalchemy import text as _sql_text
         body = request.get_json(silent=True) or {}
+        body = normalize_camel_to_snake(body)
         cid = body.get("collectorId")
         action = (body.get("action") or "archive").lower()
         dry_run = bool(body.get("dryRun"))
@@ -1596,6 +1602,7 @@ def delete_local_files_batch():
     db = SessionLocal()
     try:
         body = request.get_json(force=True) or {}
+        body = normalize_camel_to_snake(body)
         cid = body.get("collectorId")
         paths = body.get("paths") or []
         if not cid or not isinstance(paths, list) or not paths:

@@ -1,5 +1,6 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify
+from backend.services.api_compat import normalize_camel_to_snake
 from sqlalchemy import func
 from backend.database import SessionLocal
 from backend.models.integration import ExternalConnection
@@ -106,6 +107,7 @@ def create_connection():
     db = _db()
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         if not body.get("name"):
             return _err("name은 필수 항목입니다.", "VALIDATION")
         if not body.get("connection_type"):
@@ -151,6 +153,7 @@ def update_connection(conn_id):
             return _err("연결을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         for field in [
             "name", "host", "port", "database_name", "username", "password",
             "config", "enabled", "description",

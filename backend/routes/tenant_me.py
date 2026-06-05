@@ -12,6 +12,7 @@ claudedocs/rbac-target-v1.md § 6 TENANT_ADMIN_ONLY 경로.
 from __future__ import annotations
 import logging
 from flask import Blueprint, request, session, g, jsonify
+from backend.services.api_compat import normalize_camel_to_snake
 from werkzeug.security import generate_password_hash
 
 from backend.database import SessionLocal
@@ -66,6 +67,7 @@ def update_my_tenant():
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     db = SessionLocal()
     try:
         t = db.query(Tenant).get(current_tenant_id())
@@ -130,6 +132,7 @@ def add_member():
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     role = body.get("role", "tenant_viewer")
     if role not in TENANT_ROLES:
         return _err(f"role 은 {TENANT_ROLES} 중 하나", "VALIDATION")
@@ -174,6 +177,7 @@ def update_member_role(mid):
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     role = body.get("role")
     if role not in TENANT_ROLES:
         return _err(f"role 은 {TENANT_ROLES} 중 하나", "VALIDATION")
@@ -285,6 +289,7 @@ def issue_api_key():
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     name = (body.get("name") or "").strip()
     if not name:
         return _err("name 필수", "VALIDATION")
@@ -336,6 +341,7 @@ def update_api_key(kid):
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     from backend.models.gateway import ApiKey
     from datetime import datetime as _dt
     db = SessionLocal()

@@ -1,6 +1,7 @@
 import threading
 from datetime import datetime
 from flask import Blueprint, request, jsonify
+from backend.services.api_compat import normalize_camel_to_snake
 from sqlalchemy import func
 from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, RdbmsConfig, RetentionPolicy, RetentionExecutionLog
@@ -99,6 +100,7 @@ def update_policy():
     db = _db()
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
 
         # 검증
         hd = body.get("hot_retention_days")
@@ -299,6 +301,7 @@ def manual_execute():
     db = _db()
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         task_type = body.get("task_type", "").strip()
 
         if task_type not in _TASK_MAP:

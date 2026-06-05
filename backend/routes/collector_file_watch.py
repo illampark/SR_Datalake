@@ -1,5 +1,6 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify
+from backend.services.api_compat import normalize_camel_to_snake
 from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import FileCollector
@@ -113,6 +114,7 @@ def create_collector():
     db = _db()
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         name = body.get("name", "").strip()
         if not name:
             return _err("수집기명은 필수입니다.", "VALIDATION")
@@ -178,6 +180,7 @@ def update_collector(cid):
             return _err("수집기를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         was_running = c.status == "running"
 
         if "description" in body:
@@ -453,6 +456,7 @@ def test_collector(cid):
              detail_keys=["watchPath"])
 def test_path_direct():
     body = request.get_json(force=True)
+    body = normalize_camel_to_snake(body)
     watch_path = body.get("watchPath", "").strip()
     patterns = body.get("filePatterns", [])
     if isinstance(patterns, str):
@@ -484,6 +488,7 @@ def test_path_direct():
              detail_keys=["host", "port", "username", "watchPath"])
 def test_sftp():
     body = request.get_json(force=True)
+    body = normalize_camel_to_snake(body)
     host = body.get("sftpHost", "localhost").strip()
     port = int(body.get("sftpPort", 22))
     username = body.get("sftpUsername", "").strip()
@@ -591,6 +596,7 @@ def file_callback():
     db = _db()
     try:
         body = request.get_json(force=True)
+        body = normalize_camel_to_snake(body)
         collector_id = body.get("collector_id")
 
         if collector_id:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from flask import Blueprint, request, session, g
+from backend.services.api_compat import normalize_camel_to_snake
 
 from backend.database import SessionLocal
 from backend.models.tenant import Tenant, TenantMembership
@@ -92,6 +93,7 @@ def create_tenant():
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     slug = (body.get("slug") or "").strip()
     name = (body.get("name") or "").strip()
     plan = body.get("plan", "default")
@@ -136,6 +138,7 @@ def update_tenant(tid):
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     db = SessionLocal()
     try:
         t = db.query(Tenant).get(tid)
@@ -212,6 +215,7 @@ def impersonate_start():
     if err is not None:
         return err
     body = request.get_json(force=True) or {}
+    body = normalize_camel_to_snake(body)
     target_tid = body.get("tenant_id")
     reason = body.get("reason", "")
     if not target_tid:
