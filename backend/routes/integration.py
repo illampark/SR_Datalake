@@ -4,6 +4,7 @@ from sqlalchemy import func
 from backend.database import SessionLocal
 from backend.models.integration import ExternalConnection
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 integration_bp = Blueprint("integration", __name__, url_prefix="/api/integration")
 
@@ -35,7 +36,7 @@ def list_connections():
         conn_type = request.args.get("type", "").strip()
         search = request.args.get("search", "").strip()
 
-        q = db.query(ExternalConnection)
+        q = filter_by_tenant(db.query(ExternalConnection), ExternalConnection)
         if conn_type:
             q = q.filter(ExternalConnection.connection_type == conn_type)
         if search:
@@ -89,7 +90,7 @@ def list_connections():
 def get_connection(conn_id):
     db = _db()
     try:
-        row = db.query(ExternalConnection).get(conn_id)
+        row = get_by_id_tenant(db, ExternalConnection, conn_id)
         if not row:
             return _err("연결을 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(row.to_dict())
@@ -145,7 +146,7 @@ def create_connection():
 def update_connection(conn_id):
     db = _db()
     try:
-        row = db.query(ExternalConnection).get(conn_id)
+        row = get_by_id_tenant(db, ExternalConnection, conn_id)
         if not row:
             return _err("연결을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -175,7 +176,7 @@ def update_connection(conn_id):
 def delete_connection(conn_id):
     db = _db()
     try:
-        row = db.query(ExternalConnection).get(conn_id)
+        row = get_by_id_tenant(db, ExternalConnection, conn_id)
         if not row:
             return _err("연결을 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(row)
@@ -195,7 +196,7 @@ def delete_connection(conn_id):
 def test_connection(conn_id):
     db = _db()
     try:
-        row = db.query(ExternalConnection).get(conn_id)
+        row = get_by_id_tenant(db, ExternalConnection, conn_id)
         if not row:
             return _err("연결을 찾을 수 없습니다.", "NOT_FOUND", 404)
 

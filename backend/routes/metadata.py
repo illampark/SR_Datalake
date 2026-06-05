@@ -11,6 +11,7 @@ from backend.models.metadata import TagMetadata, DataLineage
 from backend.models.catalog import DataCatalog
 from backend.models.pipeline import Pipeline, PipelineBinding
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 metadata_bp = Blueprint("metadata", __name__, url_prefix="/api/metadata")
 
@@ -47,7 +48,7 @@ def list_tag_metadata():
         sensitivity_filter = request.args.get("sensitivity", "")
         data_level_filter = request.args.get("data_level", "")
 
-        q = db.query(TagMetadata)
+        q = filter_by_tenant(db.query(TagMetadata), TagMetadata)
         if connector_type:
             q = q.filter(TagMetadata.connector_type == connector_type)
         if connector_id:
@@ -97,7 +98,7 @@ def list_tag_metadata():
 def get_tag_metadata(tid):
     db = _db()
     try:
-        m = db.query(TagMetadata).get(tid)
+        m = get_by_id_tenant(db, TagMetadata, tid)
         if not m:
             return _err("메타데이터를 찾을 수 없습니다.", "NOT_FOUND", 404)
         d = m.to_dict()
@@ -113,7 +114,7 @@ def get_tag_metadata(tid):
 def update_tag_metadata(tid):
     db = _db()
     try:
-        m = db.query(TagMetadata).get(tid)
+        m = get_by_id_tenant(db, TagMetadata, tid)
         if not m:
             return _err("메타데이터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -219,7 +220,7 @@ def list_lineage():
         pipeline_id = request.args.get("pipeline_id", 0, type=int)
         connector_type = request.args.get("connector_type", "")
 
-        q = db.query(DataLineage)
+        q = filter_by_tenant(db.query(DataLineage), DataLineage)
         if pipeline_id:
             q = q.filter(DataLineage.pipeline_id == pipeline_id)
         if connector_type:
@@ -244,7 +245,7 @@ def list_lineage():
 def get_lineage(lid):
     db = _db()
     try:
-        l = db.query(DataLineage).get(lid)
+        l = get_by_id_tenant(db, DataLineage, lid)
         if not l:
             return _err("계보 정보를 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(l.to_dict())
@@ -274,7 +275,7 @@ def unified_tag_search():
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", get_default_page_size(), type=int)
 
-        q = db.query(TagMetadata)
+        q = filter_by_tenant(db.query(TagMetadata), TagMetadata)
         if q_str:
             q = q.filter(or_(
                 TagMetadata.tag_name.ilike(f"%{q_str}%"),
@@ -366,7 +367,7 @@ def tag_coverage():
         connector_type = request.args.get("connector_type", "")
         connector_id = request.args.get("connector_id", 0, type=int)
 
-        q = db.query(TagMetadata)
+        q = filter_by_tenant(db.query(TagMetadata), TagMetadata)
         if connector_type:
             q = q.filter(TagMetadata.connector_type == connector_type)
         if connector_id:
@@ -502,7 +503,7 @@ def tag_patterns():
     try:
         connector_type = request.args.get("connector_type", "")
 
-        q = db.query(TagMetadata)
+        q = filter_by_tenant(db.query(TagMetadata), TagMetadata)
         if connector_type:
             q = q.filter(TagMetadata.connector_type == connector_type)
         tags = q.all()

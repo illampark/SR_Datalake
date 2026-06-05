@@ -637,7 +637,7 @@ def syslog_list():
         page = max(1, int(request.args.get("page", 1)))
         size = min(200, max(10, int(request.args.get("size", get_default_page_size()))))
 
-        q = db.query(SystemLog).order_by(SystemLog.timestamp.desc())
+        q = filter_by_tenant_or_null(db.query(SystemLog), SystemLog).order_by(SystemLog.timestamp.desc())
 
         if level:
             q = q.filter(SystemLog.level == level.upper())
@@ -789,7 +789,7 @@ def syslog_export():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
 
-        q = db.query(SystemLog).order_by(SystemLog.timestamp.desc())
+        q = filter_by_tenant_or_null(db.query(SystemLog), SystemLog).order_by(SystemLog.timestamp.desc())
         if level:
             q = q.filter(SystemLog.level == level.upper())
         if component:
@@ -841,6 +841,7 @@ def syslog_export():
 
 from backend.models.audit import AuditLog
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, filter_by_tenant_or_null
 
 
 # ──────────────────────────────────────────────
@@ -860,7 +861,7 @@ def audit_list():
         page = max(1, int(request.args.get("page", 1)))
         size = min(200, max(10, int(request.args.get("size", get_default_page_size()))))
 
-        q = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
+        q = filter_by_tenant(db.query(AuditLog), AuditLog).order_by(AuditLog.timestamp.desc())
 
         if username:
             q = q.filter(AuditLog.username == username)
@@ -1005,7 +1006,7 @@ def audit_export():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
 
-        q = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
+        q = filter_by_tenant(db.query(AuditLog), AuditLog).order_by(AuditLog.timestamp.desc())
         if username:
             q = q.filter(AuditLog.username == username)
         if action_type:

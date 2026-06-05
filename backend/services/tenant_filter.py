@@ -81,3 +81,16 @@ def inject_tenant(obj: Any) -> Any:
     if hasattr(obj, "tenant_id") and getattr(obj, "tenant_id", None) is None:
         obj.tenant_id = _current_tenant_id()
     return obj
+
+
+def filter_by_tenant_or_null(query, model):
+    """현재 tenant 의 행 + tenant_id IS NULL 행 모두 포함 - system_log 등 nullable 모델용.
+
+    NULL = 시스템 레벨 행 (부팅, 마이그, 관리자 작업). tenant_admin 도 시스템 로그는
+    조회할 수 있도록 OR 조건을 사용. super_admin 도 동일 (자기 tenant + NULL).
+    """
+    from sqlalchemy import or_
+    if not hasattr(model, "tenant_id"):
+        return query
+    tid = _current_tenant_id()
+    return query.filter(or_(model.tenant_id == tid, model.tenant_id.is_(None)))
