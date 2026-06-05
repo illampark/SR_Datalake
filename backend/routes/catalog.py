@@ -14,7 +14,7 @@ from backend.models.catalog import DataCatalog, CatalogSearchTag, DataRecipe, Ag
 from backend.models.storage import TimeSeriesData
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 from backend.services.minio_buckets import bucket_for
 
 # 대용량 export — 메모리 적재 없이 chunked HTTP 응답으로 흘려보냄.
@@ -233,12 +233,13 @@ def list_catalogs():
         total = q.count()
         rows = q.order_by(DataCatalog.id.desc()).offset((page - 1) * size).limit(size).all()
 
-        # 집계 통계 (stat 카드용)
-        published_count = db.query(func.count(DataCatalog.id)).filter(
-            DataCatalog.is_published == True  # noqa: E712
-        ).scalar() or 0
-        connector_type_count = db.query(
-            func.count(func.distinct(DataCatalog.connector_type))
+        # 집계 통계 (stat 카드용) - Phase 8: 자기 tenant 만
+        published_count = filter_by_tenant(
+            db.query(func.count(DataCatalog.id)), DataCatalog
+        ).filter(DataCatalog.is_published == True).scalar() or 0  # noqa: E712
+        connector_type_count = filter_by_tenant(
+            db.query(func.count(func.distinct(DataCatalog.connector_type))),
+            DataCatalog,
         ).scalar() or 0
 
         return _ok({
@@ -269,7 +270,7 @@ def get_catalog(cid):
         # 실시간 메타데이터 통계 조회
         from backend.models.metadata import TagMetadata
         if c.tag_name:
-            meta = db.query(TagMetadata).filter_by(
+            meta = filter_by_tenant(db.query(TagMetadata), TagMetadata).filter_by(
                 connector_type=c.connector_type,
                 connector_id=c.connector_id,
                 tag_name=c.tag_name,
@@ -288,7 +289,7 @@ def get_catalog(cid):
                 }
         else:
             # 커넥터 레벨: 전체 태그 집계 통계
-            metas = db.query(TagMetadata).filter_by(
+            metas = filter_by_tenant(db.query(TagMetadata), TagMetadata).filter_by(
                 connector_type=c.connector_type,
                 connector_id=c.connector_id,
             ).all()
@@ -679,21 +680,21 @@ def search_catalog():
         if not q_str:
             return _err("검색어를 입력해주세요.")
 
-        # 카탈로그 이름/설명/커넥터 설명 검색 + 검색 태그 검색
-        by_name = db.query(DataCatalog).filter(
+        # 카탈로그 이름/설명/커넥터 설명 검색 + 검색 태그 검색 (자기 tenant)
+        by_name = filter_by_tenant(db.query(DataCatalog), DataCatalog).filter(
             (DataCatalog.name.ilike(f"%{q_str}%")) |
             (DataCatalog.description.ilike(f"%{q_str}%")) |
             (DataCatalog.connector_description.ilike(f"%{q_str}%"))
         ).all()
 
-        tag_ids = db.query(CatalogSearchTag.catalog_id).filter(
-            CatalogSearchTag.tag.ilike(f"%{q_str}%")
-        ).distinct().all()
+        tag_ids = filter_by_tenant(
+            db.query(CatalogSearchTag.catalog_id), CatalogSearchTag
+        ).filter(CatalogSearchTag.tag.ilike(f"%{q_str}%")).distinct().all()
         tag_catalog_ids = {r[0] for r in tag_ids}
 
         by_tag = []
         if tag_catalog_ids:
-            by_tag = db.query(DataCatalog).filter(
+            by_tag = filter_by_tenant(db.query(DataCatalog), DataCatalog).filter(
                 DataCatalog.id.in_(tag_catalog_ids)
             ).all()
 
@@ -717,7 +718,9 @@ def search_catalog():
 def list_categories():
     db = _db()
     try:
-        rows = db.query(DataCatalog.category).distinct().all()
+        rows = filter_by_tenant(
+            db.query(DataCatalog.category), DataCatalog
+        ).distinct().all()
         categories = [r[0] for r in rows if r[0]]
         return _ok(categories)
     finally:
@@ -731,7 +734,7 @@ def list_categories():
 def catalog_tree():
     db = _db()
     try:
-        rows = db.query(DataCatalog).filter(
+        rows = filter_by_tenant(db.query(DataCatalog), DataCatalog).filter(
             DataCatalog.is_deprecated == False  # noqa: E712
         ).order_by(DataCatalog.connector_type, DataCatalog.connector_id).all()
 
