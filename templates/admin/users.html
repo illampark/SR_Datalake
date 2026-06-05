@@ -453,6 +453,11 @@ function createUser() {
     success: function(res) {
       if (res.success) { closeModal(); showToast(__t('page.users.toast_user_added'), 'success'); loadUsers(); loadRoles(); }
       else { showToast(res.error.message, 'error'); }
+    },
+    error: function(xhr) {
+      var msg = (xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.message)
+                || ('요청 실패 (HTTP ' + xhr.status + ')');
+      showToast(msg, 'error');
     }
   });
 }
@@ -511,6 +516,11 @@ function updateUser(userId) {
     success: function(res) {
       if (res.success) { closeModal(); showToast(__t('page.users.toast_user_updated'), 'success'); loadUsers(); loadRoles(); }
       else { showToast(res.error.message, 'error'); }
+    },
+    error: function(xhr) {
+      var msg = (xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.message)
+                || ('요청 실패 (HTTP ' + xhr.status + ')');
+      showToast(msg, 'error');
     }
   });
 }
