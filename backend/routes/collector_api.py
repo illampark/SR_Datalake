@@ -108,7 +108,7 @@ def create_connector():
         if not base_url:
             return _err("Base URL은 필수입니다.", "VALIDATION")
 
-        if db.query(ApiConnector).filter_by(name=name).first():
+        if filter_by_tenant(db.query(ApiConnector), ApiConnector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
         c = ApiConnector(
@@ -525,13 +525,13 @@ def delete_endpoint(cid, eid):
 def summary():
     db = _db()
     try:
-        total = db.query(func.count(ApiConnector.id)).scalar()
-        running = db.query(func.count(ApiConnector.id)).filter(ApiConnector.status == "running").scalar()
-        total_requests = db.query(func.coalesce(func.sum(ApiConnector.request_count), 0)).scalar()
-        total_errors = db.query(func.coalesce(func.sum(ApiConnector.error_count), 0)).scalar()
-        avg_resp = db.query(func.coalesce(func.avg(ApiConnector.avg_response_ms), 0)).scalar()
+        total = filter_by_tenant(db.query(func.count(ApiConnector.id)), ApiConnector).scalar()
+        running = filter_by_tenant(db.query(func.count(ApiConnector.id)), ApiConnector).filter(ApiConnector.status == "running").scalar()
+        total_requests = filter_by_tenant(db.query(func.coalesce(func.sum(ApiConnector.request_count), 0)), ApiConnector).scalar()
+        total_errors = filter_by_tenant(db.query(func.coalesce(func.sum(ApiConnector.error_count), 0)), ApiConnector).scalar()
+        avg_resp = filter_by_tenant(db.query(func.coalesce(func.avg(ApiConnector.avg_response_ms), 0)), ApiConnector).scalar()
 
-        total_endpoints = db.query(func.count(ApiEndpoint.id)).scalar()
+        total_endpoints = filter_by_tenant(db.query(func.count(ApiEndpoint.id)), ApiEndpoint).scalar()
 
         return _ok({
             "totalConnectors": total,

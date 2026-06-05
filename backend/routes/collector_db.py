@@ -107,7 +107,7 @@ def create_connector():
         if not name:
             return _err("커넥터명은 필수입니다.", "VALIDATION")
 
-        if db.query(DbConnector).filter_by(name=name).first():
+        if filter_by_tenant(db.query(DbConnector), DbConnector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
         db_type = body.get("dbType", "mysql")
@@ -500,12 +500,12 @@ def delete_tag(cid, tid):
 def summary():
     db = _db()
     try:
-        total = db.query(func.count(DbConnector.id)).scalar()
-        running = db.query(func.count(DbConnector.id)).filter(DbConnector.status == "running").scalar()
-        total_rows = db.query(func.coalesce(func.sum(DbConnector.row_count), 0)).scalar()
+        total = filter_by_tenant(db.query(func.count(DbConnector.id)), DbConnector).scalar()
+        running = filter_by_tenant(db.query(func.count(DbConnector.id)), DbConnector).filter(DbConnector.status == "running").scalar()
+        total_rows = filter_by_tenant(db.query(func.coalesce(func.sum(DbConnector.row_count), 0)), DbConnector).scalar()
 
         # Count total monitored tables (supports both string and object array)
-        all_connectors = db.query(DbConnector).all()
+        all_connectors = filter_by_tenant(db.query(DbConnector), DbConnector).all()
         table_count = 0
         for c in all_connectors:
             cfg = c.config or {}

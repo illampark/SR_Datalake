@@ -100,7 +100,7 @@ def create_connector():
         if not name:
             return _err("커넥터명은 필수입니다.", "VALIDATION")
 
-        if db.query(MqttConnector).filter_by(name=name).first():
+        if filter_by_tenant(db.query(MqttConnector), MqttConnector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
         host = body.get("host", "localhost")
@@ -468,12 +468,12 @@ def delete_tag(cid, tid):
 def summary():
     db = _db()
     try:
-        total = db.query(func.count(MqttConnector.id)).scalar()
-        running = db.query(func.count(MqttConnector.id)).filter(MqttConnector.status == "running").scalar()
-        total_rate = db.query(func.coalesce(func.sum(MqttConnector.message_rate), 0)).scalar()
+        total = filter_by_tenant(db.query(func.count(MqttConnector.id)), MqttConnector).scalar()
+        running = filter_by_tenant(db.query(func.count(MqttConnector.id)), MqttConnector).filter(MqttConnector.status == "running").scalar()
+        total_rate = filter_by_tenant(db.query(func.coalesce(func.sum(MqttConnector.message_rate), 0)), MqttConnector).scalar()
 
         # Count topics from config
-        all_connectors = db.query(MqttConnector).all()
+        all_connectors = filter_by_tenant(db.query(MqttConnector), MqttConnector).all()
         topic_count = 0
         for c in all_connectors:
             cfg = c.config or {}

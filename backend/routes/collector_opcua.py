@@ -101,7 +101,7 @@ def create_connector():
         if not name:
             return _err("커넥터명은 필수입니다.", "VALIDATION")
 
-        if db.query(OpcuaConnector).filter_by(name=name).first():
+        if filter_by_tenant(db.query(OpcuaConnector), OpcuaConnector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
         config = {
@@ -476,12 +476,12 @@ def delete_tag(cid, tid):
 def summary():
     db = _db()
     try:
-        total = db.query(func.count(OpcuaConnector.id)).scalar()
-        running = db.query(func.count(OpcuaConnector.id)).filter(OpcuaConnector.status == "running").scalar()
-        total_points = db.query(func.coalesce(func.sum(OpcuaConnector.point_count), 0)).scalar()
+        total = filter_by_tenant(db.query(func.count(OpcuaConnector.id)), OpcuaConnector).scalar()
+        running = filter_by_tenant(db.query(func.count(OpcuaConnector.id)), OpcuaConnector).filter(OpcuaConnector.status == "running").scalar()
+        total_points = filter_by_tenant(db.query(func.coalesce(func.sum(OpcuaConnector.point_count), 0)), OpcuaConnector).scalar()
 
         # Count total monitored node IDs
-        all_connectors = db.query(OpcuaConnector).all()
+        all_connectors = filter_by_tenant(db.query(OpcuaConnector), OpcuaConnector).all()
         node_count = 0
         for c in all_connectors:
             cfg = c.config or {}

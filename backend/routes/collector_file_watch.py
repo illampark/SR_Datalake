@@ -117,7 +117,7 @@ def create_collector():
         if not name:
             return _err("수집기명은 필수입니다.", "VALIDATION")
 
-        if db.query(FileCollector).filter_by(name=name).first():
+        if filter_by_tenant(db.query(FileCollector), FileCollector).filter_by(name=name).first():
             return _err(f"이미 존재하는 수집기명입니다: {name}", "DUPLICATE")
 
         watch_path = body.get("watchPath", "").strip()
@@ -563,13 +563,13 @@ def list_files(cid):
 def summary():
     db = _db()
     try:
-        total = db.query(func.count(FileCollector.id)).scalar()
-        running = db.query(func.count(FileCollector.id)).filter(
+        total = filter_by_tenant(db.query(func.count(FileCollector.id)), FileCollector).scalar()
+        running = filter_by_tenant(db.query(func.count(FileCollector.id)), FileCollector).filter(
             FileCollector.status == "running").scalar()
-        total_files = db.query(func.coalesce(
-            func.sum(FileCollector.file_count), 0)).scalar()
-        total_errors = db.query(func.coalesce(
-            func.sum(FileCollector.error_count), 0)).scalar()
+        total_files = filter_by_tenant(db.query(func.coalesce(
+            func.sum(FileCollector.file_count), 0)), FileCollector).scalar()
+        total_errors = filter_by_tenant(db.query(func.coalesce(
+            func.sum(FileCollector.error_count), 0)), FileCollector).scalar()
 
         return _ok({
             "totalCollectors": total,

@@ -104,7 +104,7 @@ def create_connector():
         if not name:
             return _err("커넥터명은 필수입니다.", "VALIDATION")
 
-        if db.query(ModbusConnector).filter_by(name=name).first():
+        if filter_by_tenant(db.query(ModbusConnector), ModbusConnector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
         modbus_type = body.get("modbusType", "tcp")
@@ -500,11 +500,11 @@ def delete_tag(cid, tid):
 def summary():
     db = _db()
     try:
-        total = db.query(func.count(ModbusConnector.id)).scalar()
-        running = db.query(func.count(ModbusConnector.id)).filter(ModbusConnector.status == "running").scalar()
-        total_points = db.query(func.coalesce(func.sum(ModbusConnector.point_count), 0)).scalar()
-        tcp_count = db.query(func.count(ModbusConnector.id)).filter(ModbusConnector.modbus_type == "tcp").scalar()
-        rtu_count = db.query(func.count(ModbusConnector.id)).filter(ModbusConnector.modbus_type == "rtu").scalar()
+        total = filter_by_tenant(db.query(func.count(ModbusConnector.id)), ModbusConnector).scalar()
+        running = filter_by_tenant(db.query(func.count(ModbusConnector.id)), ModbusConnector).filter(ModbusConnector.status == "running").scalar()
+        total_points = filter_by_tenant(db.query(func.coalesce(func.sum(ModbusConnector.point_count), 0)), ModbusConnector).scalar()
+        tcp_count = filter_by_tenant(db.query(func.count(ModbusConnector.id)), ModbusConnector).filter(ModbusConnector.modbus_type == "tcp").scalar()
+        rtu_count = filter_by_tenant(db.query(func.count(ModbusConnector.id)), ModbusConnector).filter(ModbusConnector.modbus_type == "rtu").scalar()
 
         return _ok({
             "totalConnectors": total,

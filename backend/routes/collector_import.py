@@ -157,12 +157,12 @@ def list_imports():
 def summary():
     db = _db()
     try:
-        total = db.query(func.count(ImportCollector.id)).scalar() or 0
-        completed = db.query(func.count(ImportCollector.id))\
+        total = filter_by_tenant(db.query(func.count(ImportCollector.id)), ImportCollector).scalar() or 0
+        completed = filter_by_tenant(db.query(func.count(ImportCollector.id)), ImportCollector)\
             .filter(ImportCollector.status == "completed").scalar() or 0
-        running = db.query(func.count(ImportCollector.id))\
+        running = filter_by_tenant(db.query(func.count(ImportCollector.id)), ImportCollector)\
             .filter(ImportCollector.status == "running").scalar() or 0
-        errors = db.query(func.count(ImportCollector.id))\
+        errors = filter_by_tenant(db.query(func.count(ImportCollector.id)), ImportCollector)\
             .filter(ImportCollector.status == "error").scalar() or 0
         return _ok({
             "total": int(total),
@@ -202,7 +202,7 @@ def create_import():
         name = body.get("name", "").strip()
         if not name:
             return _err("커넥터명은 필수입니다.", "VALIDATION")
-        if db.query(ImportCollector).filter_by(name=name).first():
+        if filter_by_tenant(db.query(ImportCollector), ImportCollector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
         c = ImportCollector(
