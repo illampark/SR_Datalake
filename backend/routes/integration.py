@@ -117,6 +117,13 @@ def create_connection():
         if body["connection_type"] not in valid_types:
             return _err(f"connection_type은 {valid_types} 중 하나여야 합니다.", "VALIDATION")
 
+        # self-tenant 내 이름 중복 사전 차단 (DB UNIQUE(tenant_id,name) 의 친절한 에러 대체)
+        exists = filter_by_tenant(
+            db.query(ExternalConnection), ExternalConnection
+        ).filter(ExternalConnection.name == body["name"]).first()
+        if exists:
+            return _err(f"이미 존재하는 연결명입니다: {body['name']}", "DUPLICATE")
+
         row = ExternalConnection(
             name=body["name"],
             connection_type=body["connection_type"],
@@ -155,6 +162,18 @@ def update_connection(conn_id):
 
         body = request.get_json(force=True)
         body = normalize_camel_to_snake(body)
+
+        # name 변경 시 self-tenant 내 중복 사전 차단
+        if "name" in body and body["name"] and body["name"] != row.name:
+            exists = filter_by_tenant(
+                db.query(ExternalConnection), ExternalConnection
+            ).filter(
+                ExternalConnection.name == body["name"],
+                ExternalConnection.id != conn_id,
+            ).first()
+            if exists:
+                return _err(f"이미 존재하는 연결명입니다: {body['name']}", "DUPLICATE")
+
         for field in [
             "name", "host", "port", "database_name", "username", "password",
             "config", "enabled", "description",

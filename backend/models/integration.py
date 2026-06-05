@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, UniqueConstraint
 from backend.database import Base
 from backend.models._mixins import TenantScopedMixin
 
@@ -7,6 +7,9 @@ from backend.models._mixins import TenantScopedMixin
 class ExternalConnection(Base, TenantScopedMixin):
     """외부 연동 연결 설정 (시계열DB / 관계형DB / Kafka / 파일 스토리지)"""
     __tablename__ = "external_connection"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="external_connection_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
