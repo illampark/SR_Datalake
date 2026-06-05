@@ -756,19 +756,49 @@ def auth_login():
                             ip_address=ip, user_agent=ua, detail="로그인 성공"))
         db.commit()
 
-        # 세션 설정
+        # 세션 설정 (legacy 2-role)
         session.permanent = True
         session["user_id"] = user.id
         session["username"] = user.username
         session["display_name"] = user.display_name
         session["role"] = user.role
 
+        # Phase 2: tenant 컨텍스트 주입 (4-role + is_super)
+        # claudedocs/multitenant-design-v1.md § 6 — 1 user = 1 tenant (Phase 1 D6)
+        # 마이그레이션 전 배포 케이스도 안전하게 처리: 멤버십 조회 실패 시 legacy
+        # role 을 4-role 로 매핑한 기본값(tenant=1)을 사용.
+        from backend.services.rbac import map_legacy_role_to_tenant_role
+        tenant_id_val = 1
+        tenant_role_val = map_legacy_role_to_tenant_role(user.role)
+        try:
+            from backend.models.tenant import TenantMembership
+            membership = db.query(TenantMembership).filter(
+                TenantMembership.user_id == user.id
+            ).first()
+            if membership:
+                tenant_id_val = membership.tenant_id
+                tenant_role_val = membership.role
+        except Exception as e:
+            # tenant_membership 테이블이 아직 없는 경우(마이그 전 배포). 기본값 유지.
+            logger.warning("tenant membership lookup skipped (pre-migration?): %s", e)
+        session["tenant_id"] = tenant_id_val
+        session["tenant_role"] = tenant_role_val
+        session["is_super"] = bool(getattr(user, "is_super", False))
+
         log_audit("login", "auth.login", "", "", username=username)
-        logger.info("로그인 성공: %s (%s) from %s", username, user.role, ip)
+        logger.info(
+            "로그인 성공: %s (legacy=%s, tenant=%s/%s, super=%s) from %s",
+            username, user.role, tenant_id_val, tenant_role_val,
+            session["is_super"], ip,
+        )
         resp = _ok({
             "username": user.username,
             "displayName": user.display_name,
             "role": user.role,
+            # Phase 2 신규 노출 (프론트가 점진 활용)
+            "tenantId": tenant_id_val,
+            "tenantRole": tenant_role_val,
+            "isSuper": session["is_super"],
         })
         # 타 Flask 앱의 스테일 쿠키(Flask-Login 'session', 'remember_token') 만료
         for legacy_name in ("session", "remember_token"):
@@ -811,7 +841,7 @@ def auth_logout():
 
 @admin_bp.route("/auth/me", methods=["GET"])
 def auth_me():
-    """현재 로그인된 사용자 정보"""
+    """현재 로그인된 사용자 정보 — Phase 2 부터 tenant 컨텍스트도 함께 반환."""
     if "user_id" not in session:
         return _err("로그인이 필요합니다.", "UNAUTHORIZED", 401)
     return _ok({
@@ -819,6 +849,10 @@ def auth_me():
         "username": session["username"],
         "displayName": session["display_name"],
         "role": session["role"],
+        # Phase 2 신규: tenant 컨텍스트. 마이그 전 로그인 세션은 기본값(1 / tenant_viewer / False).
+        "tenantId": session.get("tenant_id", 1),
+        "tenantRole": session.get("tenant_role", "tenant_viewer"),
+        "isSuper": bool(session.get("is_super", False)),
     })
 
 

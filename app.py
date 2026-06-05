@@ -204,6 +204,34 @@ def require_login():
     return redirect("/login")
 
 
+# ── Tenant Context Injection (Phase 2) ──
+# claudedocs/multitenant-design-v1.md § 6 — 세션/API 키에서 tenant_id 등을 g 에 주입.
+# require_login 다음, enforce_rbac 직전에 실행되어야 한다 (등록 순서로 보장).
+@app.before_request
+def inject_tenant_context():
+    """g.tenant_id / g.tenant_role / g.is_super 주입.
+
+    MULTITENANT_MODE=off 일 때도 안전한 기본값(tenant_id=1, tenant_viewer)을 주입한다.
+    Phase 4 이후 라우트가 g.tenant_id 로 쿼리 필터링을 적용한다.
+    """
+    allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/",
+                     "/api/storage/file/minio-events")
+    if any(request.path == p or request.path.startswith(p) for p in allowed_paths):
+        return None
+    if "/callback" in request.path or request.method == "OPTIONS":
+        return None
+    from flask import g
+    # API 키 인증 경로: authenticate_api_key 가 향후(Phase 6) g.tenant_id 를 세팅한다.
+    # 그 전엔 키도 tenant=1 으로 본다.
+    if getattr(g, "tenant_id", None) is None:
+        g.tenant_id = session.get("tenant_id", 1) if "user_id" in session else 1
+    if getattr(g, "tenant_role", None) is None:
+        g.tenant_role = session.get("tenant_role", "tenant_viewer")
+    if getattr(g, "is_super", None) is None:
+        g.is_super = bool(session.get("is_super", False))
+    return None
+
+
 # ── RBAC Middleware ──
 @app.before_request
 def enforce_rbac():
@@ -229,11 +257,23 @@ def enforce_rbac():
     return enforce_request_rbac()
 
 
-# ── Jinja Context: is_admin ──
+# ── Jinja Context: is_admin + tenant info (Phase 2 확장) ──
 @app.context_processor
 def _inject_rbac():
-    from backend.services.rbac import is_admin, current_role
-    return {"is_admin": is_admin(), "current_role": current_role()}
+    from backend.services.rbac import (
+        is_admin, current_role,
+        current_tenant_id, current_tenant_role, is_super, is_impersonating,
+    )
+    return {
+        "is_admin": is_admin(),
+        "current_role": current_role(),
+        # Phase 2: 템플릿에서도 4-role / tenant 컨텍스트 노출. MULTITENANT_MODE=off 일 땐
+        # 안전 기본값(1 / tenant_viewer / False) 가 반환된다.
+        "current_tenant_id": current_tenant_id(),
+        "current_tenant_role": current_tenant_role(),
+        "is_super": is_super(),
+        "is_impersonating": is_impersonating(),
+    }
 
 
 # ── Login Page ──

@@ -190,3 +190,68 @@ def map_legacy_role_to_tenant_role(raw) -> str:
     if v == "viewer":
         return "tenant_viewer"
     return "tenant_viewer"
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Phase 2 (add-only) — tenant 컨텍스트 조회 헬퍼.
+#
+# 모두 read-only 함수. 라우트·서비스 코드가 g / session 에서 안전하게 값을 얻기
+# 위한 단일 접근 지점. before_request 의 inject_tenant_context (app.py) 가
+# g 에 값을 주입한 뒤 이 함수들로 접근.
+#
+# MULTITENANT_MODE=off 일 때도 안전한 기본값(tenant=1) 반환 → 단일테넌트
+# 동작 호환.
+# ────────────────────────────────────────────────────────────────────────
+
+def current_tenant_id():
+    """현재 요청의 tenant_id.
+
+    우선순위:
+      1) g.tenant_id (before_request 가 세션 또는 API 키에서 채움)
+      2) 세션의 tenant_id
+      3) 기본값 1 (legacy default tenant)
+    """
+    tid = getattr(g, "tenant_id", None)
+    if tid is not None:
+        return tid
+    sid = session.get("tenant_id") if session else None
+    if sid is not None:
+        return sid
+    return 1
+
+
+def current_tenant_role():
+    """현재 요청의 4-role 값 (tenant_admin / tenant_editor / tenant_viewer).
+
+    super_admin 여부는 is_super() 로 별도 확인. 본 함수는 tenant 컨텍스트 안에서의
+    역할만 다룬다.
+    """
+    if getattr(g, "api_key_authenticated", False):
+        # Phase 6 에서 키 record 의 role 을 g.tenant_role 로 세팅. 그 전엔 viewer.
+        return getattr(g, "tenant_role", "tenant_viewer")
+    return session.get("tenant_role", "tenant_viewer")
+
+
+def is_super():
+    """super_admin 여부 (cross-tenant 권한자).
+
+    API 키 인증은 super 가 될 수 없음 (rbac-target-v1.md D10/R4).
+    """
+    if getattr(g, "api_key_authenticated", False):
+        return False
+    return bool(session.get("is_super", False))
+
+
+def is_impersonating():
+    """super_admin 이 특정 tenant 로 impersonate 중인지 (Phase 7 에서 실제 사용)."""
+    return bool(session.get("impersonate"))
+
+
+def tenant_role_at_least(min_role):
+    """4-role 등급 비교. super_admin 은 항상 통과."""
+    if is_super():
+        return True
+    if min_role not in TENANT_ROLE_RANK:
+        raise ValueError(f"unknown tenant role: {min_role}")
+    cur = current_tenant_role()
+    return TENANT_ROLE_RANK.get(cur, -1) >= TENANT_ROLE_RANK[min_role]
