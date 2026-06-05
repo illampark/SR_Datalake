@@ -211,6 +211,9 @@ def create_import():
             import_type=body.get("importType", "csv"),
             target_type=body.get("targetType", "tsdb"),
             target_id=body.get("targetId"),
+            # NOTE: target_id 가 다른 tenant 의 객체를 가리키는지는 target_type 별
+            #   모델 매핑 후 별도 검증 (TODO Phase 6) — 일단 ORM 가드가 cross-tenant
+            #   target_id 로 INSERT 자체를 막진 않으므로, sink 실행 시점에 추가 검증 필요.
             target_table=body.get("targetTable", ""),
             target_measurement=body.get("targetMeasurement", ""),
             target_bucket=body.get("targetBucket", bucket_for("files")),

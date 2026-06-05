@@ -153,12 +153,30 @@ def create_pipeline():
                 config=step_data.get("config", {}),
             ))
 
-        # Bindings 추가
+        # Bindings 추가 - cross-tenant 참조 가드 포함
+        _BIND_MODELS = {
+            "mqtt":   MqttConnector,
+            "db":     DbConnector,
+            "opcua":  OpcuaConnector,
+            "modbus": ModbusConnector,
+            "api":    ApiConnector,
+            "file":   FileCollector,
+        }
         for bind_data in body.get("bindings", []):
+            ctype = (bind_data.get("connectorType") or "").lower()
+            cid = bind_data.get("connectorId", 0)
+            # cross-tenant 참조 차단 - 명시된 connector 가 다른 tenant 의 것이면 거부
+            if cid and ctype in _BIND_MODELS:
+                _model = _BIND_MODELS[ctype]
+                if not get_by_id_tenant(db, _model, cid):
+                    return _err(
+                        f"connector {ctype}/{cid} 없거나 권한 없음",
+                        "FORBIDDEN", 403,
+                    )
             db.add(PipelineBinding(
                 pipeline_id=p.id,
-                connector_type=bind_data.get("connectorType", ""),
-                connector_id=bind_data.get("connectorId", 0),
+                connector_type=ctype,
+                connector_id=cid,
                 tag_filter=bind_data.get("tagFilter", "*"),
                 enabled=bind_data.get("enabled", True),
             ))
