@@ -37,6 +37,11 @@ from backend.routes import gateway_bp
 from backend.routes import import_bp
 from backend.routes.notice import notice_bp
 
+from backend.routes.sys import sys_bp
+from backend.routes.tenant_me import tenant_me_bp
+app.register_blueprint(sys_bp)
+app.register_blueprint(tenant_me_bp)
+
 app.register_blueprint(tsdb_bp)
 app.register_blueprint(rdbms_bp)
 app.register_blueprint(file_bp)
@@ -238,6 +243,23 @@ def inject_tenant_context():
     if getattr(g, "is_super", None) is None:
         g.is_super = bool(session.get("is_super", False))
     return None
+
+
+# ── Path Class Gate (Phase 7) ──
+@app.before_request
+def enforce_path_class():
+    """경로 4분류 가드 - SYSTEM_ONLY / TENANT_ADMIN_ONLY 등."""
+    allowed_paths = ("/login", "/api/admin/auth/login", "/api/admin/lang", "/static/",
+                     "/api/storage/file/minio-events")
+    from flask import request as _req
+    if any(_req.path == p or _req.path.startswith(p) for p in allowed_paths):
+        return None
+    if "/callback" in _req.path or _req.method == "OPTIONS":
+        return None
+    if "user_id" not in session and not getattr(__import__("flask").g, "api_key_authenticated", False):
+        return None  # 안전망
+    from backend.services.rbac import enforce_class_gate
+    return enforce_class_gate()
 
 
 # ── RBAC Middleware ──

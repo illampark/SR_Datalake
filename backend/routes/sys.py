@@ -1,0 +1,292 @@
+"""super_admin 콘솔 라우트 — Phase 7.
+
+claudedocs/multitenant-design-v1.md / rbac-target-v1.md § 9 (impersonate)
++ § 6 SYSTEM_ONLY 경로 분류.
+
+기능:
+- /api/sys/tenants — tenant CRUD (list/get/create/update/archive)
+- /api/sys/impersonate/start|stop — super_admin 이 특정 tenant 로 진입/복귀
+- /api/sys/usage/<tenant_id> — 사용량 미터링 (D15 빌링 미적용, 미터링만)
+
+모든 라우트는 require_super 데코레이터로 super_admin 검증.
+impersonate 중에도 super_admin 권한 유지 (rbac-target-v1.md § 5.2).
+"""
+
+from __future__ import annotations
+import logging
+from datetime import datetime
+from flask import Blueprint, request, session, g
+
+from backend.database import SessionLocal
+from backend.models.tenant import Tenant, TenantMembership
+from backend.models.user import User
+from backend.services.audit_logger import log_audit
+from backend.services.rbac import is_super
+from backend.services.tenant_provisioning import (
+    create_tenant_schema, provision_tenant_minio,
+)
+
+logger = logging.getLogger(__name__)
+sys_bp = Blueprint("sys", __name__, url_prefix="/api/sys")
+
+
+def _ok(data=None, meta=None):
+    out = {"success": True, "data": data, "error": None}
+    if meta is not None:
+        out["meta"] = meta
+    return out
+
+
+def _err(msg, code="ERROR", status=400):
+    from flask import jsonify
+    return jsonify({
+        "success": False, "data": None,
+        "error": {"code": code, "message": msg},
+    }), status
+
+
+def _require_super():
+    if not is_super():
+        return _err("super_admin only", "FORBIDDEN", 403)
+    return None
+
+
+# ─────────────────────── Tenant CRUD ───────────────────────
+
+@sys_bp.route("/tenants", methods=["GET"])
+def list_tenants():
+    """모든 tenant 목록 (super_admin only)."""
+    err = _require_super()
+    if err is not None:
+        return err
+    db = SessionLocal()
+    try:
+        rows = db.query(Tenant).order_by(Tenant.id).all()
+        return _ok([t.to_dict() for t in rows])
+    finally:
+        db.close()
+
+
+@sys_bp.route("/tenants/<int:tid>", methods=["GET"])
+def get_tenant(tid):
+    err = _require_super()
+    if err is not None:
+        return err
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).get(tid)
+        if not t:
+            return _err("tenant not found", "NOT_FOUND", 404)
+        return _ok(t.to_dict())
+    finally:
+        db.close()
+
+
+@sys_bp.route("/tenants", methods=["POST"])
+def create_tenant():
+    """신규 tenant 생성 + 자동 MinIO 버킷 프로비저닝.
+
+    body: { slug, name, plan? }
+    """
+    err = _require_super()
+    if err is not None:
+        return err
+    body = request.get_json(force=True) or {}
+    slug = (body.get("slug") or "").strip()
+    name = (body.get("name") or "").strip()
+    plan = body.get("plan", "default")
+    if not slug or not name:
+        return _err("slug, name 필수", "VALIDATION")
+
+    db = SessionLocal()
+    try:
+        if db.query(Tenant).filter_by(slug=slug).first():
+            return _err(f"slug '{slug}' 이미 존재", "CONFLICT", 409)
+        t = Tenant(slug=slug, name=name, status="active", plan=plan)
+        db.add(t)
+        db.flush()
+        # Phase 5: MinIO 버킷 자동 생성
+        try:
+            buckets = provision_tenant_minio(t.id)
+            logger.info("tenant %s buckets provisioned: %s", t.id, buckets)
+        except Exception as e:
+            logger.warning("tenant %s MinIO provision 실패: %s", t.id, e)
+        db.commit()
+        db.refresh(t)
+        log_audit("system", "tenant.create", "tenant", str(t.id),
+                  detail={"slug": slug, "name": name})
+        return _ok(t.to_dict()), 201
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@sys_bp.route("/tenants/<int:tid>", methods=["PATCH"])
+def update_tenant(tid):
+    """tenant 메타 변경 (name, plan, settings, status)."""
+    err = _require_super()
+    if err is not None:
+        return err
+    body = request.get_json(force=True) or {}
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).get(tid)
+        if not t:
+            return _err("tenant not found", "NOT_FOUND", 404)
+        if t.id == 0:
+            return _err("system tenant 변경 불가", "FORBIDDEN", 403)
+        for k in ("name", "plan", "status"):
+            if k in body:
+                setattr(t, k, body[k])
+        if "settings" in body and isinstance(body["settings"], dict):
+            t.settings = body["settings"]
+        db.commit()
+        db.refresh(t)
+        log_audit("system", "tenant.update", "tenant", str(tid),
+                  detail={k: body[k] for k in body if k in ("name","plan","status","settings")})
+        return _ok(t.to_dict())
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@sys_bp.route("/tenants/<int:tid>", methods=["DELETE"])
+def archive_tenant(tid):
+    """tenant soft-delete (archive). 실제 데이터·버킷 삭제는 별도 절차.
+
+    tenant 0/1 은 보호.
+    """
+    err = _require_super()
+    if err is not None:
+        return err
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).get(tid)
+        if not t:
+            return _err("tenant not found", "NOT_FOUND", 404)
+        if t.id in (0, 1):
+            return _err(f"tenant {tid} 은 보호 — 삭제 불가", "FORBIDDEN", 403)
+        t.status = "archived"
+        db.commit()
+        log_audit("system", "tenant.archive", "tenant", str(tid))
+        return _ok({"id": tid, "status": "archived"})
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ─────────────────────── Impersonate ───────────────────────
+
+@sys_bp.route("/impersonate/start", methods=["POST"])
+def impersonate_start():
+    """super_admin 이 특정 tenant 컨텍스트로 진입.
+
+    body: { tenant_id, reason? }
+    """
+    err = _require_super()
+    if err is not None:
+        return err
+    body = request.get_json(force=True) or {}
+    target_tid = body.get("tenant_id")
+    reason = body.get("reason", "")
+    if not target_tid:
+        return _err("tenant_id 필수", "VALIDATION")
+
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).get(int(target_tid))
+        if not t:
+            return _err("tenant not found", "NOT_FOUND", 404)
+
+        # 이전 컨텍스트 저장 (stop 시 복귀)
+        session["impersonate"] = {
+            "real_user_id": session["user_id"],
+            "real_tenant_id": session.get("tenant_id", 0),
+            "started_at": datetime.utcnow().isoformat(),
+            "reason": reason,
+        }
+        session["tenant_id"] = t.id
+        session["tenant_role"] = "tenant_admin"  # impersonate 시 기본 역할
+        session.modified = True  # nested dict 변경 명시
+        # is_super 는 그대로 (rbac-target-v1.md § 5.2)
+
+        log_audit("system", "impersonate.start", "tenant", str(t.id),
+                  detail={"reason": reason, "real_user": session["username"]})
+        logger.info("impersonate start: %s -> tenant %s (reason: %s)",
+                    session["username"], t.id, reason)
+        return _ok({
+            "tenant_id": t.id, "tenant_slug": t.slug, "tenant_name": t.name,
+        })
+    finally:
+        db.close()
+
+
+@sys_bp.route("/impersonate/stop", methods=["POST"])
+def impersonate_stop():
+    """impersonate 복귀."""
+    if not session.get("impersonate"):
+        return _err("impersonate 중이 아님", "VALIDATION")
+    meta = session["impersonate"]
+    revert_tid = meta.get("real_tenant_id", 0)
+    session["tenant_id"] = revert_tid
+    session["tenant_role"] = "super_admin"  # 원 컨텍스트는 super
+    session.pop("impersonate", None)
+    session.modified = True
+
+    log_audit("system", "impersonate.stop", "tenant", str(revert_tid),
+              detail={"duration_from": meta.get("started_at")})
+    return _ok({"reverted_to": revert_tid})
+
+
+# ─────────────────────── 사용량 미터링 ───────────────────────
+
+@sys_bp.route("/usage/<int:tid>", methods=["GET"])
+def tenant_usage(tid):
+    """tenant 사용량 — D15 빌링 미적용, 미터링만 수집·노출.
+
+    반환:
+        pipelines, imports, catalogs, mqtt_connectors, minio_objects, audit_events
+    """
+    err = _require_super()
+    if err is not None:
+        return err
+    db = SessionLocal()
+    try:
+        from sqlalchemy import text as sql_text
+        counts = {}
+        for table, key in [
+            ("pipeline", "pipelines"),
+            ("import_collector", "imports"),
+            ("data_catalog", "catalogs"),
+            ("mqtt_connector", "mqtt_connectors"),
+            ("db_connector", "db_connectors"),
+            ("opcua_connector", "opcua_connectors"),
+            ("modbus_connector", "modbus_connectors"),
+            ("api_connector", "api_connectors"),
+            ("file_collector", "file_collectors"),
+            ("minio_object", "minio_objects"),
+            ("audit_log", "audit_events"),
+            ("file_index", "file_index_rows"),
+        ]:
+            try:
+                counts[key] = db.execute(sql_text(
+                    f'SELECT COUNT(*) FROM "{table}" WHERE tenant_id = :tid'
+                ), {"tid": tid}).scalar()
+            except Exception:
+                counts[key] = 0
+        # MinIO bytes (minio_object)
+        try:
+            counts["minio_bytes"] = int(db.execute(sql_text(
+                "SELECT COALESCE(SUM(size), 0) FROM minio_object WHERE tenant_id = :tid"
+            ), {"tid": tid}).scalar() or 0)
+        except Exception:
+            counts["minio_bytes"] = 0
+        return _ok({"tenant_id": tid, "counts": counts})
+    finally:
+        db.close()

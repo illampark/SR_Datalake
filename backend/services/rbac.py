@@ -255,3 +255,51 @@ def tenant_role_at_least(min_role):
         raise ValueError(f"unknown tenant role: {min_role}")
     cur = current_tenant_role()
     return TENANT_ROLE_RANK.get(cur, -1) >= TENANT_ROLE_RANK[min_role]
+
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Phase 7 - 경로 4분류 (rbac-target-v1.md § 6)
+# ────────────────────────────────────────────────────────────────────────
+
+# SYSTEM_ONLY: super_admin 만
+_SYSTEM_ONLY_PREFIXES = (
+    "/api/sys/",
+)
+
+# TENANT_ADMIN_ONLY: tenant_admin 이상 (super_admin 도 통과)
+# 단, /api/tenant/me GET 은 모든 멤버 접근 가능 — 함수별로 _require_tenant_admin 처리
+_TENANT_ADMIN_ONLY_PREFIXES = (
+)
+
+
+def classify_path(path: str) -> str:
+    """경로를 PUBLIC / TENANT_SCOPED / TENANT_ADMIN_ONLY / SYSTEM_ONLY 로 분류."""
+    for p in _SYSTEM_ONLY_PREFIXES:
+        if path.startswith(p):
+            return "SYSTEM_ONLY"
+    for p in _TENANT_ADMIN_ONLY_PREFIXES:
+        if path.startswith(p):
+            return "TENANT_ADMIN_ONLY"
+    # /api/admin/auth/* 는 기존 PUBLIC 화이트리스트 분류로
+    return "TENANT_SCOPED"
+
+
+def enforce_class_gate():
+    """before_request 단계 — 경로 클래스별 강제 가드.
+
+    enforce_request_rbac 보다 상위에서 호출. SYSTEM_ONLY 는 super_admin 만,
+    TENANT_ADMIN_ONLY 는 tenant_admin 이상만 통과.
+
+    인증 면제 경로(login/static)는 호출 전에 require_login 에서 이미 차단됨.
+    """
+    from flask import request as _req
+    cls = classify_path(_req.path)
+    if cls == "SYSTEM_ONLY":
+        if not is_super():
+            return _forbidden()
+    elif cls == "TENANT_ADMIN_ONLY":
+        # super 도 통과
+        if not (is_super() or tenant_role_at_least("tenant_admin")):
+            return _forbidden()
+    return None
