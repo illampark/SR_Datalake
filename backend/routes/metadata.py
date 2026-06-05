@@ -67,15 +67,19 @@ def list_tag_metadata():
         total = q.count()
         rows = q.order_by(TagMetadata.id).offset((page - 1) * size).limit(size).all()
 
-        # 집계 통계 (stat 카드용)
-        total_tags_count = db.query(func.count(TagMetadata.id)).scalar() or 0
-        active_tags_count = db.query(func.count(TagMetadata.id)).filter(
-            TagMetadata.is_active == True  # noqa: E712
+        # 집계 통계 (stat 카드용) - Phase 8: 자기 tenant 만
+        total_tags_count = filter_by_tenant(
+            db.query(func.count(TagMetadata.id)), TagMetadata
         ).scalar() or 0
-        avg_quality_val = db.query(func.avg(TagMetadata.quality_score)).filter(
-            TagMetadata.is_active == True  # noqa: E712
-        ).scalar()
-        lineage_count_val = db.query(func.count(DataLineage.id)).scalar() or 0
+        active_tags_count = filter_by_tenant(
+            db.query(func.count(TagMetadata.id)), TagMetadata
+        ).filter(TagMetadata.is_active == True).scalar() or 0  # noqa: E712
+        avg_quality_val = filter_by_tenant(
+            db.query(func.avg(TagMetadata.quality_score)), TagMetadata
+        ).filter(TagMetadata.is_active == True).scalar()  # noqa: E712
+        lineage_count_val = filter_by_tenant(
+            db.query(func.count(DataLineage.id)), DataLineage
+        ).scalar() or 0
 
         return _ok({
             "items": [r.to_dict() for r in rows],
@@ -154,8 +158,8 @@ def metadata_availability():
     db = _db()
     try:
         return _ok({
-            "tagMetadataCount": db.query(TagMetadata).count(),
-            "lineageCount": db.query(DataLineage).count(),
+            "tagMetadataCount": filter_by_tenant(db.query(TagMetadata), TagMetadata).count(),
+            "lineageCount": filter_by_tenant(db.query(DataLineage), DataLineage).count(),
         })
     finally:
         db.close()
@@ -166,12 +170,12 @@ def tag_summary():
     db = _db()
     try:
         from sqlalchemy import Integer
-        rows = db.query(
+        rows = filter_by_tenant(db.query(
             TagMetadata.connector_type,
             func.count(TagMetadata.id).label("total"),
             func.sum(func.cast(TagMetadata.is_active == True, Integer)).label("active"),  # noqa: E712
             func.avg(TagMetadata.quality_score).label("avg_quality"),
-        ).group_by(TagMetadata.connector_type).all()
+        ), TagMetadata).group_by(TagMetadata.connector_type).all()
 
         summary = []
         for r in rows:
@@ -184,7 +188,7 @@ def tag_summary():
         return _ok(summary)
     except Exception:
         # 간단 fallback
-        rows = db.query(TagMetadata).all()
+        rows = filter_by_tenant(db.query(TagMetadata), TagMetadata).all()
         by_type = {}
         for r in rows:
             t = r.connector_type
@@ -294,10 +298,10 @@ def unified_tag_search():
             TagMetadata.tag_name,
         ).offset((page - 1) * size).limit(size).all()
 
-        # 배치로 파이프라인 바인딩 조회
-        all_bindings = db.query(PipelineBinding).join(Pipeline).filter(
-            Pipeline.enabled == True  # noqa: E712
-        ).all()
+        # 배치로 파이프라인 바인딩 조회 (자기 tenant)
+        all_bindings = filter_by_tenant(
+            db.query(PipelineBinding), PipelineBinding
+        ).join(Pipeline).filter(Pipeline.enabled == True).all()  # noqa: E712
         binding_map = {}
         for b in all_bindings:
             key = f"{b.connector_type}:{b.connector_id}"
@@ -310,11 +314,11 @@ def unified_tag_search():
                 "tagFilter": b.tag_filter,
             })
 
-        # 카탈로그 매핑 배치 조회
+        # 카탈로그 매핑 배치 조회 (자기 tenant)
         catalog_map = {}
-        catalogs = db.query(DataCatalog).filter(
-            DataCatalog.is_deprecated == False  # noqa: E712
-        ).all()
+        catalogs = filter_by_tenant(
+            db.query(DataCatalog), DataCatalog
+        ).filter(DataCatalog.is_deprecated == False).all()  # noqa: E712
         for c in catalogs:
             ckey = f"{c.connector_type}:{c.connector_id}:{c.tag_name}"
             catalog_map[ckey] = {
@@ -375,8 +379,10 @@ def tag_coverage():
 
         tags = q.order_by(TagMetadata.connector_type, TagMetadata.tag_name).all()
 
-        # 바인딩 조회
-        bindings = db.query(PipelineBinding).join(Pipeline).all()
+        # 바인딩 조회 (자기 tenant)
+        bindings = filter_by_tenant(
+            db.query(PipelineBinding), PipelineBinding
+        ).join(Pipeline).all()
         binding_map = defaultdict(list)
         for b in bindings:
             key = f"{b.connector_type}:{b.connector_id}"
@@ -440,8 +446,8 @@ def tag_pipelines():
         if not tag_name:
             return _err("태그명(tag) 파라미터가 필요합니다.", "VALIDATION")
 
-        # 바인딩에서 매칭되는 파이프라인 찾기
-        bq = db.query(PipelineBinding).join(Pipeline)
+        # 바인딩에서 매칭되는 파이프라인 찾기 (자기 tenant)
+        bq = filter_by_tenant(db.query(PipelineBinding), PipelineBinding).join(Pipeline)
         if connector_type:
             bq = bq.filter(PipelineBinding.connector_type == connector_type)
         if connector_id:
@@ -459,9 +465,9 @@ def tag_pipelines():
                     p = b.pipeline
                     # 이 파이프라인의 sink 카탈로그 조회
                     from backend.models.catalog import DataCatalog
-                    sink_cats = db.query(DataCatalog).filter_by(
-                        connector_type="pipeline", pipeline_id=p.id
-                    ).all()
+                    sink_cats = filter_by_tenant(
+                        db.query(DataCatalog), DataCatalog
+                    ).filter_by(connector_type="pipeline", pipeline_id=p.id).all()
 
                     matched_pipelines.append({
                         "pipelineId": p.id,
@@ -478,10 +484,10 @@ def tag_pipelines():
                         "sinkCatalogs": [{"id": sc.id, "name": sc.name, "sinkType": sc.sink_type} for sc in sink_cats],
                     })
 
-        # DataLineage에서 추가 이력 조회
-        lineage_count = db.query(func.count(DataLineage.id)).filter(
-            DataLineage.source_tag == tag_name,
-        ).scalar() or 0
+        # DataLineage에서 추가 이력 조회 (자기 tenant)
+        lineage_count = filter_by_tenant(
+            db.query(func.count(DataLineage.id)), DataLineage
+        ).filter(DataLineage.source_tag == tag_name).scalar() or 0
 
         return _ok({
             "tagName": tag_name,
