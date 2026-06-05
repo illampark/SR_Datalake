@@ -348,7 +348,7 @@ def _table_browse(bucket, file_type, search, page, size):
 @file_bp.route("/browse", methods=["GET"])
 def browse_files():
     try:
-        bucket = request.args.get("bucket", MINIO_BUCKETS[0])
+        bucket = request.args.get("bucket", bucket_for("files"))
         file_type = request.args.get("type", "")
         search = request.args.get("search", "").lower()
         page = request.args.get("page", 1, type=int)
@@ -553,7 +553,7 @@ def upload_file():
         if not files or files[0].filename == "":
             return _err("파일이 선택되지 않았습니다.", "VALIDATION")
 
-        bucket = request.form.get("bucket", MINIO_BUCKETS[0])
+        bucket = request.form.get("bucket", bucket_for("files"))
         path = request.form.get("path", "").strip("/")
 
         client = _get_minio()
@@ -729,7 +729,7 @@ def _render_preview_payload(read_bytes, size, ext, raw_url, object_name, bucket,
 def preview_file():
     """파일 미리보기 — 텍스트 컨텐츠 일부 또는 raw 스트리밍 URL 반환."""
     try:
-        bucket = request.args.get("bucket") or MINIO_BUCKETS[0]
+        bucket = request.args.get("bucket") or bucket_for("files")
         object_name = request.args.get("objectName") or request.args.get("object_name")
         max_bytes = request.args.get("maxBytes", _PREVIEW_MAX_BYTES_DEFAULT, type=int)
         if not object_name:
@@ -775,7 +775,7 @@ def raw_file():
     """파일 원본 inline 스트리밍 (이미지/PDF 미리보기 src 용)."""
     from flask import Response, stream_with_context
     try:
-        bucket = request.args.get("bucket") or MINIO_BUCKETS[0]
+        bucket = request.args.get("bucket") or bucket_for("files")
         object_name = request.args.get("objectName") or request.args.get("object_name")
         if not object_name:
             return _err("objectName 이 필요합니다.", "VALIDATION")
@@ -835,7 +835,7 @@ def delete_files_batch():
         deleted = 0
         errors = []
         for f in files:
-            bucket = f.get("bucket") or MINIO_BUCKETS[0]
+            bucket = f.get("bucket") or bucket_for("files")
             object_name = f.get("objectName") or f.get("object_name")
             if not object_name:
                 errors.append({"bucket": bucket, "objectName": "", "error": "objectName 누락"})
@@ -863,7 +863,7 @@ def delete_files_batch():
 def delete_file():
     try:
         body = request.get_json(force=True)
-        bucket = body.get("bucket", MINIO_BUCKETS[0])
+        bucket = body.get("bucket", bucket_for("files"))
         object_name = body.get("objectName") or body.get("object_name")
 
         if not object_name:
@@ -890,7 +890,7 @@ def delete_file():
 @file_bp.route("/download", methods=["GET"])
 def download_file():
     try:
-        bucket = request.args.get("bucket", MINIO_BUCKETS[0])
+        bucket = request.args.get("bucket", bucket_for("files"))
         object_name = request.args.get("objectName") or request.args.get("object_name")
 
         if not object_name:

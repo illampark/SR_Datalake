@@ -8,6 +8,7 @@ from backend.services import mqtt_manager
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.minio_buckets import bucket_for
 
 file_watch_bp = Blueprint("collector_file_watch", __name__, url_prefix="/api/connectors/file")
 
@@ -148,7 +149,7 @@ def create_collector():
             archive_path=body.get("archivePath", ""),
             parser_type=body.get("parserType", "line"),
             storage_mode=body.get("storageMode", "parse"),
-            target_bucket=body.get("targetBucket", "sdl-files"),
+            target_bucket=body.get("targetBucket", bucket_for("files")),
             target_path_prefix=body.get("targetPathPrefix", "raw/{collector_id}/{date}/"),
         )
         db.add(c)
@@ -250,7 +251,7 @@ def update_collector(cid):
                 c.modified_only, c.poll_interval, c.post_action, c.archive_path,
                 c.encoding, c.parser_type, _callback_url(),
                 c.storage_mode or "parse",
-                c.target_bucket or "sdl-files",
+                c.target_bucket or bucket_for("files"),
                 c.target_path_prefix or "raw/{collector_id}/{date}/",
             )
 
@@ -325,7 +326,7 @@ def start_collector(cid):
             c.modified_only, c.poll_interval, c.post_action, c.archive_path,
             c.encoding, c.parser_type, callback_url,
             c.storage_mode or "parse",
-            c.target_bucket or "sdl-files",
+            c.target_bucket or bucket_for("files"),
             c.target_path_prefix or "raw/{collector_id}/{date}/",
         )
 
@@ -396,7 +397,7 @@ def restart_collector(cid):
             c.modified_only, c.poll_interval, c.post_action, c.archive_path,
             c.encoding, c.parser_type, callback_url,
             c.storage_mode or "parse",
-            c.target_bucket or "sdl-files",
+            c.target_bucket or bucket_for("files"),
             c.target_path_prefix or "raw/{collector_id}/{date}/",
         )
 

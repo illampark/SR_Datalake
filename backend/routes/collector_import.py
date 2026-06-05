@@ -24,6 +24,7 @@ from backend.models.collector import ImportCollector
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
 import_bp = Blueprint("collector_import", __name__, url_prefix="/api/connectors/import")
@@ -212,7 +213,7 @@ def create_import():
             target_id=body.get("targetId"),
             target_table=body.get("targetTable", ""),
             target_measurement=body.get("targetMeasurement", ""),
-            target_bucket=body.get("targetBucket", "sdl-files"),
+            target_bucket=body.get("targetBucket", bucket_for("files")),
             timestamp_column=body.get("timestampColumn", ""),
             tag_column=body.get("tagColumn", ""),
             value_columns=body.get("valueColumns", []),
@@ -930,8 +931,8 @@ def list_targets():
             "tsdb": [{"id": t.id, "name": t.name, "dbType": t.db_type} for t in tsdbs],
             "rdbms": [{"id": r.id, "name": r.name, "dbType": r.db_type} for r in rdbmss],
             "file": [
-                {"bucket": "sdl-files", "label": "SDL Files"},
-                {"bucket": "sdl-archive", "label": "SDL Archive"},
+                {"bucket": bucket_for("files"), "label": "SDL Files"},
+                {"bucket": bucket_for("archive"), "label": "SDL Archive"},
             ],
         })
     except Exception as e:

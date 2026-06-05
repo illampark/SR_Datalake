@@ -15,6 +15,7 @@ from backend.models.storage import TimeSeriesData
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.minio_buckets import bucket_for
 
 # 대용량 export — 메모리 적재 없이 chunked HTTP 응답으로 흘려보냄.
 # yield_per / server-side cursor 의 fetch 단위. 너무 작으면 RTT 비용, 너무 크면 메모리 ↑.
@@ -451,7 +452,7 @@ def _get_data_summary(db, catalog):
         if imp:
             tt = imp.target_type
             if tt == "file":
-                src = _summary_minio(db, imp.target_bucket or "sdl-files",
+                src = _summary_minio(db, imp.target_bucket or bucket_for("files"),
                                      f"import/{imp.id}/")
                 if src:
                     sources.append(src)
@@ -486,7 +487,7 @@ def _get_data_summary(db, catalog):
                     if src:
                         sources.append(src)
                 elif mt == "internal_file_sink":
-                    bucket = cfg.get("bucket") or "sdl-files"
+                    bucket = cfg.get("bucket") or bucket_for("files")
                     prefix = (cfg.get("pathPrefix") or "").rstrip("/") + "/"
                     src = _summary_minio(db, bucket, prefix)
                     if src:
@@ -1984,13 +1985,13 @@ def list_catalog_files(cid):
         # base prefix 결정
         if c.connector_type == "pipeline" and c.sink_type == "internal_file_sink":
             sink_cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_file_sink")
-            bucket = sink_cfg.get("bucket", "sdl-files")
+            bucket = sink_cfg.get("bucket", bucket_for("files"))
             base_prefix = sink_cfg.get("pathPrefix", f"pipeline/{c.pipeline_id}/")
         elif c.connector_type == "import":
-            bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+            bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
             base_prefix = f"import/{c.connector_id}/"
         elif c.connector_type == "file":
-            bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+            bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
             # FileCollector의 targetPathPrefix 사용
             from backend.models.collector import FileCollector as FC
             fc = db.query(FC).get(c.connector_id)
@@ -2002,7 +2003,7 @@ def list_catalog_files(cid):
             else:
                 base_prefix = f"raw/{c.connector_id}/"
         else:
-            bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+            bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
             base_prefix = f"raw/{c.connector_id}/"
 
         if base_prefix and not base_prefix.endswith("/"):
@@ -2150,7 +2151,7 @@ def download_catalog_file(cid):
         client = get_minio_client(db)
 
         if not bucket:
-            bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+            bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
 
         try:
             stat = client.stat_object(bucket, object_name)
@@ -2195,7 +2196,7 @@ def download_catalog_files_zip(cid):
         from backend.services.minio_client import get_minio_client
         from backend.config import MINIO_BUCKETS
         client = get_minio_client(db)
-        default_bucket = MINIO_BUCKETS[0] if MINIO_BUCKETS else "sdl-files"
+        default_bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -3114,7 +3115,7 @@ def download_export_file(request_id):
         from backend.services.minio_client import get_minio_client
         client = get_minio_client(db)
 
-        bucket = ds.storage_bucket or "sdl-files"
+        bucket = ds.storage_bucket or bucket_for("files")
         try:
             stat = client.stat_object(bucket, ds.file_name)
         except S3Error:
@@ -3189,7 +3190,7 @@ def delete_export_request(request_id):
                 try:
                     from backend.services.minio_client import get_minio_client
                     client = get_minio_client(db)
-                    bucket = ds.storage_bucket or "sdl-files"
+                    bucket = ds.storage_bucket or bucket_for("files")
                     client.remove_object(bucket, ds.file_name)
                 except Exception:
                     pass  # 파일 삭제 실패해도 DB 레코드는 삭제 진행
