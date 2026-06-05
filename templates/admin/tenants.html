@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}테넌트 관리{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="header-content">
+    <h1><i class="fas fa-building"></i> 테넌트 관리</h1>
+    <p class="subtitle">super_admin 콘솔 — 테넌트 생성·수정·archive·impersonate</p>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-primary" onclick="openCreateModal()">
+      <i class="fas fa-plus"></i> 신규 테넌트
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>slug</th>
+          <th>이름</th>
+          <th>상태</th>
+          <th>요금제</th>
+          <th>파이프라인</th>
+          <th>임포트</th>
+          <th>카탈로그</th>
+          <th>MinIO</th>
+          <th>액션</th>
+        </tr>
+      </thead>
+      <tbody id="tenants-tbody">
+        <tr><td colspan="10" class="text-center text-muted py-24">로딩...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function fmtBytes(n) {
+  if (!n) return '0 B';
+  var u = ['B','KB','MB','GB','TB'];
+  var i = Math.floor(Math.log(n) / Math.log(1024));
+  return (n / Math.pow(1024, i)).toFixed(1) + ' ' + u[i];
+}
+
+function statusBadge(s) {
+  if (s === 'active')    return '<span class="badge-status badge-running">active</span>';
+  if (s === 'suspended') return '<span class="badge-status badge-error">suspended</span>';
+  if (s === 'archived')  return '<span class="badge-status badge-stopped">archived</span>';
+  return '<span class="badge-status">' + s + '</span>';
+}
+
+function loadTenants() {
+  fetch('/api/sys/tenants', {credentials:'same-origin'})
+    .then(r => r.json())
+    .then(d => {
+      if (!d.success) {
+        $('#tenants-tbody').html('<tr><td colspan="10" class="text-center text-danger">권한 없음 또는 오류</td></tr>');
+        return;
+      }
+      var rows = d.data;
+      // 사용량은 tenant 별로 별도 호출
+      Promise.all(rows.map(t =>
+        fetch('/api/sys/usage/' + t.id, {credentials:'same-origin'})
+          .then(r => r.json()).then(u => ({...t, counts: (u.data || {}).counts || {}}))
+      )).then(merged => {
+        if (!merged.length) {
+          $('#tenants-tbody').html('<tr><td colspan="10" class="text-center text-muted">테넌트 없음</td></tr>');
+          return;
+        }
+        var html = '';
+        merged.forEach(t => {
+          var c = t.counts;
+          var protected_t = (t.id === 0 || t.id === 1);
+          html += '<tr>';
+          html += '<td class="mono">' + t.id + '</td>';
+          html += '<td class="mono fw-600">' + t.slug + '</td>';
+          html += '<td>' + (t.name || '') + '</td>';
+          html += '<td>' + statusBadge(t.status) + '</td>';
+          html += '<td>' + (t.plan || '') + '</td>';
+          html += '<td class="mono">' + (c.pipelines || 0) + '</td>';
+          html += '<td class="mono">' + (c.imports || 0) + '</td>';
+          html += '<td class="mono">' + (c.catalogs || 0) + '</td>';
+          html += '<td class="mono" title="' + (c.minio_objects || 0) + ' objects">' + fmtBytes(c.minio_bytes) + '</td>';
+          html += '<td>';
+          html += '<button class="btn btn-outline btn-sm" title="수정" onclick="openEditModal(' + t.id + ')"><i class="fas fa-pen"></i></button> ';
+          if (t.id !== 0) {
+            html += '<button class="btn btn-outline btn-sm" title="impersonate" onclick="impersonate(' + t.id + ',\'' + (t.slug||'') + '\')"><i class="fas fa-user-secret"></i></button> ';
+          }
+          if (!protected_t) {
+            html += '<button class="btn btn-outline btn-sm text-danger" title="archive" onclick="archiveTenant(' + t.id + ',\'' + (t.slug||'') + '\')"><i class="fas fa-trash"></i></button>';
+          }
+          html += '</td></tr>';
+        });
+        $('#tenants-tbody').html(html);
+      });
+    });
+}
+
+function openCreateModal() {
+  var slug = prompt('slug (URL 식별자, 영문/숫자/하이픈):');
+  if (!slug) return;
+  var name = prompt('표시 이름:', slug);
+  if (!name) return;
+  fetch('/api/sys/tenants', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+    body: JSON.stringify({slug: slug.trim(), name: name.trim()})
+  }).then(r => r.json()).then(d => {
+    if (d.success) {
+      alert('생성 완료: id=' + d.data.id + '\nMinIO 버킷 자동 프로비저닝됨 (t-' + d.data.id + '-*)');
+      loadTenants();
+    } else {
+      alert('실패: ' + (d.error && d.error.message));
+    }
+  });
+}
+
+function openEditModal(tid) {
+  fetch('/api/sys/tenants/' + tid, {credentials:'same-origin'})
+    .then(r => r.json()).then(d => {
+      if (!d.success) { alert('조회 실패'); return; }
+      var t = d.data;
+      var name = prompt('이름:', t.name);
+      if (name === null) return;
+      var plan = prompt('plan:', t.plan || 'default');
+      if (plan === null) return;
+      var status = prompt('status (active/suspended/archived):', t.status);
+      if (status === null) return;
+      fetch('/api/sys/tenants/' + tid, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({name: name.trim(), plan: plan.trim(), status: status.trim()})
+      }).then(r => r.json()).then(d2 => {
+        if (d2.success) { loadTenants(); }
+        else { alert('실패: ' + (d2.error && d2.error.message)); }
+      });
+    });
+}
+
+function archiveTenant(tid, slug) {
+  if (!confirm('테넌트 \'' + slug + '\' 를 archive 합니다. 데이터는 보존됩니다. 진행?')) return;
+  fetch('/api/sys/tenants/' + tid, {method: 'DELETE', credentials:'same-origin'})
+    .then(r => r.json()).then(d => {
+      if (d.success) loadTenants();
+      else alert('실패: ' + (d.error && d.error.message));
+    });
+}
+
+function impersonate(tid, slug) {
+  var reason = prompt('impersonate 사유 (필수, audit 로그에 기록):');
+  if (!reason || !reason.trim()) return;
+  fetch('/api/sys/impersonate/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+    body: JSON.stringify({tenant_id: tid, reason: reason.trim()})
+  }).then(r => r.json()).then(d => {
+    if (d.success) {
+      alert('impersonate 진입: ' + slug + '\n페이지를 새로고침 합니다.');
+      location.href = '/';
+    } else {
+      alert('실패: ' + (d.error && d.error.message));
+    }
+  });
+}
+
+loadTenants();
+</script>
+{% endblock %}

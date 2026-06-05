@@ -866,6 +866,14 @@ def auth_me():
     """현재 로그인된 사용자 정보 — Phase 2 부터 tenant 컨텍스트도 함께 반환."""
     if "user_id" not in session:
         return _err("로그인이 필요합니다.", "UNAUTHORIZED", 401)
+    imp = session.get("impersonate")
+    impersonate_info = None
+    if imp:
+        impersonate_info = {
+            "realTenantId": imp.get("real_tenant_id"),
+            "startedAt": imp.get("started_at"),
+            "reason": imp.get("reason"),
+        }
     return _ok({
         "userId": session["user_id"],
         "username": session["username"],
@@ -875,6 +883,8 @@ def auth_me():
         "tenantId": session.get("tenant_id", 1),
         "tenantRole": session.get("tenant_role", "tenant_viewer"),
         "isSuper": bool(session.get("is_super", False)),
+        # Phase 7: impersonate 메타 (없으면 None)
+        "impersonate": impersonate_info,
     })
 
 

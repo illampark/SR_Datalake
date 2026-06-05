@@ -503,3 +503,14 @@ def admin_settings():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)
+
+
+# Phase 7 - 테넌트 관리 (super_admin 전용)
+@app.route("/admin/sys/tenants")
+def page_sys_tenants():
+    from backend.services.rbac import is_super
+    if "user_id" not in session:
+        return redirect("/login")
+    if not is_super():
+        return redirect("/")
+    return render_template("admin/tenants.html", active="adm-sys-tenants")

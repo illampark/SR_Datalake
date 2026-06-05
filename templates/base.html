@@ -54,6 +54,41 @@
   {% block extra_css %}{% endblock %}
 </head>
 <body>
+<!-- Phase 7: impersonate 배너 (super_admin 이 다른 tenant 로 진입 시 표시) -->
+<div id="impersonate-banner" style="display:none; position:sticky; top:0; z-index:9999;
+     background:#fee; color:#900; padding:8px 16px; border-bottom:2px solid #c00;
+     font-weight:600;">
+  <i class="fas fa-user-secret"></i>
+  <span id="imp-msg">impersonating</span>
+  <button onclick="stopImpersonate()" style="margin-left:16px; padding:4px 12px;
+          background:#900; color:#fff; border:0; border-radius:4px; cursor:pointer;">
+    중지하고 복귀
+  </button>
+</div>
+<script>
+(function() {
+  fetch('/api/admin/auth/me', {credentials:'same-origin'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d && d.data && d.data.impersonate) {
+        var imp = d.data.impersonate;
+        var msg = '⚠ Impersonating: tenant_id=' + d.data.tenantId
+                + ' (real=' + imp.realTenantId + ')';
+        if (imp.reason) msg += ' / reason: ' + imp.reason;
+        document.getElementById('imp-msg').textContent = msg;
+        document.getElementById('impersonate-banner').style.display = 'block';
+      }
+    }).catch(function() {});
+})();
+function stopImpersonate() {
+  fetch('/api/sys/impersonate/stop', {method:'POST', credentials:'same-origin'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.success) location.href = '/';
+      else alert('복귀 실패');
+    });
+}
+</script>
   <div id="page-progress"></div>
   <!-- Sidebar -->
   <nav id="sidebar">
@@ -159,7 +194,7 @@
 
       <!-- 8. 시스템 설정 (admin 전용) -->
       {% if is_admin %}
-      <li class="menu-item has-sub {% if active and active.startswith('adm-') %}open{% endif %}">
+      <li class="menu-item has-sub {% if active and active.startswith('adm-') and not active.startswith('adm-sys-') %}open{% endif %}">
         <a href="#"><i class="fas fa-cog"></i><span>{{ t('nav.admin') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
           <li class="{% if active == 'adm-users' %}active{% endif %}"><a href="/admin/users"><i class="fas fa-users"></i><span>{{ t('nav.users') }}</span></a></li>
@@ -167,6 +202,16 @@
           <li class="{% if active == 'adm-backup' %}active{% endif %}"><a href="/admin/infra/backup"><i class="fas fa-cloud-arrow-up"></i><span>{{ t('nav.backup') }}</span></a></li>
           <li class="{% if active == 'adm-gateway' %}active{% endif %}"><a href="/admin/gateway"><i class="fas fa-door-open"></i><span>{{ t('nav.gateway') }}</span></a></li>
           <li class="{% if active == 'adm-settings' %}active{% endif %}"><a href="/admin/settings"><i class="fas fa-sliders"></i><span>{{ t('nav.system_settings') }}</span></a></li>
+        </ul>
+      </li>
+      {% endif %}
+
+      <!-- 9. 운영자 콘솔 (super_admin 전용) -->
+      {% if is_super %}
+      <li class="menu-item has-sub {% if active and active.startswith('adm-sys-') %}open{% endif %}">
+        <a href="#"><i class="fas fa-shield-alt"></i><span>운영자 콘솔</span><i class="fas fa-chevron-right arrow"></i></a>
+        <ul class="sub-menu">
+          <li class="{% if active == 'adm-sys-tenants' %}active{% endif %}"><a href="/admin/sys/tenants"><i class="fas fa-building"></i><span>테넌트 관리</span></a></li>
         </ul>
       </li>
       {% endif %}
