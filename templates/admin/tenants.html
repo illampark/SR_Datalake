@@ -1,6 +1,31 @@
 {% extends "base.html" %}
 {% block title %}테넌트 관리{% endblock %}
 {% block content %}
+<style>
+.t-modal { position:fixed; top:0; left:0; width:100%; height:100%; z-index:10000; }
+.t-modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,0.5); }
+.t-modal-content { position:relative; max-width:760px; width:92%; margin:40px auto; max-height:88vh;
+                   background:#fff; border-radius:8px; display:flex; flex-direction:column;
+                   box-shadow:0 10px 40px rgba(0,0,0,0.3); }
+.t-modal-header { padding:14px 20px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; }
+.t-modal-header h2 { margin:0; font-size:18px; }
+.t-modal-header button.close { background:transparent; border:0; font-size:22px; cursor:pointer; color:#666; }
+.t-modal-body { padding:16px 20px; overflow-y:auto; flex:1; }
+.t-modal-footer { padding:12px 20px; border-top:1px solid #eee; text-align:right; }
+.t-section { border:1px solid #eee; border-radius:6px; padding:12px 14px; margin-bottom:12px; }
+.t-section h3 { font-size:14px; color:#666; margin:0 0 10px 0; font-weight:600; }
+.t-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; }
+.t-grid.cols-1 { grid-template-columns:1fr; }
+.t-grid label { display:block; font-size:12px; color:#666; margin-bottom:3px; }
+.t-grid input, .t-grid select, .t-grid textarea {
+  width:100%; padding:6px 8px; border:1px solid #ccc; border-radius:4px; font-size:13px;
+  font-family:inherit; box-sizing:border-box; }
+.t-grid textarea { resize:vertical; min-height:60px; }
+.t-grid .col-span-2 { grid-column:span 2; }
+.t-readonly { color:#666; background:#f7f7f7; }
+.t-meta-row { font-size:12px; color:#888; padding:8px 0 0 0; }
+</style>
+
 <div class="page-header">
   <div class="header-content">
     <h1><i class="fas fa-building"></i> 테넌트 관리</h1>
@@ -23,6 +48,7 @@
           <th>이름</th>
           <th>상태</th>
           <th>요금제</th>
+          <th>담당자</th>
           <th>파이프라인</th>
           <th>임포트</th>
           <th>카탈로그</th>
@@ -31,55 +57,154 @@
         </tr>
       </thead>
       <tbody id="tenants-tbody">
-        <tr><td colspan="10" class="text-center text-muted py-24">로딩...</td></tr>
+        <tr><td colspan="11" class="text-center text-muted py-24">로딩...</td></tr>
       </tbody>
     </table>
   </div>
 </div>
 
+<!-- ─── 모달 ─── -->
+<div id="tenant-modal" class="t-modal" style="display:none">
+  <div class="t-modal-backdrop" onclick="closeTenantModal()"></div>
+  <div class="t-modal-content">
+    <div class="t-modal-header">
+      <h2 id="modal-title">테넌트</h2>
+      <button class="close" onclick="closeTenantModal()">×</button>
+    </div>
+    <div class="t-modal-body">
+      <form id="tenant-form" onsubmit="event.preventDefault(); submitTenantForm();">
+
+        <div class="t-section">
+          <h3>기본 정보</h3>
+          <div class="t-grid">
+            <div><label>URL식별자 (slug) *</label><input type="text" id="f-slug" required pattern="[a-z0-9-]{2,50}" placeholder="acme"></div>
+            <div><label>이름 *</label><input type="text" id="f-name" required placeholder="ACME Corp"></div>
+            <div><label>상태</label>
+              <select id="f-status">
+                <option value="active">active</option>
+                <option value="suspended">suspended</option>
+                <option value="archived">archived</option>
+              </select>
+            </div>
+            <div><label>요금제</label>
+              <select id="f-plan">
+                <option value="default">default</option>
+                <option value="starter">starter</option>
+                <option value="pro">pro</option>
+                <option value="enterprise">enterprise</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="t-section">
+          <h3>담당자</h3>
+          <div class="t-grid">
+            <div><label>담당자 이름</label><input type="text" id="f-contact-name"></div>
+            <div><label>이메일</label><input type="email" id="f-contact-email" placeholder="contact@example.com"></div>
+            <div><label>전화</label><input type="text" id="f-contact-phone" placeholder="010-0000-0000"></div>
+            <div><label>로케일</label>
+              <select id="f-locale">
+                <option value="ko-KR">ko-KR</option>
+                <option value="en-US">en-US</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="t-section">
+          <h3>회사 정보</h3>
+          <div class="t-grid">
+            <div class="col-span-2"><label>주소</label><input type="text" id="f-company-address"></div>
+            <div><label>사업자번호</label><input type="text" id="f-company-tax-id"></div>
+            <div><label>국가</label><input type="text" id="f-company-country" placeholder="KR" maxlength="2"></div>
+          </div>
+        </div>
+
+        <div class="t-section">
+          <h3>사용량 한도 (정보 표시 — Phase 8 강제 예정)</h3>
+          <div class="t-grid">
+            <div><label>최대 파이프라인 수</label><input type="number" id="f-quota-pipelines" min="0" placeholder="제한 없음"></div>
+            <div><label>최대 스토리지 (GB)</label><input type="number" id="f-quota-storage" min="0" placeholder="제한 없음"></div>
+            <div><label>최대 사용자 수</label><input type="number" id="f-quota-users" min="0" placeholder="제한 없음"></div>
+            <div><label>최대 임포트 수</label><input type="number" id="f-quota-imports" min="0" placeholder="제한 없음"></div>
+          </div>
+        </div>
+
+        <div class="t-section">
+          <h3>계약</h3>
+          <div class="t-grid">
+            <div><label>계약 시작</label><input type="date" id="f-contract-start"></div>
+            <div><label>계약 종료</label><input type="date" id="f-contract-end"></div>
+          </div>
+        </div>
+
+        <div class="t-section">
+          <h3>설명·메모</h3>
+          <div class="t-grid cols-1">
+            <div><label>설명</label><textarea id="f-description" placeholder="고객 소개·용도 설명"></textarea></div>
+            <div><label>운영자 메모 (내부)</label><textarea id="f-notes" placeholder="내부 운영 메모"></textarea></div>
+          </div>
+        </div>
+
+        <div class="t-meta-row" id="f-meta"></div>
+      </form>
+    </div>
+    <div class="t-modal-footer">
+      <button onclick="closeTenantModal()" class="btn btn-outline">취소</button>
+      <button onclick="submitTenantForm()" class="btn btn-primary" id="form-submit">저장</button>
+    </div>
+  </div>
+</div>
+
 <script>
+var _editingId = null;
+
 function fmtBytes(n) {
   if (!n) return '0 B';
-  var u = ['B','KB','MB','GB','TB'];
-  var i = Math.floor(Math.log(n) / Math.log(1024));
-  return (n / Math.pow(1024, i)).toFixed(1) + ' ' + u[i];
+  var u = ['B','KB','MB','GB','TB']; var i = Math.floor(Math.log(n)/Math.log(1024));
+  return (n/Math.pow(1024,i)).toFixed(1) + ' ' + u[i];
 }
-
 function statusBadge(s) {
-  if (s === 'active')    return '<span class="badge-status badge-running">active</span>';
-  if (s === 'suspended') return '<span class="badge-status badge-error">suspended</span>';
-  if (s === 'archived')  return '<span class="badge-status badge-stopped">archived</span>';
+  if (s==='active')    return '<span class="badge-status badge-running">active</span>';
+  if (s==='suspended') return '<span class="badge-status badge-error">suspended</span>';
+  if (s==='archived')  return '<span class="badge-status badge-stopped">archived</span>';
   return '<span class="badge-status">' + s + '</span>';
 }
 
 function loadTenants() {
   fetch('/api/sys/tenants', {credentials:'same-origin'})
-    .then(r => r.json())
+    .then(r=>r.json())
     .then(d => {
       if (!d.success) {
-        $('#tenants-tbody').html('<tr><td colspan="10" class="text-center text-danger">권한 없음 또는 오류</td></tr>');
+        $('#tenants-tbody').html('<tr><td colspan="11" class="text-center text-danger">권한 없음 또는 오류</td></tr>');
         return;
       }
       var rows = d.data;
-      // 사용량은 tenant 별로 별도 호출
       Promise.all(rows.map(t =>
         fetch('/api/sys/usage/' + t.id, {credentials:'same-origin'})
-          .then(r => r.json()).then(u => ({...t, counts: (u.data || {}).counts || {}}))
+          .then(r=>r.json()).then(u => ({...t, counts: (u.data||{}).counts || {}}))
       )).then(merged => {
         if (!merged.length) {
-          $('#tenants-tbody').html('<tr><td colspan="10" class="text-center text-muted">테넌트 없음</td></tr>');
+          $('#tenants-tbody').html('<tr><td colspan="11" class="text-center text-muted">테넌트 없음</td></tr>');
           return;
         }
         var html = '';
         merged.forEach(t => {
-          var c = t.counts;
+          var c = t.counts || {};
+          var s = t.settings || {};
+          var contact = (s.contact && (s.contact.name || s.contact.email)) || '';
+          var contactHtml = '';
+          if (s.contact && s.contact.name)  contactHtml += '<div>' + escHtml(s.contact.name) + '</div>';
+          if (s.contact && s.contact.email) contactHtml += '<div class="text-muted" style="font-size:11px">' + escHtml(s.contact.email) + '</div>';
           var protected_t = (t.id === 0 || t.id === 1);
           html += '<tr>';
           html += '<td class="mono">' + t.id + '</td>';
-          html += '<td class="mono fw-600">' + t.slug + '</td>';
-          html += '<td>' + (t.name || '') + '</td>';
+          html += '<td class="mono fw-600">' + escHtml(t.slug) + '</td>';
+          html += '<td>' + escHtml(t.name || '') + '</td>';
           html += '<td>' + statusBadge(t.status) + '</td>';
-          html += '<td>' + (t.plan || '') + '</td>';
+          html += '<td>' + escHtml(t.plan || '') + '</td>';
+          html += '<td>' + (contactHtml || '<span class="text-muted">-</span>') + '</td>';
           html += '<td class="mono">' + (c.pipelines || 0) + '</td>';
           html += '<td class="mono">' + (c.imports || 0) + '</td>';
           html += '<td class="mono">' + (c.catalogs || 0) + '</td>';
@@ -87,10 +212,10 @@ function loadTenants() {
           html += '<td>';
           html += '<button class="btn btn-outline btn-sm" title="수정" onclick="openEditModal(' + t.id + ')"><i class="fas fa-pen"></i></button> ';
           if (t.id !== 0) {
-            html += '<button class="btn btn-outline btn-sm" title="impersonate" onclick="impersonate(' + t.id + ',\'' + (t.slug||'') + '\')"><i class="fas fa-user-secret"></i></button> ';
+            html += '<button class="btn btn-outline btn-sm" title="impersonate" onclick="doImpersonate(' + t.id + ',\'' + escAttr(t.slug) + '\')"><i class="fas fa-user-secret"></i></button> ';
           }
           if (!protected_t) {
-            html += '<button class="btn btn-outline btn-sm text-danger" title="archive" onclick="archiveTenant(' + t.id + ',\'' + (t.slug||'') + '\')"><i class="fas fa-trash"></i></button>';
+            html += '<button class="btn btn-outline btn-sm text-danger" title="archive" onclick="archiveTenant(' + t.id + ',\'' + escAttr(t.slug) + '\')"><i class="fas fa-trash"></i></button>';
           }
           html += '</td></tr>';
         });
@@ -99,73 +224,171 @@ function loadTenants() {
     });
 }
 
+function escHtml(s) { return $('<div>').text(s || '').html(); }
+function escAttr(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+function fillForm(t) {
+  var s = t.settings || {};
+  $('#f-slug').val(t.slug || '');
+  $('#f-name').val(t.name || '');
+  $('#f-status').val(t.status || 'active');
+  $('#f-plan').val(t.plan || 'default');
+
+  $('#f-contact-name').val((s.contact||{}).name || '');
+  $('#f-contact-email').val((s.contact||{}).email || '');
+  $('#f-contact-phone').val((s.contact||{}).phone || '');
+  $('#f-locale').val(s.locale || 'ko-KR');
+
+  $('#f-company-address').val((s.company||{}).address || '');
+  $('#f-company-tax-id').val((s.company||{}).tax_id || '');
+  $('#f-company-country').val((s.company||{}).country || 'KR');
+
+  $('#f-quota-pipelines').val((s.quota||{}).max_pipelines || '');
+  $('#f-quota-storage').val((s.quota||{}).max_storage_gb || '');
+  $('#f-quota-users').val((s.quota||{}).max_users || '');
+  $('#f-quota-imports').val((s.quota||{}).max_imports || '');
+
+  $('#f-contract-start').val((s.contract||{}).start_date || '');
+  $('#f-contract-end').val((s.contract||{}).end_date || '');
+
+  $('#f-description').val(s.description || '');
+  $('#f-notes').val(s.notes || '');
+
+  if (t.id !== undefined) {
+    $('#f-meta').html('ID ' + t.id + ' · 생성 ' + (t.createdAt || '-') + ' · 수정 ' + (t.updatedAt || '-'));
+  } else {
+    $('#f-meta').html('');
+  }
+}
+
+function clearForm() {
+  $('#tenant-form')[0].reset();
+  $('#f-locale').val('ko-KR');
+  $('#f-company-country').val('KR');
+  $('#f-meta').html('');
+}
+
+function buildSettings() {
+  // 빈 값/0은 제외
+  var num = function(id) { var v = $(id).val(); return v === '' || v === null ? undefined : parseInt(v, 10); };
+  var str = function(id) { var v = $(id).val(); return v ? v.trim() : undefined; };
+  var settings = {};
+  var contact = {
+    name:  str('#f-contact-name'),
+    email: str('#f-contact-email'),
+    phone: str('#f-contact-phone'),
+  };
+  var company = {
+    address: str('#f-company-address'),
+    tax_id:  str('#f-company-tax-id'),
+    country: str('#f-company-country'),
+  };
+  var quota = {
+    max_pipelines:    num('#f-quota-pipelines'),
+    max_storage_gb:   num('#f-quota-storage'),
+    max_users:        num('#f-quota-users'),
+    max_imports:      num('#f-quota-imports'),
+  };
+  var contract = {
+    start_date: str('#f-contract-start'),
+    end_date:   str('#f-contract-end'),
+  };
+  // null 필드 제거
+  function compact(o) {
+    var out = {};
+    for (var k in o) if (o[k] !== undefined && o[k] !== null) out[k] = o[k];
+    return out;
+  }
+  contact = compact(contact);  if (Object.keys(contact).length)  settings.contact  = contact;
+  company = compact(company);  if (Object.keys(company).length)  settings.company  = company;
+  quota   = compact(quota);    if (Object.keys(quota).length)    settings.quota    = quota;
+  contract= compact(contract); if (Object.keys(contract).length) settings.contract = contract;
+
+  var loc = str('#f-locale');         if (loc)  settings.locale      = loc;
+  var dsc = str('#f-description');    if (dsc)  settings.description = dsc;
+  var nt  = str('#f-notes');          if (nt)   settings.notes       = nt;
+  return settings;
+}
+
 function openCreateModal() {
-  var slug = prompt('slug (URL 식별자, 영문/숫자/하이픈):');
-  if (!slug) return;
-  var name = prompt('표시 이름:', slug);
-  if (!name) return;
-  fetch('/api/sys/tenants', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    credentials: 'same-origin',
-    body: JSON.stringify({slug: slug.trim(), name: name.trim()})
-  }).then(r => r.json()).then(d => {
-    if (d.success) {
-      alert('생성 완료: id=' + d.data.id + '\nMinIO 버킷 자동 프로비저닝됨 (t-' + d.data.id + '-*)');
-      loadTenants();
-    } else {
-      alert('실패: ' + (d.error && d.error.message));
-    }
-  });
+  _editingId = null;
+  $('#modal-title').text('신규 테넌트');
+  $('#f-slug').prop('readonly', false);
+  clearForm();
+  $('#tenant-modal').show();
 }
 
 function openEditModal(tid) {
   fetch('/api/sys/tenants/' + tid, {credentials:'same-origin'})
-    .then(r => r.json()).then(d => {
+    .then(r=>r.json()).then(d => {
       if (!d.success) { alert('조회 실패'); return; }
-      var t = d.data;
-      var name = prompt('이름:', t.name);
-      if (name === null) return;
-      var plan = prompt('plan:', t.plan || 'default');
-      if (plan === null) return;
-      var status = prompt('status (active/suspended/archived):', t.status);
-      if (status === null) return;
-      fetch('/api/sys/tenants/' + tid, {
-        method: 'PATCH',
-        headers: {'Content-Type': 'application/json'},
-        credentials: 'same-origin',
-        body: JSON.stringify({name: name.trim(), plan: plan.trim(), status: status.trim()})
-      }).then(r => r.json()).then(d2 => {
-        if (d2.success) { loadTenants(); }
-        else { alert('실패: ' + (d2.error && d2.error.message)); }
-      });
+      _editingId = tid;
+      $('#modal-title').text('테넌트 #' + tid + ' 수정');
+      fillForm(d.data);
+      $('#f-slug').prop('readonly', tid === 0 || tid === 1);
+      $('#tenant-modal').show();
     });
 }
 
+function closeTenantModal() { $('#tenant-modal').hide(); }
+
+function submitTenantForm() {
+  var slug = ($('#f-slug').val() || '').trim();
+  var name = ($('#f-name').val() || '').trim();
+  if (!slug || !name) { alert('URL식별자, 이름 필수'); return; }
+  if (!/^[a-z0-9-]{2,50}$/.test(slug)) { alert('URL식별자는 소문자/숫자/하이픈만, 2~50자'); return; }
+  var settings = buildSettings();
+  var body = { name: name, slug: slug,
+               status: $('#f-status').val(),
+               plan: $('#f-plan').val(),
+               settings: settings };
+
+  if (_editingId === null) {
+    // POST
+    fetch('/api/sys/tenants', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body: JSON.stringify(body)
+    }).then(r=>r.json()).then(d => {
+      if (d.success) {
+        alert('생성 완료 (id=' + d.data.id + ')\nMinIO 버킷 자동 프로비저닝됨 (t-' + d.data.id + '-*)');
+        closeTenantModal(); loadTenants();
+      } else { alert('실패: ' + (d.error && d.error.message)); }
+    });
+  } else {
+    // PATCH
+    fetch('/api/sys/tenants/' + _editingId, {
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body: JSON.stringify(body)
+    }).then(r=>r.json()).then(d => {
+      if (d.success) { closeTenantModal(); loadTenants(); }
+      else { alert('실패: ' + (d.error && d.error.message)); }
+    });
+  }
+}
+
 function archiveTenant(tid, slug) {
-  if (!confirm('테넌트 \'' + slug + '\' 를 archive 합니다. 데이터는 보존됩니다. 진행?')) return;
-  fetch('/api/sys/tenants/' + tid, {method: 'DELETE', credentials:'same-origin'})
-    .then(r => r.json()).then(d => {
+  if (!confirm("테넌트 '" + slug + "' 를 archive 합니다. 데이터는 보존됩니다. 진행?")) return;
+  fetch('/api/sys/tenants/' + tid, {method:'DELETE', credentials:'same-origin'})
+    .then(r=>r.json()).then(d => {
       if (d.success) loadTenants();
       else alert('실패: ' + (d.error && d.error.message));
     });
 }
 
-function impersonate(tid, slug) {
+function doImpersonate(tid, slug) {
   var reason = prompt('impersonate 사유 (필수, audit 로그에 기록):');
   if (!reason || !reason.trim()) return;
   fetch('/api/sys/impersonate/start', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    credentials: 'same-origin',
+    method:'POST', headers:{'Content-Type':'application/json'},
+    credentials:'same-origin',
     body: JSON.stringify({tenant_id: tid, reason: reason.trim()})
-  }).then(r => r.json()).then(d => {
-    if (d.success) {
-      alert('impersonate 진입: ' + slug + '\n페이지를 새로고침 합니다.');
-      location.href = '/';
-    } else {
-      alert('실패: ' + (d.error && d.error.message));
-    }
+  }).then(r=>r.json()).then(d => {
+    if (d.success) { alert('impersonate 진입: ' + slug); location.href = '/'; }
+    else alert('실패: ' + (d.error && d.error.message));
   });
 }
 

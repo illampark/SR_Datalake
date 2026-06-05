@@ -95,14 +95,20 @@ def create_tenant():
     slug = (body.get("slug") or "").strip()
     name = (body.get("name") or "").strip()
     plan = body.get("plan", "default")
+    status = body.get("status", "active")
+    settings = body.get("settings") or {}
+    if not isinstance(settings, dict):
+        return _err("settings는 dict 형식", "VALIDATION")
     if not slug or not name:
         return _err("slug, name 필수", "VALIDATION")
+    if status not in ("active", "suspended", "archived"):
+        return _err("status 잘못된 값", "VALIDATION")
 
     db = SessionLocal()
     try:
         if db.query(Tenant).filter_by(slug=slug).first():
             return _err(f"slug '{slug}' 이미 존재", "CONFLICT", 409)
-        t = Tenant(slug=slug, name=name, status="active", plan=plan)
+        t = Tenant(slug=slug, name=name, status=status, plan=plan, settings=settings)
         db.add(t)
         db.flush()
         # Phase 5: MinIO 버킷 자동 생성
@@ -137,6 +143,19 @@ def update_tenant(tid):
             return _err("tenant not found", "NOT_FOUND", 404)
         if t.id == 0:
             return _err("system tenant 변경 불가", "FORBIDDEN", 403)
+        # slug 변경 (시스템 tenant 0/1 보호)
+        if "slug" in body and t.id not in (0, 1):
+            new_slug = (body["slug"] or "").strip()
+            if new_slug and new_slug != t.slug:
+                exists = db.query(Tenant).filter(
+                    Tenant.slug == new_slug, Tenant.id != t.id
+                ).first()
+                if exists:
+                    return _err(
+                        "slug {} already used".format(new_slug),
+                        "CONFLICT", 409,
+                    )
+                t.slug = new_slug
         for k in ("name", "plan", "status"):
             if k in body:
                 setattr(t, k, body[k])
