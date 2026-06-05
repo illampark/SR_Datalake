@@ -27,6 +27,7 @@ COPY --from=builder /install /usr/local
 
 WORKDIR /app
 COPY app.py .
+COPY alembic.ini .
 COPY requirements.txt .
 COPY backend/ backend/
 COPY templates/ templates/
