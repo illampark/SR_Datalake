@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Float
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from backend.database import Base
 from backend.models._mixins import TenantScopedMixin
@@ -130,6 +130,9 @@ class PipelineBinding(Base, TenantScopedMixin):
 class NormalizeRule(Base, TenantScopedMixin):
     """데이터 정규화 규칙"""
     __tablename__ = "normalize_rule"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="normalize_rule_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -156,6 +159,9 @@ class NormalizeRule(Base, TenantScopedMixin):
 class UnitConversion(Base, TenantScopedMixin):
     """단위 변환 규칙"""
     __tablename__ = "unit_conversion"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="unit_conversion_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -184,6 +190,9 @@ class UnitConversion(Base, TenantScopedMixin):
 class FilterRule(Base, TenantScopedMixin):
     """필터링 규칙"""
     __tablename__ = "filter_rule"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="filter_rule_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -214,6 +223,9 @@ class FilterRule(Base, TenantScopedMixin):
 class AnomalyConfig(Base, TenantScopedMixin):
     """이상치 탐지 설정"""
     __tablename__ = "anomaly_config"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="anomaly_config_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -242,6 +254,9 @@ class AnomalyConfig(Base, TenantScopedMixin):
 class AggregateConfig(Base, TenantScopedMixin):
     """집계 설정"""
     __tablename__ = "aggregate_config"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="aggregate_config_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -266,6 +281,9 @@ class AggregateConfig(Base, TenantScopedMixin):
 class EnrichConfig(Base, TenantScopedMixin):
     """데이터 보강 설정"""
     __tablename__ = "enrich_config"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="enrich_config_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
@@ -290,6 +308,9 @@ class EnrichConfig(Base, TenantScopedMixin):
 class ScriptConfig(Base, TenantScopedMixin):
     """커스텀 스크립트 설정"""
     __tablename__ = "script_config"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="script_config_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)

@@ -660,6 +660,8 @@ def create_normalize_rule():
         name = (body.get("name") or "").strip()
         if not name:
             return _err("규칙명을 입력하세요.", "VALIDATION")
+        if filter_by_tenant(db.query(NormalizeRule), NormalizeRule).filter(NormalizeRule.name == name).first():
+            return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
         r = NormalizeRule(
             name=name,
             source_type=body.get("sourceType", ""),
@@ -707,6 +709,10 @@ def update_normalize_rule(rid):
             name = (body["name"] or "").strip()
             if not name:
                 return _err("규칙명을 입력하세요.", "VALIDATION")
+            if name != r.name and filter_by_tenant(db.query(NormalizeRule), NormalizeRule).filter(
+                NormalizeRule.name == name, NormalizeRule.id != rid
+            ).first():
+                return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
             r.name = name
         if "sourceType" in body:
             r.source_type = body["sourceType"]
@@ -768,6 +774,8 @@ def create_unit_conversion():
         name = (body.get("name") or "").strip()
         if not name:
             return _err("규칙명을 입력하세요.", "VALIDATION")
+        if filter_by_tenant(db.query(UnitConversion), UnitConversion).filter(UnitConversion.name == name).first():
+            return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
         r = UnitConversion(
             name=name,
             category=body.get("category", "temperature"),
@@ -816,6 +824,10 @@ def update_unit_conversion(rid):
             name = (body["name"] or "").strip()
             if not name:
                 return _err("규칙명을 입력하세요.", "VALIDATION")
+            if name != r.name and filter_by_tenant(db.query(UnitConversion), UnitConversion).filter(
+                UnitConversion.name == name, UnitConversion.id != rid
+            ).first():
+                return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
             r.name = name
         if "category" in body:
             r.category = body["category"]
@@ -879,6 +891,8 @@ def create_filter_rule():
         name = (body.get("name") or "").strip()
         if not name:
             return _err("규칙명을 입력하세요.", "VALIDATION")
+        if filter_by_tenant(db.query(FilterRule), FilterRule).filter(FilterRule.name == name).first():
+            return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
         r = FilterRule(
             name=name,
             filter_type=body.get("filterType", "range"),
@@ -928,6 +942,10 @@ def update_filter_rule(rid):
             name = (body["name"] or "").strip()
             if not name:
                 return _err("규칙명을 입력하세요.", "VALIDATION")
+            if name != r.name and filter_by_tenant(db.query(FilterRule), FilterRule).filter(
+                FilterRule.name == name, FilterRule.id != rid
+            ).first():
+                return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
             r.name = name
         if "filterType" in body:
             r.filter_type = body["filterType"]
@@ -993,6 +1011,8 @@ def create_anomaly_config():
         name = (body.get("name") or "").strip()
         if not name:
             return _err("설정명을 입력하세요.", "VALIDATION")
+        if filter_by_tenant(db.query(AnomalyConfig), AnomalyConfig).filter(AnomalyConfig.name == name).first():
+            return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
         r = AnomalyConfig(
             name=name,
             method=body.get("method", "zscore"),
@@ -1041,6 +1061,10 @@ def update_anomaly_config(rid):
             name = (body["name"] or "").strip()
             if not name:
                 return _err("설정명을 입력하세요.", "VALIDATION")
+            if name != r.name and filter_by_tenant(db.query(AnomalyConfig), AnomalyConfig).filter(
+                AnomalyConfig.name == name, AnomalyConfig.id != rid
+            ).first():
+                return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
             r.name = name
         if "method" in body:
             r.method = body["method"]
@@ -1104,6 +1128,8 @@ def create_aggregate_config():
         name = (body.get("name") or "").strip()
         if not name:
             return _err("설정명을 입력하세요.", "VALIDATION")
+        if filter_by_tenant(db.query(AggregateConfig), AggregateConfig).filter(AggregateConfig.name == name).first():
+            return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
         r = AggregateConfig(
             name=name,
             window_seconds=body.get("windowSeconds", 60),
@@ -1150,6 +1176,10 @@ def update_aggregate_config(rid):
             name = (body["name"] or "").strip()
             if not name:
                 return _err("설정명을 입력하세요.", "VALIDATION")
+            if name != r.name and filter_by_tenant(db.query(AggregateConfig), AggregateConfig).filter(
+                AggregateConfig.name == name, AggregateConfig.id != rid
+            ).first():
+                return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
             r.name = name
         if "windowSeconds" in body:
             r.window_seconds = body["windowSeconds"]
@@ -1209,6 +1239,8 @@ def create_enrich_config():
         name = (body.get("name") or "").strip()
         if not name:
             return _err("설정명을 입력하세요.", "VALIDATION")
+        if filter_by_tenant(db.query(EnrichConfig), EnrichConfig).filter(EnrichConfig.name == name).first():
+            return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
         r = EnrichConfig(
             name=name,
             fields=body.get("fields", {}),
@@ -1255,6 +1287,10 @@ def update_enrich_config(rid):
             name = (body["name"] or "").strip()
             if not name:
                 return _err("설정명을 입력하세요.", "VALIDATION")
+            if name != r.name and filter_by_tenant(db.query(EnrichConfig), EnrichConfig).filter(
+                EnrichConfig.name == name, EnrichConfig.id != rid
+            ).first():
+                return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
             r.name = name
         if "fields" in body:
             r.fields = body["fields"]
@@ -1314,6 +1350,8 @@ def create_script_config():
         name = (body.get("name") or "").strip()
         if not name:
             return _err("스크립트명을 입력하세요.", "VALIDATION")
+        if filter_by_tenant(db.query(ScriptConfig), ScriptConfig).filter(ScriptConfig.name == name).first():
+            return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
         r = ScriptConfig(
             name=name,
             language=body.get("language", "python"),
@@ -1361,6 +1399,10 @@ def update_script_config(rid):
             name = (body["name"] or "").strip()
             if not name:
                 return _err("스크립트명을 입력하세요.", "VALIDATION")
+            if name != r.name and filter_by_tenant(db.query(ScriptConfig), ScriptConfig).filter(
+                ScriptConfig.name == name, ScriptConfig.id != rid
+            ).first():
+                return _err(f"이미 존재하는 이름입니다: {name}", "DUPLICATE")
             r.name = name
         if "language" in body:
             r.language = body["language"]
