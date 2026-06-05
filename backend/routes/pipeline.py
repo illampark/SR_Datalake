@@ -81,7 +81,7 @@ _CONNECTOR_MODELS = {
 def _resolve_connector_name(db, connector_type, connector_id):
     model = _CONNECTOR_MODELS.get(connector_type)
     if model:
-        obj = db.query(model).get(connector_id)
+        obj = get_by_id_tenant(db, model, connector_id)
         if obj:
             return obj.name
     return None
@@ -268,7 +268,7 @@ def update_pipeline(pid):
                 return _err(_err_xref[0], _err_xref[1], _err_xref[2])
         # Steps 교체
         if "steps" in body:
-            db.query(PipelineStep).filter_by(pipeline_id=pid).delete()
+            filter_by_tenant(db.query(PipelineStep), PipelineStep).filter_by(pipeline_id=pid).delete()
             for i, step_data in enumerate(body["steps"]):
                 db.add(PipelineStep(
                     pipeline_id=pid,
@@ -291,7 +291,7 @@ def update_pipeline(pid):
                 if cid and ctype in _UPDATE_BIND_MODELS:
                     if not get_by_id_tenant(db, _UPDATE_BIND_MODELS[ctype], cid):
                         return _err(f"connector {ctype}/{cid} 없거나 권한 없음", "FORBIDDEN", 403)
-            db.query(PipelineBinding).filter_by(pipeline_id=pid).delete()
+            filter_by_tenant(db.query(PipelineBinding), PipelineBinding).filter_by(pipeline_id=pid).delete()
             for bind_data in body["bindings"]:
                 ctype = (bind_data.get("connectorType") or "").lower()
                 db.add(PipelineBinding(
@@ -436,7 +436,7 @@ def run_pipeline_file_source(pid):
                 "파이프라인이 실행 중이 아닙니다. 먼저 [시작]을 누른 뒤 다시 시도하세요.",
                 "NOT_RUNNING", 400,
             )
-        has_file_source = db.query(PipelineStep).filter_by(
+        has_file_source = filter_by_tenant(db.query(PipelineStep), PipelineStep).filter_by(
             pipeline_id=pid, enabled=True,
         ).filter(
             PipelineStep.module_type.in_(["import_source", "internal_file_source"])
@@ -1414,7 +1414,7 @@ def list_connectors_by_type(connector_type):
         model = _CONNECTOR_MODELS.get(connector_type)
         if not model:
             return _err(f"지원하지 않는 커넥터 유형: {connector_type}", "INVALID_TYPE")
-        rows = db.query(model).all()
+        rows = filter_by_tenant(db.query(model), model).all()
         return _ok([{
             "id": r.id,
             "name": r.name,
@@ -1436,13 +1436,13 @@ def get_db_connector_tables(cid):
     """
     db = _db()
     try:
-        c = db.query(DbConnector).get(cid)
+        c = get_by_id_tenant(db, DbConnector, cid)
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         cfg = c.config or {}
         tables_raw = cfg.get("tables", [])
-        tags = db.query(DbTag).filter_by(connector_id=cid).all()
+        tags = filter_by_tenant(db.query(DbTag), DbTag).filter_by(connector_id=cid).all()
 
         result = []
         for t in tables_raw:

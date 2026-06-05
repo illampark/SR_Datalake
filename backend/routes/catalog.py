@@ -353,7 +353,7 @@ def update_catalog(cid):
 
         # 검색 태그 교체
         if "searchTags" in body:
-            db.query(CatalogSearchTag).filter_by(catalog_id=cid).delete()
+            filter_by_tenant(db.query(CatalogSearchTag), CatalogSearchTag).filter_by(catalog_id=cid).delete()
             for tag_str in body["searchTags"]:
                 db.add(CatalogSearchTag(catalog_id=cid, tag=tag_str))
 
@@ -437,7 +437,7 @@ def _summary_rdbms(db, rdbms_id, table_name):
         return None
     from backend.models.storage import RdbmsConfig
     from backend.routes.storage_rdbms import _pg_connect
-    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
     if not rdbms:
         return {"kind": "rdbms", "location": f"?/{table_name}",
                 "error": "RDBMS instance not found", "deletable": False}
@@ -474,7 +474,7 @@ def _get_data_summary(db, catalog):
     ctype = catalog.connector_type
     if ctype == "import":
         from backend.models.collector import ImportCollector
-        imp = db.query(ImportCollector).get(catalog.connector_id)
+        imp = get_by_id_tenant(db, ImportCollector, catalog.connector_id)
         if imp:
             tt = imp.target_type
             if tt == "file":
@@ -496,7 +496,7 @@ def _get_data_summary(db, catalog):
         from backend.models.pipeline import PipelineStep
         pid = catalog.pipeline_id
         if pid:
-            sink_steps = db.query(PipelineStep).filter_by(
+            sink_steps = filter_by_tenant(db.query(PipelineStep), PipelineStep).filter_by(
                 pipeline_id=pid
             ).filter(PipelineStep.module_type.in_([
                 "internal_tsdb_sink", "internal_rdbms_sink", "internal_file_sink"
@@ -560,7 +560,7 @@ def _delete_tsdb_rows(db, where_sql, params):
 def _truncate_rdbms_table(db, rdbms_id, table_name):
     from backend.models.storage import RdbmsConfig
     from backend.routes.storage_rdbms import _pg_connect
-    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
     if not rdbms:
         return 0
     conn = _pg_connect(rdbms)
@@ -580,7 +580,7 @@ def _delete_data_for_catalog(db, catalog):
     # safety: pipeline running 차단
     if catalog.connector_type == "pipeline":
         from backend.models.pipeline import Pipeline
-        p = db.query(Pipeline).get(catalog.pipeline_id)
+        p = get_by_id_tenant(db, Pipeline, catalog.pipeline_id)
         if p and p.status == "running":
             raise RuntimeError(
                 "파이프라인이 실행 중입니다. 정지 후 다시 시도하세요."
@@ -651,7 +651,7 @@ def delete_catalog(cid):
 
         # connector-level 카탈로그 (tag_name="") 삭제 시 같은 connector 의 tag-level 카탈로그도 삭제
         if not c.tag_name:
-            related = db.query(DataCatalog).filter_by(
+            related = filter_by_tenant(db.query(DataCatalog), DataCatalog).filter_by(
                 connector_type=c.connector_type,
                 connector_id=c.connector_id,
             ).filter(DataCatalog.id != c.id).all()
@@ -831,7 +831,7 @@ def _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min):
 def _get_pipeline_sink_config(db, pipeline_id, sink_type):
     """파이프라인의 특정 싱크 타입 설정 조회"""
     from backend.models.pipeline import PipelineStep
-    step = db.query(PipelineStep).filter_by(
+    step = filter_by_tenant(db.query(PipelineStep), PipelineStep).filter_by(
         pipeline_id=pipeline_id,
         module_type=sink_type,
     ).first()
@@ -853,7 +853,7 @@ def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None, w
         access = c.access_url or ""
         if not access.startswith("rdbms://") and c.connector_id:
             # 태그별 카탈로그 → 그룹 카탈로그(tag_name="")에서 access_url 가져오기
-            group_cat = db.query(DataCatalog).filter_by(
+            group_cat = filter_by_tenant(db.query(DataCatalog), DataCatalog).filter_by(
                 connector_type="import", connector_id=c.connector_id, tag_name=""
             ).first()
             if group_cat and group_cat.access_url:
@@ -874,7 +874,7 @@ def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None, w
     if not rdbms_id or not table_name:
         return _err("RDBMS 싱크 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
 
-    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
     if not rdbms:
         return _err("RDBMS 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
 
@@ -1463,7 +1463,7 @@ def _preview_rdbms(db, c, date_from, date_to, where_clause=""):
     table_name = cfg.get("tableName", "")
     if not rdbms_id or not table_name:
         return _err("RDBMS 싱크 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
-    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
     if not rdbms:
         return _err("RDBMS 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
 
@@ -1844,7 +1844,7 @@ def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
     if not rdbms_id or not table_name:
         return _err("RDBMS 싱크 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
 
-    rdbms = db.query(RdbmsConfig).get(rdbms_id)
+    rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
     if not rdbms:
         return _err("RDBMS 설정을 찾을 수 없습니다.", "CONFIG_NOT_FOUND")
 
@@ -2004,7 +2004,7 @@ def list_catalog_files(cid):
         # ─────────────────────────────────────
         if c.connector_type == "import" and request.args.get("view") == "inbox":
             from backend.models.collector import ImportCollector
-            ic_row = db.query(ImportCollector).get(c.connector_id)
+            ic_row = get_by_id_tenant(db, ImportCollector, c.connector_id)
             if ic_row and ic_row.source_mode == "local_path" and ic_row.local_path:
                 return _list_local_path_files(
                     ic_row, page, size, search, browse_path, date_from, date_to, c,
@@ -2022,7 +2022,7 @@ def list_catalog_files(cid):
             bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
             # FileCollector의 targetPathPrefix 사용
             from backend.models.collector import FileCollector as FC
-            fc = db.query(FC).get(c.connector_id)
+            fc = get_by_id_tenant(db, FC, c.connector_id)
             if fc and fc.target_path_prefix:
                 base_prefix = fc.target_path_prefix.replace("{collector_id}", str(c.connector_id)).replace("{date}/", "")
                 if not base_prefix.endswith("/"):
@@ -2392,7 +2392,7 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
             acc += p + "/"
             breadcrumb.append({"name": p, "path": acc})
 
-    state = db.query(FileIndexState).get(ic_row.id)
+    state = get_by_id_tenant(db, FileIndexState, ic_row.id)
     index_state = state.to_dict() if state else None
 
     return _ok({
@@ -2500,7 +2500,7 @@ def recipe_tables():
 
         if rdbms_id:
             from backend.models.storage import RdbmsConfig
-            rdbms = db.query(RdbmsConfig).get(rdbms_id)
+            rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
             if not rdbms:
                 return _err("RDBMS를 찾을 수 없습니다.", "NOT_FOUND", 404)
             conn = psycopg2.connect(
@@ -2535,7 +2535,7 @@ def recipe_tables():
             # TSDB: 시계열 데이터는 메인 앱 DB의 time_series_data 테이블에 저장됨
             # measurement 값을 "가상 테이블"로 반환
             from backend.models.storage import TsdbConfig
-            tsdb = db.query(TsdbConfig).get(tsdb_id)
+            tsdb = get_by_id_tenant(db, TsdbConfig, tsdb_id)
             if not tsdb:
                 return _err("TSDB를 찾을 수 없습니다.", "NOT_FOUND", 404)
             from sqlalchemy import text as sa_text
@@ -2574,7 +2574,7 @@ def recipe_columns():
 
         if rdbms_id:
             from backend.models.storage import RdbmsConfig
-            rdbms = db.query(RdbmsConfig).get(rdbms_id)
+            rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
             if not rdbms:
                 return _err("RDBMS를 찾을 수 없습니다.", "NOT_FOUND", 404)
             conn = psycopg2.connect(
@@ -2810,7 +2810,7 @@ def preview_recipe(rid):
             from backend.models.storage import RdbmsConfig
             db_type = "postgresql"
             if r.source_type == "rdbms" and r.rdbms_id:
-                rdbms = db.query(RdbmsConfig).get(r.rdbms_id)
+                rdbms = get_by_id_tenant(db, RdbmsConfig, r.rdbms_id)
                 if rdbms:
                     db_type = "mysql" if "mysql" in (rdbms.db_type or "").lower() else "postgresql"
             try:
@@ -2849,7 +2849,7 @@ def execute_recipe_api(rid):
             from backend.models.storage import RdbmsConfig
             db_type = "postgresql"
             if r.source_type == "rdbms" and r.rdbms_id:
-                rdbms = db.query(RdbmsConfig).get(r.rdbms_id)
+                rdbms = get_by_id_tenant(db, RdbmsConfig, r.rdbms_id)
                 if rdbms:
                     db_type = "mysql" if "mysql" in (rdbms.db_type or "").lower() else "postgresql"
             try:
@@ -2920,12 +2920,12 @@ def preview_sql_direct():
     db = _db()
     try:
         if source_type == "rdbms":
-            rdbms = db.query(RdbmsConfig).get(rdbms_id) if rdbms_id else None
+            rdbms = get_by_id_tenant(db, RdbmsConfig, rdbms_id) if rdbms_id else None
             if not rdbms:
                 return _err("RDBMS 설정을 찾을 수 없습니다.", "NOT_FOUND")
             conn, db_type = _connect_rdbms(rdbms)
         else:
-            tsdb = db.query(TsdbConfig).get(tsdb_id) if tsdb_id else None
+            tsdb = get_by_id_tenant(db, TsdbConfig, tsdb_id) if tsdb_id else None
             if not tsdb:
                 return _err("TSDB 설정을 찾을 수 없습니다.", "NOT_FOUND")
             conn = _connect_tsdb(tsdb)
