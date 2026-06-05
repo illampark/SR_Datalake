@@ -23,6 +23,7 @@ from backend.models.pipeline import Pipeline
 from backend.models.metadata import DataLineage, TagMetadata
 from backend.services import mqtt_manager
 from backend.services import pipeline_engine
+from backend.services.tenant_filter import filter_by_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ def _get_connector_summary(db):
 
     for type_key, model_cls, label, metric_col in _CONN:
         try:
-            rows = db.query(model_cls).all()
+            rows = filter_by_tenant(db.query(model_cls), model_cls).all()
             t = len(rows)
             r = sum(1 for x in rows if (getattr(x, "status", "") or "").lower() == "running")
             e = sum(1 for x in rows if (getattr(x, "status", "") or "").lower() == "error")
@@ -169,7 +170,7 @@ def _get_pipeline_summary(db):
 
     try:
         runtime = pipeline_engine.get_all_status()
-        all_p = db.query(Pipeline).order_by(Pipeline.id).all()
+        all_p = filter_by_tenant(db.query(Pipeline), Pipeline).order_by(Pipeline.id).all()
         for p in all_p:
             rt = runtime.get(p.id, {})
             stats = rt.get("stats", {})
@@ -221,12 +222,12 @@ def _get_performance(db):
     latency = {"avg": 0, "min": 0, "max": 0, "sampleCount": 0}
     try:
         one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        result = db.query(
+        result = filter_by_tenant(db.query(
             func.avg(DataLineage.processing_ms),
             func.min(DataLineage.processing_ms),
             func.max(DataLineage.processing_ms),
             func.count(DataLineage.id),
-        ).filter(DataLineage.created_at >= one_hour_ago).first()
+        ), DataLineage).filter(DataLineage.created_at >= one_hour_ago).first()
 
         if result and result[3] > 0:
             latency = {
@@ -241,10 +242,10 @@ def _get_performance(db):
     # 데이터 품질
     quality = {"avgScore": 0, "activeTagCount": 0}
     try:
-        result = db.query(
+        result = filter_by_tenant(db.query(
             func.avg(TagMetadata.quality_score),
             func.count(TagMetadata.id),
-        ).filter(TagMetadata.is_active == True).first()  # noqa: E712
+        ), TagMetadata).filter(TagMetadata.is_active == True).first()  # noqa: E712
 
         if result and result[1] > 0:
             quality = {
@@ -258,7 +259,7 @@ def _get_performance(db):
     recent_errors = []
     try:
         for type_key, model_cls, label, _ in _CONN:
-            rows = db.query(model_cls).filter(
+            rows = filter_by_tenant(db.query(model_cls), model_cls).filter(
                 model_cls.last_error.isnot(None),
                 model_cls.last_error != "",
             ).all()
@@ -276,7 +277,7 @@ def _get_performance(db):
                     "timestamp": last_at,
                 })
 
-        pipelines = db.query(Pipeline).filter(
+        pipelines = filter_by_tenant(db.query(Pipeline), Pipeline).filter(
             Pipeline.last_error.isnot(None),
             Pipeline.last_error != "",
         ).all()
@@ -535,7 +536,7 @@ def _check_connectors(db):
     results = []
     for type_key, model_cls, label, metric_col in _CONN:
         try:
-            rows = db.query(model_cls).all()
+            rows = filter_by_tenant(db.query(model_cls), model_cls).all()
             t = len(rows)
             if t == 0:
                 continue
@@ -574,7 +575,7 @@ def _check_pipelines(db):
     results = []
     try:
         runtime = pipeline_engine.get_all_status()
-        all_p = db.query(Pipeline).order_by(Pipeline.id).all()
+        all_p = filter_by_tenant(db.query(Pipeline), Pipeline).order_by(Pipeline.id).all()
         for p in all_p:
             rt = runtime.get(p.id, {})
             stats = rt.get("stats", {})
