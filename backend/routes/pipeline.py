@@ -236,13 +236,25 @@ def update_pipeline(pid):
                     config=step_data.get("config", {}),
                 ))
 
-        # Bindings 교체
+        # Bindings 교체 - cross-tenant connector_id 참조 가드 포함
         if "bindings" in body:
+            # POST 와 동일 매핑 사용 (BindModels)
+            _UPDATE_BIND_MODELS = {
+                "mqtt": MqttConnector, "db": DbConnector, "opcua": OpcuaConnector,
+                "modbus": ModbusConnector, "api": ApiConnector, "file": FileCollector,
+            }
+            for bind_data in body["bindings"]:
+                ctype = (bind_data.get("connectorType") or "").lower()
+                cid = bind_data.get("connectorId", 0)
+                if cid and ctype in _UPDATE_BIND_MODELS:
+                    if not get_by_id_tenant(db, _UPDATE_BIND_MODELS[ctype], cid):
+                        return _err(f"connector {ctype}/{cid} 없거나 권한 없음", "FORBIDDEN", 403)
             db.query(PipelineBinding).filter_by(pipeline_id=pid).delete()
             for bind_data in body["bindings"]:
+                ctype = (bind_data.get("connectorType") or "").lower()
                 db.add(PipelineBinding(
                     pipeline_id=pid,
-                    connector_type=bind_data.get("connectorType", ""),
+                    connector_type=ctype,
                     connector_id=bind_data.get("connectorId", 0),
                     tag_filter=bind_data.get("tagFilter", "*"),
                     enabled=bind_data.get("enabled", True),
