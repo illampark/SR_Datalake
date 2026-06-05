@@ -765,7 +765,7 @@ def catalog_tree():
 
 def _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min):
     """TSDB 싱크 — TimeSeriesData에서 pipeline_id + measurement 필터로 조회"""
-    q = db.query(TimeSeriesData).filter(
+    q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(
         TimeSeriesData.pipeline_id == c.pipeline_id,
     )
     if c.tag_name:
@@ -790,15 +790,15 @@ def _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min):
     total = q.count()
     rows = q.order_by(TimeSeriesData.timestamp.desc()).offset((page - 1) * size).limit(size).all()
 
-    # 통계
-    stats_q = db.query(
+    # 통계 (자기 tenant)
+    stats_q = filter_by_tenant(db.query(
         func.count(TimeSeriesData.id),
         func.min(TimeSeriesData.value),
         func.max(TimeSeriesData.value),
         func.avg(TimeSeriesData.value),
         func.min(TimeSeriesData.timestamp),
         func.max(TimeSeriesData.timestamp),
-    ).filter(
+    ), TimeSeriesData).filter(
         TimeSeriesData.pipeline_id == c.pipeline_id,
     )
     if c.tag_name:
@@ -1206,7 +1206,7 @@ def query_catalog_data(cid):
             return _query_recipe_data(db, c, page, size)
 
         is_connector_level = not c.tag_name
-        q = db.query(TimeSeriesData).filter(
+        q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(
             TimeSeriesData.connector_type == c.connector_type,
             TimeSeriesData.connector_id == c.connector_id,
         )
@@ -1232,15 +1232,15 @@ def query_catalog_data(cid):
         total = q.count()
         rows = q.order_by(TimeSeriesData.timestamp.desc()).offset((page - 1) * size).limit(size).all()
 
-        # 기간 내 통계
-        stats_q = db.query(
+        # 기간 내 통계 (자기 tenant)
+        stats_q = filter_by_tenant(db.query(
             func.count(TimeSeriesData.id),
             func.min(TimeSeriesData.value),
             func.max(TimeSeriesData.value),
             func.avg(TimeSeriesData.value),
             func.min(TimeSeriesData.timestamp),
             func.max(TimeSeriesData.timestamp),
-        ).filter(
+        ), TimeSeriesData).filter(
             TimeSeriesData.connector_type == c.connector_type,
             TimeSeriesData.connector_id == c.connector_id,
         )
@@ -1410,7 +1410,7 @@ def queue_catalog_export_async(cid):
         today_str = datetime.utcnow().strftime("%Y%m%d")
         prefix = f"ds-{today_str}-"
         last = (
-            db.query(DatasetRequest)
+            filter_by_tenant(db.query(DatasetRequest), DatasetRequest)
             .filter(DatasetRequest.request_id.like(f"{prefix}%"))
             .order_by(DatasetRequest.id.desc())
             .first()
@@ -1537,7 +1537,7 @@ def export_catalog_data(cid):
 def _build_timeseries_query(db, c, date_from, date_to):
     """TimeSeriesData 카탈로그용 쿼리 + (header_columns, row_serializer) 반환."""
     is_connector_level = not c.tag_name
-    q = db.query(TimeSeriesData).filter(
+    q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(
         TimeSeriesData.connector_type == c.connector_type,
         TimeSeriesData.connector_id == c.connector_id,
     )
@@ -1615,7 +1615,7 @@ def _stream_timeseries_export(db, c, date_from, date_to, fmt, limit):
 # ──────────────────────────────────────────────
 
 def _build_pipeline_tsdb_query(db, c, date_from, date_to):
-    q = db.query(TimeSeriesData).filter(TimeSeriesData.pipeline_id == c.pipeline_id)
+    q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(TimeSeriesData.pipeline_id == c.pipeline_id)
     if c.tag_name:
         q = q.filter(TimeSeriesData.measurement == c.tag_name)
     if date_from:
@@ -1920,7 +1920,7 @@ def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
 
 def _export_recipe_data(db, c, fmt):
     """레시피 카탈로그 데이터 CSV/JSON 내보내기."""
-    recipe = db.query(DataRecipe).filter_by(catalog_id=c.id).first()
+    recipe = filter_by_tenant(db.query(DataRecipe), DataRecipe).filter_by(catalog_id=c.id).first()
     if not recipe:
         return _err("연결된 레시피를 찾을 수 없습니다.", "RECIPE_NOT_FOUND", 404)
 
@@ -1935,7 +1935,7 @@ def _export_recipe_data(db, c, fmt):
     else:
         # snapshot → AggregatedData
         rows = (
-            db.query(AggregatedData)
+            filter_by_tenant(db.query(AggregatedData), AggregatedData)
             .filter_by(recipe_id=recipe.id)
             .order_by(AggregatedData.row_index)
             .limit(50000)
@@ -2422,7 +2422,7 @@ def _list_local_path_files(ic_row, page, size, search, browse_path, date_from, d
 
 def _query_recipe_data(db, c, page, size):
     """레시피 카탈로그 데이터 조회 — snapshot: AggregatedData, view: 실시간 실행."""
-    recipe = db.query(DataRecipe).filter_by(catalog_id=c.id).first()
+    recipe = filter_by_tenant(db.query(DataRecipe), DataRecipe).filter_by(catalog_id=c.id).first()
     if not recipe:
         return _err("연결된 레시피를 찾을 수 없습니다.", "RECIPE_NOT_FOUND", 404)
 
@@ -2442,7 +2442,7 @@ def _query_recipe_data(db, c, page, size):
         })
 
     # snapshot 모드: AggregatedData에서 조회
-    q = db.query(AggregatedData).filter_by(recipe_id=recipe.id)
+    q = filter_by_tenant(db.query(AggregatedData), AggregatedData).filter_by(recipe_id=recipe.id)
     total = q.count()
     rows = q.order_by(AggregatedData.row_index).offset((page - 1) * size).limit(size).all()
 
@@ -2474,11 +2474,11 @@ def recipe_sources():
         rdbms_list = [{"id": r.id, "name": r.name, "dbType": r.db_type,
                        "host": r.host, "port": r.port,
                        "database": r.database_name, "status": r.status}
-                      for r in db.query(RdbmsConfig).all()]
+                      for r in filter_by_tenant(db.query(RdbmsConfig), RdbmsConfig).all()]
         tsdb_list = [{"id": t.id, "name": t.name, "dbType": t.db_type,
                       "host": t.host, "port": t.port,
                       "database": t.database_name, "status": t.status}
-                     for t in db.query(TsdbConfig).all()]
+                     for t in filter_by_tenant(db.query(TsdbConfig), TsdbConfig).all()]
         return _ok({"rdbms": rdbms_list, "tsdb": tsdb_list})
     finally:
         db.close()
@@ -2673,7 +2673,7 @@ def list_recipes():
     """레시피 목록."""
     db = _db()
     try:
-        rows = db.query(DataRecipe).order_by(DataRecipe.id.desc()).all()
+        rows = filter_by_tenant(db.query(DataRecipe), DataRecipe).order_by(DataRecipe.id.desc()).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -2969,7 +2969,7 @@ def create_export_request():
         today_str = datetime.utcnow().strftime("%Y%m%d")
         prefix = f"ds-{today_str}-"
         last = (
-            db.query(DatasetRequest)
+            filter_by_tenant(db.query(DatasetRequest), DatasetRequest)
             .filter(DatasetRequest.request_id.like(f"{prefix}%"))
             .order_by(DatasetRequest.id.desc())
             .first()
@@ -3053,7 +3053,7 @@ def list_export_requests():
         size = request.args.get("size", get_default_page_size(), type=int)
         status_filter = request.args.get("status", "")
 
-        q = db.query(DatasetRequest)
+        q = filter_by_tenant(db.query(DatasetRequest), DatasetRequest)
         if status_filter:
             q = q.filter(DatasetRequest.status == status_filter)
 
@@ -3062,7 +3062,7 @@ def list_export_requests():
 
         # 상태별 집계
         counts = dict(
-            db.query(DatasetRequest.status, func.count(DatasetRequest.id))
+            filter_by_tenant(db.query(DatasetRequest.status, func.count(DatasetRequest.id)), DatasetRequest)
             .group_by(DatasetRequest.status)
             .all()
         )
@@ -3093,7 +3093,7 @@ def get_export_request(request_id):
 
     db = _db()
     try:
-        ds = db.query(DatasetRequest).filter_by(request_id=request_id).first()
+        ds = filter_by_tenant(db.query(DatasetRequest), DatasetRequest).filter_by(request_id=request_id).first()
         if not ds:
             return _err("추출 요청을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -3116,7 +3116,7 @@ def download_export_file(request_id):
 
     db = _db()
     try:
-        ds = db.query(DatasetRequest).filter_by(request_id=request_id).first()
+        ds = filter_by_tenant(db.query(DatasetRequest), DatasetRequest).filter_by(request_id=request_id).first()
         if not ds:
             return _err("추출 요청을 찾을 수 없습니다.", "NOT_FOUND", 404)
         if ds.status != "ready":
@@ -3204,7 +3204,7 @@ def delete_export_request(request_id):
 
     db = _db()
     try:
-        ds = db.query(DatasetRequest).filter_by(request_id=request_id).first()
+        ds = filter_by_tenant(db.query(DatasetRequest), DatasetRequest).filter_by(request_id=request_id).first()
         if not ds:
             return _err("추출 요청을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
