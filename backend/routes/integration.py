@@ -5,7 +5,7 @@ from sqlalchemy import func
 from backend.database import SessionLocal
 from backend.models.integration import ExternalConnection
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 integration_bp = Blueprint("integration", __name__, url_prefix="/api/integration")
 
@@ -49,24 +49,24 @@ def list_connections():
         total = q.count()
         rows = q.order_by(ExternalConnection.id.desc()).offset((page - 1) * size).limit(size).all()
 
-        # 통계
-        active_count = db.query(func.count(ExternalConnection.id)).filter(
-            ExternalConnection.enabled == True,
-        )
+        # 통계 (Phase 8: 자기 tenant 의 connection 만 집계)
+        active_count = filter_by_tenant(
+            db.query(func.count(ExternalConnection.id)), ExternalConnection
+        ).filter(ExternalConnection.enabled == True)
         if conn_type:
             active_count = active_count.filter(ExternalConnection.connection_type == conn_type)
         active_count = active_count.scalar() or 0
 
-        error_count = db.query(func.count(ExternalConnection.id)).filter(
-            ExternalConnection.status == "error",
-        )
+        error_count = filter_by_tenant(
+            db.query(func.count(ExternalConnection.id)), ExternalConnection
+        ).filter(ExternalConnection.status == "error")
         if conn_type:
             error_count = error_count.filter(ExternalConnection.connection_type == conn_type)
         error_count = error_count.scalar() or 0
 
-        connected_count = db.query(func.count(ExternalConnection.id)).filter(
-            ExternalConnection.status == "connected",
-        )
+        connected_count = filter_by_tenant(
+            db.query(func.count(ExternalConnection.id)), ExternalConnection
+        ).filter(ExternalConnection.status == "connected")
         if conn_type:
             connected_count = connected_count.filter(ExternalConnection.connection_type == conn_type)
         connected_count = connected_count.scalar() or 0
@@ -130,6 +130,7 @@ def create_connection():
             description=body.get("description", ""),
             status="unknown",
         )
+        inject_tenant(row)  # Phase 8: 현 tenant_id 명시 주입 (mixin default=1 회피)
         db.add(row)
         db.commit()
         db.refresh(row)
