@@ -305,6 +305,23 @@ function renderUsers(users) {
   for (var i = 0; i < users.length; i++) {
     var u = users[i];
     var role = _ROLE_BADGE[u.role] || {name: u.role, cls: 'primary'};
+    // Phase 7+ 멤버십 표시
+    var membershipHtml = '';
+    if (u.isSuper) {
+      membershipHtml += '<span class="badge-sm badge-danger" title="cross-tenant">super_admin</span> ';
+    }
+    if (u.memberships && u.memberships.length) {
+      for (var mi = 0; mi < u.memberships.length; mi++) {
+        var mm = u.memberships[mi];
+        var cls = mm.role === 'tenant_admin' ? 'primary'
+                : mm.role === 'tenant_editor' ? 'success'
+                : 'warning';
+        membershipHtml += '<span class="badge-sm badge-' + cls + '" title="' + _esc(mm.tenantName) + '">' +
+                          _esc(mm.tenantSlug) + ' : ' + mm.role.replace('tenant_','') + '</span> ';
+      }
+    } else if (!u.isSuper) {
+      membershipHtml = '<span class="text-muted">(멤버십 없음)</span>';
+    }
     var isLocked = u.lockedUntil && new Date(u.lockedUntil) > new Date();
     var statusBadge, statusText;
     if (isLocked) {
@@ -319,7 +336,7 @@ function renderUsers(users) {
     html += '<td class="mono">' + _esc(u.username) + '</td>';
     html += '<td class="fw-600">' + _esc(u.displayName) + '</td>';
     html += '<td>' + _esc(u.email) + '</td>';
-    html += '<td><span class="badge-sm badge-' + role.cls + '">' + role.name + '</span></td>';
+    html += '<td>' + membershipHtml + '</td>';
     html += '<td><span class="badge-status ' + statusBadge + '">' + statusText + '</span></td>';
     html += '<td class="mono">' + fmtLocal(u.lastLoginAt) + '</td>';
     html += '<td>';

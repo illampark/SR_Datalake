@@ -146,11 +146,33 @@ def seed_default_users():
 
 @admin_bp.route("/users", methods=["GET"])
 def list_users():
-    """전체 사용자 목록"""
+    """전체 사용자 목록 (Phase 7+) — 각 user 의 tenant 멤버십 + super 표식 포함."""
+    from backend.models.tenant import Tenant, TenantMembership
     db = SessionLocal()
     try:
         users = db.query(User).order_by(User.created_at).all()
-        return _ok({"users": [u.to_dict() for u in users]})
+        if not users:
+            return _ok({"users": []})
+        # 한 번에 모든 user 의 membership 조회
+        user_ids = [u.id for u in users]
+        rows = (db.query(TenantMembership, Tenant)
+                  .join(Tenant, Tenant.id == TenantMembership.tenant_id)
+                  .filter(TenantMembership.user_id.in_(user_ids))
+                  .all())
+        by_user = {}
+        for m, t in rows:
+            by_user.setdefault(m.user_id, []).append({
+                "tenantId": t.id,
+                "tenantSlug": t.slug,
+                "tenantName": t.name,
+                "role": m.role,
+            })
+        out = []
+        for u in users:
+            d = u.to_dict()
+            d["memberships"] = by_user.get(u.id, [])
+            out.append(d)
+        return _ok({"users": out})
     finally:
         db.close()
 
