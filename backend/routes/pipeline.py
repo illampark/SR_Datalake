@@ -15,7 +15,7 @@ from backend.models.collector import (
 )
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 pipeline_bp = Blueprint("pipeline", __name__, url_prefix="/api/pipeline")
 
@@ -644,7 +644,7 @@ def pipeline_errors(pid):
 def list_normalize_rules():
     db = _db()
     try:
-        rows = db.query(NormalizeRule).all()
+        rows = filter_by_tenant(db.query(NormalizeRule), NormalizeRule).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -668,6 +668,7 @@ def create_normalize_rule():
             trim_whitespace=body.get("trimWhitespace", True),
             config=body.get("config", {}),
         )
+        inject_tenant(r)
         db.add(r)
         db.commit()
         db.refresh(r)
@@ -751,7 +752,7 @@ def delete_normalize_rule(rid):
 def list_unit_conversions():
     db = _db()
     try:
-        rows = db.query(UnitConversion).all()
+        rows = filter_by_tenant(db.query(UnitConversion), UnitConversion).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -776,6 +777,7 @@ def create_unit_conversion():
             factor=body.get("factor", 1.0),
             offset=body.get("offset", 0.0),
         )
+        inject_tenant(r)
         db.add(r)
         db.commit()
         db.refresh(r)
@@ -861,7 +863,7 @@ def delete_unit_conversion(rid):
 def list_filter_rules():
     db = _db()
     try:
-        rows = db.query(FilterRule).all()
+        rows = filter_by_tenant(db.query(FilterRule), FilterRule).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -887,6 +889,7 @@ def create_filter_rule():
             action=body.get("action", "drop"),
             config=body.get("config", {}),
         )
+        inject_tenant(r)
         db.add(r)
         db.commit()
         db.refresh(r)
@@ -974,7 +977,7 @@ def delete_filter_rule(rid):
 def list_anomaly_configs():
     db = _db()
     try:
-        rows = db.query(AnomalyConfig).all()
+        rows = filter_by_tenant(db.query(AnomalyConfig), AnomalyConfig).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -999,6 +1002,7 @@ def create_anomaly_config():
             replace_strategy=body.get("replaceStrategy", "mean"),
             config=body.get("config", {}),
         )
+        inject_tenant(r)
         db.add(r)
         db.commit()
         db.refresh(r)
@@ -1084,7 +1088,7 @@ def delete_anomaly_config(rid):
 def list_aggregate_configs():
     db = _db()
     try:
-        rows = db.query(AggregateConfig).all()
+        rows = filter_by_tenant(db.query(AggregateConfig), AggregateConfig).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -1107,6 +1111,7 @@ def create_aggregate_config():
             emit_mode=body.get("emitMode", "end"),
             config=body.get("config", {}),
         )
+        inject_tenant(r)
         db.add(r)
         db.commit()
         db.refresh(r)
@@ -1188,7 +1193,7 @@ def delete_aggregate_config(rid):
 def list_enrich_configs():
     db = _db()
     try:
-        rows = db.query(EnrichConfig).all()
+        rows = filter_by_tenant(db.query(EnrichConfig), EnrichConfig).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -1211,6 +1216,7 @@ def create_enrich_config():
             add_timestamp=body.get("addTimestamp", True),
             config=body.get("config", {}),
         )
+        inject_tenant(r)
         db.add(r)
         db.commit()
         db.refresh(r)
@@ -1292,7 +1298,7 @@ def delete_enrich_config(rid):
 def list_script_configs():
     db = _db()
     try:
-        rows = db.query(ScriptConfig).all()
+        rows = filter_by_tenant(db.query(ScriptConfig), ScriptConfig).all()
         return _ok([r.to_dict() for r in rows])
     finally:
         db.close()
@@ -1316,6 +1322,7 @@ def create_script_config():
             description=body.get("description", ""),
             config=body.get("config", {}),
         )
+        inject_tenant(r)
         db.add(r)
         db.commit()
         db.refresh(r)
