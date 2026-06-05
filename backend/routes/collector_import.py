@@ -23,6 +23,7 @@ from backend.database import SessionLocal
 from backend.models.collector import ImportCollector
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 import_bp = Blueprint("collector_import", __name__, url_prefix="/api/connectors/import")
@@ -127,7 +128,7 @@ def list_imports():
         status_filter = request.args.get("status", "")
         search = (request.args.get("q") or "").strip()
 
-        q = db.query(ImportCollector)
+        q = filter_by_tenant(db.query(ImportCollector), ImportCollector)
         if status_filter:
             q = q.filter(ImportCollector.status == status_filter)
         if search:
@@ -179,7 +180,7 @@ def summary():
 def get_import(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
         return _ok(c.to_dict())
@@ -257,7 +258,7 @@ def create_import():
 def update_import(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -319,7 +320,7 @@ def update_import(cid):
 def delete_import(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -347,7 +348,7 @@ def delete_import(cid):
 def upload_file(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -474,7 +475,7 @@ def upload_file(cid):
 def preview_import(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -536,7 +537,7 @@ def preview_import(cid):
 def execute_import(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -578,7 +579,7 @@ def execute_import(cid):
 def import_status(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -606,7 +607,7 @@ def import_status(cid):
 def stop_import(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -629,7 +630,7 @@ def stop_import(cid):
 def republish_import(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -665,7 +666,7 @@ def republish_import(cid):
 def scan_path(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 
@@ -710,7 +711,7 @@ def scan_path(cid):
 def execute_from_path(cid):
     db = _db()
     try:
-        c = db.query(ImportCollector).get(cid)
+        c = get_by_id_tenant(db, ImportCollector, cid)
         if not c:
             return _err("Import collector not found", "NOT_FOUND", 404)
 

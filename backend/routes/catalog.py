@@ -14,6 +14,7 @@ from backend.models.catalog import DataCatalog, CatalogSearchTag, DataRecipe, Ag
 from backend.models.storage import TimeSeriesData
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 # 대용량 export — 메모리 적재 없이 chunked HTTP 응답으로 흘려보냄.
 # yield_per / server-side cursor 의 fetch 단위. 너무 작으면 RTT 비용, 너무 크면 메모리 ↑.
@@ -186,7 +187,7 @@ def list_catalogs():
         tag_scope = request.args.get("tag_scope", "")
         data_level = request.args.get("data_level", "")
 
-        q = db.query(DataCatalog)
+        q = filter_by_tenant(db.query(DataCatalog), DataCatalog)
         if connector_type:
             q = q.filter(DataCatalog.connector_type == connector_type)
         if category:
@@ -236,7 +237,7 @@ def list_catalogs():
 def get_catalog(cid):
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
         d = c.to_dict()
@@ -299,7 +300,7 @@ def get_catalog(cid):
 def update_catalog(cid):
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -590,7 +591,7 @@ def get_catalog_data_summary(cid):
     """카탈로그가 가리키는 실제 데이터 위치/건수/크기 요약."""
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(_get_data_summary(db, c))
@@ -605,7 +606,7 @@ def delete_catalog(cid):
     """카탈로그 삭제. ?delete_data=true 면 가리키는 실제 데이터도 함께 삭제."""
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -1135,7 +1136,7 @@ def _query_pipeline_files(c):
 def query_catalog_data(cid):
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -1264,7 +1265,7 @@ def preview_catalog_export(cid):
     """
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
         if c.connector_type == "file":
@@ -1342,7 +1343,7 @@ def queue_catalog_export_async(cid):
 
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
         if c.connector_type == "file":
@@ -1471,7 +1472,7 @@ def _preview_rdbms(db, c, date_from, date_to, where_clause=""):
 def export_catalog_data(cid):
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
         if c.connector_type == "file":
@@ -1951,7 +1952,7 @@ def list_catalog_files(cid):
     """
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -2134,7 +2135,7 @@ def list_catalog_files(cid):
 def download_catalog_file(cid):
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -2181,7 +2182,7 @@ def download_catalog_file(cid):
 def download_catalog_files_zip(cid):
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -2696,7 +2697,7 @@ def get_recipe(rid):
     """레시피 상세."""
     db = _db()
     try:
-        r = db.query(DataRecipe).get(rid)
+        r = get_by_id_tenant(db, DataRecipe, rid)
         if not r:
             return _err("레시피를 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(r.to_dict())
@@ -2713,7 +2714,7 @@ def update_recipe(rid):
     """레시피 수정."""
     db = _db()
     try:
-        r = db.query(DataRecipe).get(rid)
+        r = get_by_id_tenant(db, DataRecipe, rid)
         if not r:
             return _err("레시피를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -2744,13 +2745,13 @@ def delete_recipe(rid):
     """레시피 삭제 — 관련 카탈로그 + AggregatedData도 삭제."""
     db = _db()
     try:
-        r = db.query(DataRecipe).get(rid)
+        r = get_by_id_tenant(db, DataRecipe, rid)
         if not r:
             return _err("레시피를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         # 관련 카탈로그 삭제
         if r.catalog_id:
-            cat = db.query(DataCatalog).get(r.catalog_id)
+            cat = get_by_id_tenant(db, DataCatalog, r.catalog_id)
             if cat:
                 db.delete(cat)
 
@@ -2770,7 +2771,7 @@ def preview_recipe(rid):
     """레시피 미리보기 — LIMIT 100."""
     db = _db()
     try:
-        r = db.query(DataRecipe).get(rid)
+        r = get_by_id_tenant(db, DataRecipe, rid)
         if not r:
             return _err("레시피를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -2809,7 +2810,7 @@ def execute_recipe_api(rid):
     """레시피 실행 — 결과 저장 + 카탈로그 생성."""
     db = _db()
     try:
-        r = db.query(DataRecipe).get(rid)
+        r = get_by_id_tenant(db, DataRecipe, rid)
         if not r:
             return _err("레시피를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -2846,7 +2847,7 @@ def refresh_recipe(rid):
     """레시피 스냅샷 갱신 (재실행)."""
     db = _db()
     try:
-        r = db.query(DataRecipe).get(rid)
+        r = get_by_id_tenant(db, DataRecipe, rid)
         if not r:
             return _err("레시피를 찾을 수 없습니다.", "NOT_FOUND", 404)
         if r.execution_mode != "snapshot":
@@ -3210,7 +3211,7 @@ def delete_export_request(request_id):
 def get_catalog_api_info(cid):
     db = _db()
     try:
-        c = db.query(DataCatalog).get(cid)
+        c = get_by_id_tenant(db, DataCatalog, cid)
         if not c:
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
