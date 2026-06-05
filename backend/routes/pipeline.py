@@ -163,8 +163,13 @@ def create_pipeline():
         # 빌더 UI 가 "빈 파이프라인 생성 → select → 노드 추가 → 저장" 흐름이라
         # POST 에서 소스를 강제하면 사용자가 노드를 추가할 컨텍스트(selectedPipelineId)를
         # 만들 수 없어 데드락이 발생함.
+        name = (body.get("name") or "").strip()
+        if name and filter_by_tenant(db.query(Pipeline), Pipeline).filter(
+            Pipeline.name == name
+        ).first():
+            return _err(f"이미 존재하는 파이프라인명입니다: {name}", "DUPLICATE")
         p = Pipeline(
-            name=body.get("name", ""),
+            name=name,
             description=body.get("description", ""),
             enabled=body.get("enabled", True),
         )
@@ -257,6 +262,14 @@ def update_pipeline(pid):
             err = _require_source_step(body["steps"])
             if err:
                 return _err(err[0], err[1])
+        # name 변경 시 self-tenant 중복 사전 차단 (DB UNIQUE(tenant_id,name) 친절 에러)
+        if "name" in body:
+            new_name = (body["name"] or "").strip()
+            if new_name and new_name != p.name and filter_by_tenant(
+                db.query(Pipeline), Pipeline
+            ).filter(Pipeline.name == new_name, Pipeline.id != pid).first():
+                return _err(f"이미 존재하는 파이프라인명입니다: {new_name}", "DUPLICATE")
+
         for js_key, col in {"name": "name", "description": "description", "enabled": "enabled"}.items():
             if js_key in body:
                 setattr(p, col, body[js_key])

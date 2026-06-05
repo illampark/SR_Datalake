@@ -11,9 +11,12 @@ from backend.models._mixins import TenantScopedMixin
 
 class Pipeline(Base, TenantScopedMixin):
     __tablename__ = "pipeline"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="pipeline_tenant_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(200), nullable=False, unique=True)
+    name = Column(String(200), nullable=False)
     description = Column(String(500), default="")
     status = Column(String(20), default="stopped")          # running / stopped / error
     enabled = Column(Boolean, default=True)
