@@ -294,15 +294,20 @@ def _inject_rbac():
         is_admin, current_role,
         current_tenant_id, current_tenant_role, is_super, is_impersonating,
     )
+    _ctr = current_tenant_role()
+    _isuper = is_super()
     return {
         "is_admin": is_admin(),
         "current_role": current_role(),
         # Phase 2: 템플릿에서도 4-role / tenant 컨텍스트 노출. MULTITENANT_MODE=off 일 땐
         # 안전 기본값(1 / tenant_viewer / False) 가 반환된다.
         "current_tenant_id": current_tenant_id(),
-        "current_tenant_role": current_tenant_role(),
-        "is_super": is_super(),
+        "current_tenant_role": _ctr,
+        "is_super": _isuper,
         "is_impersonating": is_impersonating(),
+        # Phase 8: 4-role 직접 확인용 헬퍼 (사이드바·페이지 가시성 분기에 사용)
+        "is_tenant_admin": _isuper or _ctr in ("tenant_admin", "super_admin"),
+        "is_tenant_editor": _isuper or _ctr in ("tenant_admin", "super_admin", "tenant_editor"),
     }
 
 
