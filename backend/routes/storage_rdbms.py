@@ -6,6 +6,7 @@ from backend.database import SessionLocal
 from backend.models.storage import RdbmsConfig
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ def list_instances():
 def get_instance(rdbms_id):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(row.to_dict())
@@ -167,7 +168,7 @@ def create_instance():
 def update_instance(rdbms_id):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -203,7 +204,7 @@ def update_instance(rdbms_id):
 def delete_instance(rdbms_id):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(row)
@@ -225,7 +226,7 @@ def delete_instance(rdbms_id):
 def test_connection(rdbms_id):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -278,7 +279,7 @@ def test_connection(rdbms_id):
 def get_performance(rdbms_id):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -406,7 +407,7 @@ def get_performance(rdbms_id):
 def list_tables(rdbms_id):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -460,7 +461,7 @@ def list_tables(rdbms_id):
 def get_table_schema(rdbms_id, table_name):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -522,7 +523,7 @@ def get_table_usage(rdbms_id, table_name):
     """
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -647,7 +648,7 @@ def delete_table(rdbms_id, table_name):
     # information_schema / pg_catalog 등 시스템 schema 차단 (안전망)
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
         schema = row.schema_name or "public"
@@ -757,7 +758,7 @@ def delete_table(rdbms_id, table_name):
 def get_slow_queries(rdbms_id):
     db = _db()
     try:
-        row = db.query(RdbmsConfig).get(rdbms_id)
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
         if not row:
             return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 

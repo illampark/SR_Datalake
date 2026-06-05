@@ -13,6 +13,7 @@ from backend.models.storage import FileCleanupPolicy
 from backend.config import MINIO_BUCKETS
 from backend.services.audit_logger import audit_route
 from backend.services.minio_client import get_minio_client, get_minio_config
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -927,7 +928,7 @@ def download_file():
 def _resolve_collector(db, collector_id):
     """ImportCollector 조회 + local_path 모드 검증. 실패 시 (None, err_resp)."""
     from backend.models.collector import ImportCollector
-    ic = db.query(ImportCollector).get(int(collector_id))
+    ic = get_by_id_tenant(db, ImportCollector, int(collector_id))
     if not ic:
         return None, _err("Import Collector를 찾을 수 없습니다.", "NOT_FOUND", 404)
     if ic.source_mode != "local_path" or not ic.local_path:
@@ -1419,7 +1420,7 @@ def browse_local_files():
                 acc += p + "/"
                 breadcrumb.append({"name": p, "path": acc})
 
-        state = db.query(FileIndexState).get(cid)
+        state = get_by_id_tenant(db, FileIndexState, cid)
         index_state = state.to_dict() if state else None
 
         return _ok({
@@ -1450,7 +1451,7 @@ def local_index_state():
         from backend.models.file_index import FileIndexState
         cid = request.args.get("collectorId", type=int)
         if cid:
-            s = db.query(FileIndexState).get(cid)
+            s = get_by_id_tenant(db, FileIndexState, cid)
             return _ok(s.to_dict() if s else {"collectorId": cid, "indexed": False})
         items = [s.to_dict() for s in db.query(FileIndexState).order_by(FileIndexState.collector_id).all()]
         return _ok(items)

@@ -7,6 +7,7 @@ from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, DownsamplingPolicy
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ def list_instances():
 def get_instance(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
         return _ok(row.to_dict())
@@ -131,7 +132,7 @@ def create_instance():
 def update_instance(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -164,7 +165,7 @@ def update_instance(tsdb_id):
 def delete_instance(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
         db.delete(row)
@@ -186,7 +187,7 @@ def delete_instance(tsdb_id):
 def test_connection(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -234,7 +235,7 @@ def test_connection(tsdb_id):
 def get_usage(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -316,7 +317,7 @@ def _fmt_bytes(b):
 def list_downsampling(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -340,7 +341,7 @@ def list_downsampling(tsdb_id):
 def create_downsampling(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -468,7 +469,7 @@ def toggle_downsampling(tsdb_id, policy_id):
 def execute_query(tsdb_id):
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -524,7 +525,7 @@ def get_data_summary(tsdb_id):
     """
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
@@ -609,7 +610,7 @@ def delete_data(tsdb_id):
 
     db = _db()
     try:
-        row = db.query(TsdbConfig).get(tsdb_id)
+        row = get_by_id_tenant(db, TsdbConfig, tsdb_id)
         if not row:
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
