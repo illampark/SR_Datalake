@@ -275,6 +275,7 @@ def tenant_role_at_least(min_role):
 # SYSTEM_ONLY: super_admin 만
 _SYSTEM_ONLY_PREFIXES = (
     "/api/sys/",
+    "/api/backup/",   # Phase 8: 백업 복구는 super_admin 콘솔로 이동
 )
 
 # TENANT_ADMIN_ONLY: tenant_admin 이상 (super_admin 도 통과)

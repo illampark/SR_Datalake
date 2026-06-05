@@ -97,7 +97,13 @@ def list_routes():
 
 @gateway_bp.route("/access-log", methods=["GET"])
 def get_access_log():
-    """접근 로그 페이지네이션 조회"""
+    """접근 로그 페이지네이션 조회 - Phase 8: tenant 격리 (api_key.tenant_id join).
+
+    tenant_admin: 자기 tenant 의 API 키가 호출한 로그만.
+    super_admin: 전체.
+    """
+    from backend.services.rbac import is_super
+    from backend.services.tenant_filter import _current_tenant_id
     page = request.args.get("page", 1, type=int)
     size = request.args.get("size", get_default_page_size(), type=int)
     method_filter = request.args.get("method", "")
@@ -107,6 +113,12 @@ def get_access_log():
     db = SessionLocal()
     try:
         q = db.query(ApiAccessLog)
+        if not is_super():
+            # api_key_id NULL 인 행 (=세션 인증) 은 자기 tenant 라고 가정 - 일단 제외 후
+            # api_key 의 tenant_id == 자기 tenant 인 로그만 포함.
+            q = q.join(ApiKey, ApiKey.id == ApiAccessLog.api_key_id).filter(
+                ApiKey.tenant_id == _current_tenant_id()
+            )
         if method_filter:
             q = q.filter(ApiAccessLog.method == method_filter.upper())
         if status_filter == "success":
@@ -213,9 +225,15 @@ def run_log_cleanup():
 
 @gateway_bp.route("/keys", methods=["GET"])
 def list_keys():
+    """API 키 목록 - Phase 8: tenant 격리. super_admin 만 전체."""
+    from backend.services.rbac import is_super
+    from backend.services.tenant_filter import filter_by_tenant
     db = SessionLocal()
     try:
-        keys = db.query(ApiKey).order_by(desc(ApiKey.created_at)).all()
+        q = db.query(ApiKey)
+        if not is_super():
+            q = filter_by_tenant(q, ApiKey)
+        keys = q.order_by(desc(ApiKey.created_at)).all()
         return _ok([k.to_dict() for k in keys])
     finally:
         db.close()

@@ -495,6 +495,10 @@ def admin_users():
 
 @app.route("/admin/infra/backup")
 def admin_backup():
+    # /admin/infra/backup -> super_admin (Phase 8)
+    from backend.services.rbac import is_super as _is_super_bk
+    if not _is_super_bk():
+        return redirect("/")
     return render_template("admin/backup.html", active="adm-backup")
 
 @app.route("/admin/gateway")

@@ -146,11 +146,23 @@ def seed_default_users():
 
 @admin_bp.route("/users", methods=["GET"])
 def list_users():
-    """전체 사용자 목록 (Phase 7+) — 각 user 의 tenant 멤버십 + super 표식 포함."""
+    """사용자 목록 (Phase 7+) — 멤버십 포함.
+
+    Phase 8: tenant_admin 은 자기 tenant 멤버만, super_admin 은 전체.
+    """
     from backend.models.tenant import Tenant, TenantMembership
+    from backend.services.rbac import is_super
+    from backend.services.tenant_filter import _current_tenant_id
     db = SessionLocal()
     try:
-        users = db.query(User).order_by(User.created_at).all()
+        if is_super():
+            users = db.query(User).order_by(User.created_at).all()
+        else:
+            tid = _current_tenant_id()
+            users = (db.query(User)
+                       .join(TenantMembership, TenantMembership.user_id == User.id)
+                       .filter(TenantMembership.tenant_id == tid)
+                       .order_by(User.created_at).all())
         if not users:
             return _ok({"users": []})
         # 한 번에 모든 user 의 membership 조회
@@ -540,7 +552,10 @@ def get_settings():
 
 @admin_bp.route("/settings", methods=["PUT"])
 def update_settings():
-    """시스템 설정 저장"""
+    """시스템 설정 저장 - super_admin 만 (Phase 8)."""
+    from backend.services.rbac import is_super
+    if not is_super():
+        return _err("super_admin 만 시스템 전역 설정 변경 가능", "FORBIDDEN", 403)
     db = SessionLocal()
     try:
         body = request.get_json(force=True)
