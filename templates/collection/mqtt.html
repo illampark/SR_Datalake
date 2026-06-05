@@ -168,7 +168,7 @@ function onFilterChange() { _curPage = 1; loadConnectors(); }
 function renderPaging(total) {
   var totalPages = Math.max(1, Math.ceil(total / _pageSize));
   if (_curPage > totalPages) _curPage = totalPages;
-  var html = '<span class="text-muted">' + __t('common.total') + ' ' + fmt(total) + ' ' + __t('common.items') + '</span><div class="d-flex gap-8">';
+  var html = '<span class="text-muted">' + __t('common.total') + ' ' + fmtNum(total) + ' ' + __t('common.items') + '</span><div class="d-flex gap-8">';
   if (_curPage > 1) html += '<button class="btn btn-outline btn-sm" onclick="gotoPage(1)"><i class="fas fa-angle-double-left"></i></button>';
   if (_curPage > 1) html += '<button class="btn btn-outline btn-sm" onclick="gotoPage(' + (_curPage - 1) + ')"><i class="fas fa-chevron-left"></i></button>';
   html += '<span class="btn btn-sm" style="cursor:default">' + _curPage + ' / ' + totalPages + '</span>';
