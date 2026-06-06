@@ -39,3 +39,17 @@ MQTT_DEFAULT_PORT = int(os.getenv("MQTT_DEFAULT_PORT", "1883"))
 #   - 모든 도메인 쿼리에 tenant 필터 적용
 #   - RBAC가 4-role + 경로 4분류 정책 사용
 MULTITENANT_MODE = os.getenv("MULTITENANT_MODE", "off").lower() == "on"
+
+
+# ── Phase 8 — import collector local_path 화이트리스트 ────────────────────
+# tenant_id 별 허용 base prefix. 운영 인프라 정렬(Phase 6) 시 조정.
+# tenant 1 (legacy): 컨테이너 기본 + 임시 영역 + 운영 NFS 후보.
+# 다른 tenant: DEFAULT_TEMPLATE 적용 (`/app/static/uploads/import/t-{N}/`).
+LOCAL_PATH_BASES_BY_TENANT = {
+    1: [
+        "/app/static/uploads/import/",   # 컨테이너 내부 default
+        "/data/sdl-imports/",            # legacy host bind (계획)
+        "/tmp/",                         # 임시 — 운영 정렬 후 제거 권장
+    ],
+}
+LOCAL_PATH_DEFAULT_TEMPLATE = "/app/static/uploads/import/t-{tid}/"

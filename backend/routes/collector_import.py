@@ -205,6 +205,16 @@ def create_import():
         if filter_by_tenant(db.query(ImportCollector), ImportCollector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
+        # Phase 8 — local_path 화이트리스트 가드 (서버 경로 지정 모드)
+        from backend.services.local_path_guard import (
+            assert_local_path_allowed, validate_archive_subdir,
+        )
+        _err_path = assert_local_path_allowed(body.get("localPath", ""))
+        if _err_path: return _err(*_err_path)
+        if "archiveSubdir" in body:
+            _err_arc = validate_archive_subdir(body.get("archiveSubdir") or "")
+            if _err_arc: return _err(*_err_arc)
+
         c = ImportCollector(
             name=name,
             description=body.get("description", ""),
@@ -267,6 +277,18 @@ def update_import(cid):
             return _err("Import collector not found", "NOT_FOUND", 404)
 
         body = request.get_json(silent=True) or {}
+
+        # Phase 8 — local_path 변경 시점 화이트리스트 가드
+        # 값 미변경(기존과 동일)은 통과 — 정책 위반 path 도 운영 호환 유지
+        if "localPath" in body:
+            from backend.services.local_path_guard import assert_path_change_allowed
+            _err_path = assert_path_change_allowed(body.get("localPath", ""), c.local_path or "")
+            if _err_path: return _err(*_err_path)
+        if "archiveSubdir" in body:
+            from backend.services.local_path_guard import validate_archive_subdir
+            _err_arc = validate_archive_subdir(body.get("archiveSubdir") or "")
+            if _err_arc: return _err(*_err_arc)
+
         field_map = {
             "name": "name", "description": "description",
             "importType": "import_type", "targetType": "target_type",
@@ -681,6 +703,11 @@ def scan_path(cid):
 
         if not local_path:
             return _err("서버 경로를 입력하세요.", "VALIDATION")
+
+        # Phase 8 — local_path 변경 시 화이트리스트 가드
+        from backend.services.local_path_guard import assert_path_change_allowed
+        _err_path = assert_path_change_allowed(local_path, c.local_path or "")
+        if _err_path: return _err(*_err_path)
 
         from backend.services.import_parser import scan_local_path
         # archive 영역은 미리보기에서 제외 — 이미 import 완료된 파일
