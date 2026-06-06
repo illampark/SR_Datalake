@@ -43,24 +43,51 @@ def ensure_tenant_default_storage(
             .first()
         )
         if not tsdb:
-            tsdb = TsdbConfig(
-                tenant_id=tenant_id,
-                name=tsdb_name,
-                db_type="PostgreSQL",
-                host="postgres",
-                port=5432,
-                database_name="sdl_tsdb",
-                username="sdl_user",
-                password="",  # 공유 application user — 비밀번호는 환경변수에서.
-                status="connected",
-                retention_days=30,
-                description=(
-                    f"Tenant {tenant_id} default TSDB (shared sdl_tsdb) — "
-                    "Phase 2 에서 schema 분리 예정"
-                ),
-            )
+            if tenant_id == 1:
+                # T1 legacy — sdl_user / public schema 그대로.
+                tsdb = TsdbConfig(
+                    tenant_id=tenant_id,
+                    name=tsdb_name,
+                    db_type="PostgreSQL",
+                    host="postgres",
+                    port=5432,
+                    database_name="sdl",
+                    schema_name="public",
+                    username="sdl_user",
+                    password="",
+                    status="connected",
+                    retention_days=30,
+                    description="SDL legacy TSDB (shared sdl_user / public.time_series_data)",
+                )
+            else:
+                # Phase 2 — tenant 별 schema/user 격리.
+                tsdb = TsdbConfig(
+                    tenant_id=tenant_id,
+                    name=tsdb_name,
+                    db_type="PostgreSQL",
+                    host="postgres",
+                    port=5432,
+                    database_name="sdl",
+                    schema_name=schema_for(tenant_id),
+                    username=pg_user_for(tenant_id),
+                    password=pg_password or "",
+                    status="connected",
+                    retention_days=30,
+                    description=(
+                        f"Tenant {tenant_id} isolated TSDB "
+                        f"(schema={schema_for(tenant_id)}, "
+                        f"user={pg_user_for(tenant_id)})"
+                    ),
+                )
             db.add(tsdb)
             logger.info("tenant %s TsdbConfig created (id will be set after flush)", tenant_id)
+        elif pg_password and tenant_id != 1:
+            # 기존 row 가 있고 새 password 들어왔으면 (rotate or 첫 phase 2 적용) 갱신.
+            tsdb.username = pg_user_for(tenant_id)
+            tsdb.password = pg_password
+            tsdb.schema_name = schema_for(tenant_id)
+            tsdb.database_name = "sdl"
+            logger.info("tenant %s TsdbConfig updated to schema-isolated", tenant_id)
 
         # ── RdbmsConfig (tenant 별 user/schema 격리) ──
         rdbms_name = "SDL PostgreSQL" if tenant_id == 1 else f"Tenant {tenant_id} PostgreSQL"

@@ -24,6 +24,10 @@ class TsdbConfig(Base, TenantScopedMixin):
     api_token = Column(String(500), default="")
     tls_enabled = Column(Boolean, default=False)
     retention_days = Column(Integer, default=30)
+    # Phase 8 Phase 2 — tenant 별 PG schema 격리. T1 = 'public' (legacy),
+    # T2+ = 'tenant_N'. import_parser 가 INSERT 시 schema-qualified 처리.
+    schema_name = Column(String(100), nullable=False, default="public",
+                         server_default="public")
     status = Column(String(20), default="disconnected")
     description = Column(Text, default="")
     last_connected_at = Column(DateTime, nullable=True)
@@ -44,6 +48,7 @@ class TsdbConfig(Base, TenantScopedMixin):
             "organization": self.organization,
             "bucket": self.bucket,
             "database_name": self.database_name,
+            "schema_name": self.schema_name,
             "username": self.username,
             "tls_enabled": self.tls_enabled,
             "retention_days": self.retention_days,

@@ -135,6 +135,16 @@ def ensure_tenant_pg(tenant_id: int, rotate_password: bool = False) -> Optional[
             'REVOKE CREATE ON SCHEMA public FROM "{u}"'.format(u=user)
         )
 
+        # 6. Phase 2 — tenant 별 time_series_data 테이블 자동 생성 (LIKE public).
+        #    sdl_user 가 만든 후 owner 를 t_N_user 로 이전.
+        cur.execute(
+            'CREATE TABLE IF NOT EXISTS "{s}".time_series_data '
+            '(LIKE public.time_series_data INCLUDING ALL)'.format(s=schema)
+        )
+        cur.execute(
+            'ALTER TABLE "{s}".time_series_data OWNER TO "{u}"'.format(s=schema, u=user)
+        )
+
         return new_password
     finally:
         cur.close()
@@ -156,6 +166,27 @@ def disable_tenant_pg(tenant_id: int) -> None:
     finally:
         cur.close()
         conn.close()
+
+
+def tenant_schema(tenant_id: int = None) -> str:
+    """현재 또는 지정 tenant 의 PG schema 이름.
+    T1 = 'public' (legacy), T2+ = 'tenant_N'.
+    """
+    if tenant_id is None:
+        from backend.services.tenant_filter import _current_tenant_id
+        tenant_id = _current_tenant_id()
+    if tenant_id == 1:
+        return "public"
+    return schema_for(tenant_id)
+
+
+def tenant_table(table_name: str, tenant_id: int = None) -> str:
+    """schema-qualified 테이블 이름 — `public.time_series_data` or `tenant_N.time_series_data`.
+
+    catalog/storage_tsdb 등 application session 통한 SELECT 에서 사용. T1 은
+    기존 public 그대로, T2+ 는 자기 schema 의 테이블을 가리킴.
+    """
+    return f"{tenant_schema(tenant_id)}.{table_name}"
 
 
 def get_pg_info(tenant_id: int) -> dict:

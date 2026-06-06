@@ -416,15 +416,18 @@ def _summary_tsdb(db, kind, **kw):
         params["cid"] = kw.get("connector_id")
         params["tag"] = kw.get("tag_name")
     where_sql = " AND ".join(where)
+    # Phase 8 Phase 2 — 자기 tenant 의 schema 의 time_series_data 만 집계.
+    from backend.services.tenant_pg import tenant_table
+    ts_fqn = tenant_table("time_series_data")
     try:
-        n = db.execute(_sql(f"SELECT COUNT(*) FROM time_series_data WHERE {where_sql}"),
+        n = db.execute(_sql(f"SELECT COUNT(*) FROM {ts_fqn} WHERE {where_sql}"),
                         params).scalar()
     except Exception as e:
-        return {"kind": "tsdb", "location": "time_series_data",
+        return {"kind": "tsdb", "location": ts_fqn,
                 "error": str(e), "deletable": False}
     return {
         "kind": "tsdb",
-        "location": "time_series_data",
+        "location": ts_fqn,
         "filter": where_sql,
         "filterParams": params,
         "count": int(n or 0),
@@ -551,7 +554,10 @@ def _delete_minio_prefix(db, bucket, prefix):
 
 def _delete_tsdb_rows(db, where_sql, params):
     from sqlalchemy import text as _sql
-    res = db.execute(_sql(f"DELETE FROM time_series_data WHERE {where_sql}"),
+    # Phase 8 Phase 2 — 자기 tenant 의 schema 의 time_series_data 만 삭제.
+    from backend.services.tenant_pg import tenant_table
+    ts_fqn = tenant_table("time_series_data")
+    res = db.execute(_sql(f"DELETE FROM {ts_fqn} WHERE {where_sql}"),
                      params)
     db.commit()
     return res.rowcount or 0
@@ -600,7 +606,8 @@ def _delete_data_for_catalog(db, catalog):
             elif kind == "tsdb":
                 n = _delete_tsdb_rows(db, src["filter"], src["filterParams"])
                 deleted.append({"kind": "tsdb",
-                                "location": "time_series_data", "count": n})
+                                "location": src.get("location") or "time_series_data",
+                                "count": n})
             elif kind == "rdbms":
                 n = _truncate_rdbms_table(db,
                                           src.get("rdbmsId"),
@@ -2538,10 +2545,13 @@ def recipe_tables():
             tsdb = get_by_id_tenant(db, TsdbConfig, tsdb_id)
             if not tsdb:
                 return _err("TSDB를 찾을 수 없습니다.", "NOT_FOUND", 404)
+            # Phase 8 Phase 2 — TsdbConfig.schema_name 기준 schema-qualified.
+            ts_schema = tsdb.schema_name or "public"
+            ts_fqn = f'"{ts_schema}".time_series_data'
             from sqlalchemy import text as sa_text
-            rows = db.execute(sa_text("""
+            rows = db.execute(sa_text(f"""
                 SELECT measurement, COUNT(*) as cnt
-                FROM time_series_data
+                FROM {ts_fqn}
                 WHERE tsdb_id = :tid
                 GROUP BY measurement
                 ORDER BY cnt DESC
@@ -2643,12 +2653,19 @@ def recipe_tags():
 
     db = _db()
     try:
+        # Phase 8 Phase 2 — TsdbConfig 의 schema 기준.
+        from backend.models.storage import TsdbConfig
+        tsdb = get_by_id_tenant(db, TsdbConfig, tsdb_id)
+        if not tsdb:
+            return _err("TSDB를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        ts_schema = tsdb.schema_name or "public"
+        ts_fqn = f'"{ts_schema}".time_series_data'
         from sqlalchemy import text as sa_text
-        rows = db.execute(sa_text("""
+        rows = db.execute(sa_text(f"""
             SELECT tag_name, COUNT(*) as cnt,
                    MIN(value) as min_val, MAX(value) as max_val,
                    MAX(unit) as unit
-            FROM time_series_data
+            FROM {ts_fqn}
             WHERE tsdb_id = :tid AND measurement = :meas
             GROUP BY tag_name
             ORDER BY tag_name

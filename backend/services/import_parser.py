@@ -908,6 +908,8 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
 
         if target_type == "tsdb":
             # TSDB 직접 저장 — time_series_data 테이블에 INSERT
+            # Phase 8 Phase 2: TsdbConfig.schema_name 으로 schema-qualified.
+            # T1 = public.time_series_data, T2+ = tenant_N.time_series_data.
             # measurement가 '*'이면 각 컬럼명을 measurement로 사용
             measurement_cfg = collector.target_measurement or collector.name
             auto_measurement = (measurement_cfg.strip() == "*")
@@ -915,6 +917,10 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
             value_cols = collector.value_columns or []
             imported = 0
             errors = 0
+
+            tsdb_cfg = db_session.query(TsdbConfig).get(tsdb_id) if tsdb_id else None
+            tsdb_schema = (getattr(tsdb_cfg, "schema_name", None) or "public") if tsdb_cfg else "public"
+            ts_table_fqn = f'"{tsdb_schema}".time_series_data'
 
             for i, record in enumerate(records):
                 try:
@@ -932,8 +938,8 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
                         if val is None:
                             continue
                         meas = tag_name if auto_measurement else measurement_cfg
-                        db_session.execute(text("""
-                            INSERT INTO time_series_data
+                        db_session.execute(text(f"""
+                            INSERT INTO {ts_table_fqn}
                             (tsdb_id, tag_name, connector_type, connector_id, measurement,
                              value, value_str, data_type, unit, quality, timestamp, created_at)
                             VALUES (:tsdb_id, :tag, :ctype, :cid, :meas,
@@ -1384,6 +1390,7 @@ def republish(collector_id):
 def _republish_from_tsdb(collector, db_session):
     """TSDB에 저장된 원본 데이터를 MQTT로 재발행"""
     from backend.services import mqtt_manager
+    from backend.models.storage import TsdbConfig
     from sqlalchemy import text
 
     cid = collector.id
@@ -1393,9 +1400,19 @@ def _republish_from_tsdb(collector, db_session):
     collector.progress = 0
     db_session.commit()
 
-    rows = db_session.execute(text("""
+    # Phase 8 Phase 2: collector 의 TsdbConfig 기준 schema 선택.
+    tsdb_cfg = (
+        db_session.query(TsdbConfig).get(collector.target_id)
+        if collector.target_id else None
+    )
+    tsdb_schema = (
+        getattr(tsdb_cfg, "schema_name", None) or "public"
+    ) if tsdb_cfg else "public"
+    ts_table_fqn = f'"{tsdb_schema}".time_series_data'
+
+    rows = db_session.execute(text(f"""
         SELECT tag_name, value, value_str, data_type, unit, quality, timestamp
-        FROM time_series_data
+        FROM {ts_table_fqn}
         WHERE connector_type = 'import' AND connector_id = :cid
         ORDER BY timestamp
     """), {"cid": cid}).fetchall()

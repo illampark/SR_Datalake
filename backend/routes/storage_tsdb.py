@@ -579,15 +579,17 @@ def get_data_summary(tsdb_id):
         except Exception as e:
             logger.warning("active sinks lookup failed: %s", e)
 
-        # 요약 집계
+        # 요약 집계 — Phase 8 Phase 2: TsdbConfig.schema_name 기준 schema-qualified.
+        ts_schema = row.schema_name or "public"
+        ts_fqn = f'"{ts_schema}".time_series_data'
         summary = []
         try:
-            res = db.execute(_sql_text("""
+            res = db.execute(_sql_text(f"""
                 SELECT pipeline_id, measurement,
                        COUNT(*) AS rows,
                        MIN(timestamp) AS first_ts,
                        MAX(timestamp) AS last_ts
-                FROM time_series_data
+                FROM {ts_fqn}
                 WHERE tsdb_id = :tid
                 GROUP BY pipeline_id, measurement
                 ORDER BY rows DESC
@@ -681,10 +683,14 @@ def delete_data(tsdb_id):
             params["bts"] = before_ts
         where_sql = " AND ".join(clauses)
 
+        # Phase 8 Phase 2 — TsdbConfig.schema_name 기준 schema-qualified.
+        ts_schema = row.schema_name or "public"
+        ts_fqn = f'"{ts_schema}".time_series_data'
+
         # 영향받을 행 수 미리 카운트 (confirm 검증용)
         try:
             row_count = db.execute(_sql_text(
-                f"SELECT COUNT(*) FROM time_series_data WHERE {where_sql}"
+                f"SELECT COUNT(*) FROM {ts_fqn} WHERE {where_sql}"
             ), params).scalar() or 0
         except Exception as e:
             return _err(f"행 수 계산 오류: {e}", "SQL_ERROR", 500)
@@ -700,7 +706,7 @@ def delete_data(tsdb_id):
         # 실제 삭제
         try:
             res = db.execute(_sql_text(
-                f"DELETE FROM time_series_data WHERE {where_sql}"
+                f"DELETE FROM {ts_fqn} WHERE {where_sql}"
             ), params)
             deleted = res.rowcount or 0
             db.commit()
