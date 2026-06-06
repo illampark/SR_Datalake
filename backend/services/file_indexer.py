@@ -204,6 +204,9 @@ def scan_collector(collector_id: int, force: bool = False) -> dict:
         ic = db.query(ImportCollector).get(int(collector_id))
         if not ic:
             return {"error": "collector not found"}
+        # Phase 8 B-4: minio_bucket 모드는 file_index 경로 사용 X — 실행 시 list_objects 로 직접 스캔
+        if ic.source_mode == "minio_bucket":
+            return {"skipped": True, "reason": "minio_bucket mode uses list_objects at execute time"}
         if ic.source_mode != "local_path" or not ic.local_path:
             return {"error": "not a local_path collector"}
         base_path = ic.local_path

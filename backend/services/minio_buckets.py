@@ -19,8 +19,8 @@ from __future__ import annotations
 from typing import Optional
 
 
-# 4 종 표준 role
-ROLES = ("files", "archive", "backup", "exports")
+# 5 종 표준 role — Phase 8 B-4 에 imports 추가 (minio_bucket 모드 import source)
+ROLES = ("files", "archive", "backup", "exports", "imports")
 
 # tenant 1 의 legacy 이름 — 데이터 마이그 회피용 매핑
 _LEGACY = {
@@ -28,6 +28,7 @@ _LEGACY = {
     "archive": "sdl-archive",
     "backup":  "sdl-backup",
     "exports": "sdl-exports",
+    "imports": "sdl-imports",
 }
 
 

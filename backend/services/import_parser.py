@@ -1564,3 +1564,225 @@ def is_running(collector_id):
     """Import 실행 중 여부 확인"""
     with _import_lock:
         return collector_id in _import_threads
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 8 B-4/B-5: minio_bucket 모드 import
+# ═══════════════════════════════════════════════════════════════════
+
+def _minio_client():
+    """sdl-app 의 admin 자격으로 MinIO 접속 — bucket 안 read/copy/remove 권한."""
+    from minio import Minio
+    from backend.config import (
+        MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_SECURE,
+    )
+    return Minio(
+        MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY,
+        secure=MINIO_SECURE,
+    )
+
+
+def _key_matches(name, patterns):
+    """file_patterns 와 매칭 — fnmatch 기반."""
+    import fnmatch
+    if not patterns:
+        return True
+    base = name.rsplit("/", 1)[-1]
+    for p in patterns:
+        if fnmatch.fnmatch(base, p) or fnmatch.fnmatch(name, p):
+            return True
+    return False
+
+
+def _apply_post_import_action_bucket(client, collector, bucket, rel_key, prefix):
+    """import 성공 후 source object 정리 — bucket 안 prefix 이동·삭제.
+
+    archive: source_bucket/{prefix}/file → source_bucket/{prefix}/{archive_subdir}/{rel_key}
+    delete : source_bucket/{full_key} 즉시 삭제
+    keep   : noop
+    """
+    from minio.commonconfig import CopySource
+    action = (getattr(collector, "post_import_action", None) or "keep").lower()
+    if action == "keep":
+        return
+    if prefix:
+        full_key = prefix.rstrip("/") + "/" + rel_key
+    else:
+        full_key = rel_key
+    full_key = full_key.lstrip("/")
+    try:
+        if action == "delete":
+            client.remove_object(bucket, full_key)
+            logger.info("Import #%s bucket delete: %s/%s", collector.id, bucket, full_key)
+        elif action == "archive":
+            sub = (collector.archive_subdir or ".imported").strip("/")
+            if prefix:
+                dest_key = prefix.rstrip("/") + "/" + sub + "/" + rel_key
+            else:
+                dest_key = sub + "/" + rel_key
+            dest_key = dest_key.lstrip("/")
+            client.copy_object(bucket, dest_key, CopySource(bucket, full_key))
+            client.remove_object(bucket, full_key)
+            logger.info("Import #%s bucket archive: %s/%s -> %s",
+                        collector.id, bucket, full_key, dest_key)
+    except Exception as e:
+        logger.warning(
+            "Import #%s post-import bucket %s failed for %s/%s: %s",
+            collector.id, action, bucket, full_key, e,
+        )
+
+
+def scan_minio_bucket(bucket, prefix, patterns, recursive,
+                      exclude_keys_starts=None, max_files=999999):
+    """bucket 안 object 를 list 하여 import 대상 파일 정보 반환."""
+    try:
+        client = _minio_client()
+        files = []
+        objs = client.list_objects(bucket, prefix=prefix or "", recursive=recursive)
+        excludes = exclude_keys_starts or []
+        for obj in objs:
+            key = obj.object_name
+            if getattr(obj, "is_dir", False):
+                continue
+            skip = False
+            for ex in excludes:
+                if key.startswith(ex):
+                    skip = True
+                    break
+            if skip:
+                continue
+            if not _key_matches(key, patterns):
+                continue
+            rel = key
+            if prefix and key.startswith(prefix):
+                rel = key[len(prefix):].lstrip("/")
+            files.append({
+                "path": rel,
+                "fullKey": key,
+                "size": int(getattr(obj, "size", 0) or 0),
+                "modified": getattr(obj, "last_modified", None),
+            })
+            if len(files) >= max_files:
+                break
+        return {"files": files, "total": len(files)}
+    except Exception as e:
+        logger.error("scan_minio_bucket error bucket=%s prefix=%s: %s",
+                     bucket, prefix, e)
+        return {"error": str(e)}
+
+
+def start_import_from_bucket(collector_id):
+    """MinIO bucket prefix 안 object 를 streaming read 하여 Import 실행."""
+    from backend.database import SessionLocal
+    from backend.models.collector import ImportCollector
+
+    def _run():
+        db = SessionLocal()
+        client = _minio_client()
+        try:
+            c = db.query(ImportCollector).get(collector_id)
+            if not c:
+                logger.error("Import #%s not found", collector_id)
+                return
+            bucket = c.source_bucket or ""
+            prefix = (c.source_prefix or "").lstrip("/")
+            patterns = c.file_patterns or ["*"]
+            is_recursive = c.recursive if c.recursive is not None else True
+            archive_sub = (c.archive_subdir or ".imported").strip("/")
+            exclude = []
+            if prefix:
+                exclude.append(prefix.rstrip("/") + "/" + archive_sub + "/")
+            else:
+                exclude.append(archive_sub + "/")
+
+            if not bucket:
+                c.status = "error"
+                c.last_error = "source_bucket 미설정"
+                db.commit()
+                return
+
+            scan = scan_minio_bucket(bucket, prefix, patterns, is_recursive,
+                                     exclude_keys_starts=exclude)
+            if scan.get("error"):
+                c.status = "error"
+                c.last_error = scan["error"]
+                db.commit()
+                return
+
+            all_files = scan["files"]
+            if not all_files:
+                c.status = "error"
+                c.last_error = "스캔된 파일이 없습니다."
+                db.commit()
+                return
+
+            c.status = "running"
+            c.total_rows = 0
+            c.imported_rows = 0
+            c.error_rows = 0
+            c.progress = 0
+            db.commit()
+
+            total_files = len(all_files)
+            for fi, f in enumerate(all_files):
+                rel = f["path"]
+                full_key = f["fullKey"]
+                ok = False
+                try:
+                    resp = client.get_object(bucket, full_key)
+                    try:
+                        content = resp.read()
+                    finally:
+                        resp.close()
+                        resp.release_conn()
+                    _execute_import_direct(c, content, db, source_filename=rel,
+                                           accumulate=True)
+                    ok = True
+                except Exception as e:
+                    logger.warning("Import bucket file %s error: %s", full_key, e)
+                    c.error_rows = (c.error_rows or 0) + 1
+
+                if ok and c.publish_mqtt:
+                    try:
+                        resp = client.get_object(bucket, full_key)
+                        try:
+                            _execute_import_mqtt(c, resp.read(), db)
+                        finally:
+                            resp.close()
+                            resp.release_conn()
+                    except Exception:
+                        pass
+
+                if ok:
+                    _apply_post_import_action_bucket(client, c, bucket, rel, prefix)
+
+                c.progress = int((fi + 1) / total_files * 100)
+                db.commit()
+
+            c.status = "completed"
+            c.progress = 100
+            c.last_imported_at = datetime.utcnow()
+            db.commit()
+            _register_catalog(db, c)
+        except Exception as e:
+            logger.error("Import from bucket #%s error: %s", collector_id, e)
+            try:
+                c.status = "error"
+                c.last_error = str(e)
+                db.commit()
+            except Exception:
+                pass
+        finally:
+            db.close()
+            with _import_lock:
+                _import_threads.pop(collector_id, None)
+
+    with _import_lock:
+        if collector_id in _import_threads:
+            raise RuntimeError("Import #%s already running" % collector_id)
+        import threading as _th
+        t = _th.Thread(target=_run, name="import-bucket-%s" % collector_id,
+                       daemon=True)
+        _import_threads[collector_id] = t
+        t.start()

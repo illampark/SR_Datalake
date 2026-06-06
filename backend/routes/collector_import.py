@@ -773,13 +773,22 @@ def execute_from_path(cid):
         if c.status == "running":
             return _err("이미 실행 중입니다.", "ALREADY_RUNNING")
 
-        # Phase 8 B-3 — minio_bucket 모드: 아직 실행 분기 미구현 (B-4 에서)
+        # Phase 8 B-4 — minio_bucket 모드 분기
         if c.source_mode == "minio_bucket":
-            return _err(
-                "minio_bucket 모드 실행 분기는 다음 단계 (B-4) 에서 구현 예정입니다. "
-                "현재는 모드 등록·조회·격리만 가능합니다.",
-                "NOT_IMPLEMENTED", 501,
-            )
+            if not c.source_bucket:
+                return _err("source_bucket 미설정", "VALIDATION")
+            c.status = "running"
+            c.imported_rows = 0
+            c.error_rows = 0
+            c.progress = 0
+            c.last_error = ""
+            db.commit()
+            from backend.services.import_parser import start_import_from_bucket
+            start_import_from_bucket(cid)
+            return _ok({"connectorId": cid, "status": "running",
+                        "source": "minio_bucket",
+                        "bucket": c.source_bucket,
+                        "prefix": c.source_prefix or ""})
 
         if not c.local_path:
             return _err("서버 경로가 설정되지 않았습니다. 먼저 경로를 스캔하세요.", "VALIDATION")
