@@ -353,6 +353,19 @@ def create_downsampling(tsdb_id):
         if not body.get("policy_name"):
             return _err("policy_name은 필수 항목입니다.", "VALIDATION")
 
+        # self-tenant + tsdb 안 policy_name 중복 사전 차단 (UNIQUE 친절 에러)
+        exists = filter_by_tenant(
+            db.query(DownsamplingPolicy), DownsamplingPolicy
+        ).filter(
+            DownsamplingPolicy.tsdb_id == tsdb_id,
+            DownsamplingPolicy.policy_name == body["policy_name"],
+        ).first()
+        if exists:
+            return _err(
+                f"이미 존재하는 다운샘플링 정책명입니다: {body['policy_name']}",
+                "DUPLICATE",
+            )
+
         policy = DownsamplingPolicy(
             tsdb_id=tsdb_id,
             policy_name=body["policy_name"],
@@ -421,6 +434,23 @@ def update_downsampling(tsdb_id, policy_id):
 
         body = request.get_json(force=True)
         body = normalize_camel_to_snake(body)
+
+        # policy_name 변경 시 self-tenant+tsdb 내 중복 사전 차단
+        new_name = body.get("policy_name")
+        if new_name and new_name != policy.policy_name:
+            exists = filter_by_tenant(
+                db.query(DownsamplingPolicy), DownsamplingPolicy
+            ).filter(
+                DownsamplingPolicy.tsdb_id == tsdb_id,
+                DownsamplingPolicy.policy_name == new_name,
+                DownsamplingPolicy.id != policy_id,
+            ).first()
+            if exists:
+                return _err(
+                    f"이미 존재하는 다운샘플링 정책명입니다: {new_name}",
+                    "DUPLICATE",
+                )
+
         for field in [
             "policy_name", "source_retention", "target_retention",
             "aggregate_functions", "aggregation_period", "target_data", "enabled",

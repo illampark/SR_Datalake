@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Text, ForeignKey, JSON, Float,
-    BigInteger,
+    BigInteger, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from backend.database import Base
@@ -57,6 +57,9 @@ class TsdbConfig(Base, TenantScopedMixin):
 
 class DownsamplingPolicy(Base, TenantScopedMixin):
     __tablename__ = "downsampling_policy"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "tsdb_id", "policy_name", name="downsampling_policy_tenant_tsdb_name_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     tsdb_id = Column(Integer, ForeignKey("tsdb_config.id", ondelete="CASCADE"), nullable=False)
@@ -136,6 +139,9 @@ class RdbmsConfig(Base, TenantScopedMixin):
 
 class FileCleanupPolicy(Base, TenantScopedMixin):
     __tablename__ = "file_cleanup_policy"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="file_cleanup_policy_tenant_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     retention_days = Column(Integer, nullable=False, default=90)
@@ -194,6 +200,9 @@ class WarmAggregatedData(Base, TenantScopedMixin):
 
 class RetentionPolicy(Base, TenantScopedMixin):
     __tablename__ = "retention_policy"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="retention_policy_tenant_uniq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
