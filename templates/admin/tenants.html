@@ -40,6 +40,18 @@
 
 <div class="card">
   <div class="card-body">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <label style="font-size:12px;color:#666;">상태 필터:</label>
+        <select id="filter-status" onchange="loadTenants()" style="padding:4px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px;">
+          <option value="active" selected>active</option>
+          <option value="suspended">suspended</option>
+          <option value="archived">archived</option>
+          <option value="all">전체</option>
+        </select>
+      </div>
+      <div style="font-size:12px;color:#888;" id="tenants-count"></div>
+    </div>
     <table class="data-table">
       <thead>
         <tr>
@@ -173,20 +185,23 @@ function statusBadge(s) {
 }
 
 function loadTenants() {
-  fetch('/api/sys/tenants', {credentials:'same-origin'})
+  var st = $('#filter-status').val() || 'active';
+  fetch('/api/sys/tenants?status=' + encodeURIComponent(st), {credentials:'same-origin'})
     .then(r=>r.json())
     .then(d => {
       if (!d.success) {
         $('#tenants-tbody').html('<tr><td colspan="11" class="text-center text-danger">권한 없음 또는 오류</td></tr>');
+        $('#tenants-count').text('');
         return;
       }
       var rows = d.data;
+      $('#tenants-count').text(rows.length + '개 (필터: ' + st + ')');
       Promise.all(rows.map(t =>
         fetch('/api/sys/usage/' + t.id, {credentials:'same-origin'})
           .then(r=>r.json()).then(u => ({...t, counts: (u.data||{}).counts || {}}))
       )).then(merged => {
         if (!merged.length) {
-          $('#tenants-tbody').html('<tr><td colspan="11" class="text-center text-muted">테넌트 없음</td></tr>');
+          $('#tenants-tbody').html('<tr><td colspan="11" class="text-center text-muted">필터 조건에 맞는 테넌트가 없습니다.</td></tr>');
           return;
         }
         var html = '';
@@ -215,7 +230,8 @@ function loadTenants() {
             html += '<button class="btn btn-outline btn-sm" title="impersonate" onclick="doImpersonate(' + t.id + ',\'' + escAttr(t.slug) + '\')"><i class="fas fa-user-secret"></i></button> ';
           }
           if (!protected_t) {
-            html += '<button class="btn btn-outline btn-sm text-danger" title="archive" onclick="archiveTenant(' + t.id + ',\'' + escAttr(t.slug) + '\')"><i class="fas fa-trash"></i></button>';
+            html += '<button class="btn btn-outline btn-sm text-danger" title="archive (soft delete)" onclick="archiveTenant(' + t.id + ',\'' + escAttr(t.slug) + '\')"><i class="fas fa-box-archive"></i></button> ';
+            html += '<button class="btn btn-outline btn-sm text-danger" title="완전 삭제 (App+MinIO+PG 영구 제거)" onclick="purgeTenant(' + t.id + ',\'' + escAttr(t.slug) + '\')" style="border-color:#dc3545;color:#dc3545;"><i class="fas fa-fire"></i></button>';
           }
           html += '</td></tr>';
         });
@@ -377,6 +393,34 @@ function archiveTenant(tid, slug) {
       if (d.success) loadTenants();
       else alert('실패: ' + (d.error && d.error.message));
     });
+}
+
+function purgeTenant(tid, slug) {
+  var msg = '⚠️ 완전 삭제 (PURGE) ⚠️\n\n'
+          + "테넌트 '" + slug + "' 의 모든 자원을 영구 제거합니다:\n"
+          + '  • App: TsdbConfig, RdbmsConfig, 멤버십, audit log, connectors, pipelines …\n'
+          + '  • MinIO: 5종 버킷 + 안의 모든 객체 + IAM 사용자/정책\n'
+          + '  • PG: schema (테이블 포함) + 전용 user\n\n'
+          + '복구 불가능. 계속하려면 [확인] 을 누르세요.';
+  if (!confirm(msg)) return;
+  var typed = prompt("확인을 위해 슬러그 '" + slug + "' 를 정확히 입력하세요:");
+  if (typed !== slug) {
+    if (typed != null) alert('슬러그가 일치하지 않아 취소됨.');
+    return;
+  }
+  fetch('/api/sys/tenants/' + tid + '/purge', {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    credentials: 'same-origin',
+    body: JSON.stringify({confirmSlug: slug}),
+  }).then(r=>r.json()).then(d => {
+    if (d.success) {
+      alert("테넌트 '" + slug + "' 완전 삭제 완료.\n\n" + JSON.stringify(d.data.detail, null, 2));
+      loadTenants();
+    } else {
+      alert('실패: ' + (d.error && d.error.message));
+    }
+  });
 }
 
 function doImpersonate(tid, slug) {

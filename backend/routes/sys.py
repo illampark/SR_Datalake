@@ -56,13 +56,21 @@ def _require_super():
 
 @sys_bp.route("/tenants", methods=["GET"])
 def list_tenants():
-    """모든 tenant 목록 (super_admin only)."""
+    """tenant 목록 (super_admin only).
+
+    Query:
+        status: active / suspended / archived / all (기본: active)
+    """
     err = _require_super()
     if err is not None:
         return err
+    status_filter = (request.args.get("status") or "active").strip()
     db = SessionLocal()
     try:
-        rows = db.query(Tenant).order_by(Tenant.id).all()
+        q = db.query(Tenant)
+        if status_filter and status_filter != "all":
+            q = q.filter(Tenant.status == status_filter)
+        rows = q.order_by(Tenant.id).all()
         return _ok([t.to_dict() for t in rows])
     finally:
         db.close()
@@ -227,6 +235,54 @@ def archive_tenant(tid):
         db.commit()
         log_audit("system", "tenant.archive", "tenant", str(tid))
         return _ok({"id": tid, "status": "archived"})
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@sys_bp.route("/tenants/<int:tid>/purge", methods=["DELETE"])
+def purge_tenant(tid):
+    """tenant 완전 제거 — App + MinIO + PG 모두 cleanup. 복구 불가.
+
+    archive 와 달리 모든 자원·데이터·자격증명을 영구 삭제한다.
+    tenant 0/1 은 보호.
+
+    Query/Body confirm: 슬러그 (slug) 값과 일치해야 실행 (사고 방지).
+    """
+    err = _require_super()
+    if err is not None:
+        return err
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).get(tid)
+        if not t:
+            return _err("tenant not found", "NOT_FOUND", 404)
+        if t.id in (0, 1):
+            return _err(f"tenant {tid} 은 보호 — 완전 삭제 불가", "FORBIDDEN", 403)
+        # confirm 검증 — body 의 confirmSlug 가 실제 slug 와 일치해야 진행.
+        body = request.get_json(silent=True) or {}
+        confirm = (body.get("confirmSlug") or body.get("confirm_slug") or "").strip()
+        if confirm != (t.slug or ""):
+            return _err(
+                f"확인을 위해 slug ('{t.slug}') 를 정확히 입력해야 합니다.",
+                "CONFIRM_REQUIRED", 400,
+            )
+        slug_for_log = t.slug
+        try:
+            from backend.services.tenant_purge import purge_tenant as _purge
+            result = _purge(t.id)
+        except Exception as e:
+            logger.error("tenant %s purge 실패: %s", t.id, e)
+            db.rollback()
+            return _err(f"purge 실패: {e}", "SERVER_ERROR", 500)
+        # tenant row 까지 purge 안에서 삭제됨. session 의 t 객체 참조 안 함.
+        db.commit()
+        log_audit("system", "tenant.purge", "tenant", str(tid),
+                  detail={"slug": slug_for_log, "result": result})
+        return _ok({"id": tid, "slug": slug_for_log,
+                    "purged": True, "detail": result})
     except Exception as e:
         db.rollback()
         return _err(str(e), "SERVER_ERROR", 500)
