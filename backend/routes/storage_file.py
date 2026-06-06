@@ -401,14 +401,27 @@ def minio_index_status():
 
     버킷별 행수·용량·마지막 인덱싱 시각 + 마지막 reconcile 결과. 웹훅이 조용히
     끊겨도 reconcile 결과의 큰 드리프트(added/removed)로 감지할 수 있게 한다.
+
+    Phase 8: 자기 tenant 의 bucket 만 노출. super_admin 은 전체 (운영 모니터링).
     """
+    from backend.services.minio_buckets import all_buckets_for
+    from backend.services.tenant_filter import _current_tenant_id
+    from backend.services.rbac import is_super
     db = SessionLocal()
     try:
         from sqlalchemy import text as _sql_text
-        rows = db.execute(_sql_text(
-            "SELECT bucket, COUNT(*), COALESCE(SUM(size),0), MAX(indexed_at) "
-            "FROM minio_object GROUP BY bucket ORDER BY bucket"
-        )).fetchall()
+        if is_super():
+            rows = db.execute(_sql_text(
+                "SELECT bucket, COUNT(*), COALESCE(SUM(size),0), MAX(indexed_at) "
+                "FROM minio_object GROUP BY bucket ORDER BY bucket"
+            )).fetchall()
+        else:
+            tid = _current_tenant_id()
+            buckets = all_buckets_for(tid)
+            rows = db.execute(_sql_text(
+                "SELECT bucket, COUNT(*), COALESCE(SUM(size),0), MAX(indexed_at) "
+                "FROM minio_object WHERE bucket = ANY(:bs) GROUP BY bucket ORDER BY bucket"
+            ), {"bs": buckets}).fetchall()
         buckets = [{
             "bucket": r[0], "objectCount": int(r[1]), "sizeBytes": int(r[2] or 0),
             "sizeDisplay": _fmt_bytes(int(r[2] or 0)),
@@ -461,16 +474,31 @@ def minio_reconcile_trigger():
 # ──────────────────────────────────────────────
 @file_bp.route("/stats", methods=["GET"])
 def get_file_stats():
-    """파일 유형별 사용량 — minio_object 인덱스에서 유형별 GROUP BY 집계 (정본 MinIO만)."""
+    """파일 유형별 사용량 — minio_object 인덱스에서 유형별 GROUP BY 집계 (정본 MinIO만).
+
+    Phase 8: 자기 tenant 가 접근 가능한 bucket (`all_buckets_for(tid)`) 만 집계.
+    super_admin 은 전체 bucket 합산 (운영 모니터링용).
+    """
     try:
+        from backend.services.minio_buckets import all_buckets_for
+        from backend.services.tenant_filter import _current_tenant_id
+        from backend.services.rbac import is_super
         # minio_object 인덱스에서 파일 유형별 집계 (GROUP BY).
         from sqlalchemy import text as _sql_text
         db = SessionLocal()
         try:
-            rows = db.execute(_sql_text(
-                "SELECT COALESCE(NULLIF(ftype, ''), 'other'), COUNT(*), COALESCE(SUM(size),0) "
-                "FROM minio_object GROUP BY 1"
-            )).fetchall()
+            if is_super():
+                rows = db.execute(_sql_text(
+                    "SELECT COALESCE(NULLIF(ftype, ''), 'other'), COUNT(*), COALESCE(SUM(size),0) "
+                    "FROM minio_object GROUP BY 1"
+                )).fetchall()
+            else:
+                tid = _current_tenant_id()
+                buckets = all_buckets_for(tid)
+                rows = db.execute(_sql_text(
+                    "SELECT COALESCE(NULLIF(ftype, ''), 'other'), COUNT(*), COALESCE(SUM(size),0) "
+                    "FROM minio_object WHERE bucket = ANY(:bs) GROUP BY 1"
+                ), {"bs": buckets}).fetchall()
         finally:
             db.close()
         stats = []
@@ -527,6 +555,30 @@ def update_cleanup_policy():
             return _err("보관 기간은 1~3650일 사이여야 합니다.", "VALIDATION")
         if thr is not None and (float(thr) < 0 or float(thr) > 100):
             return _err("임계치는 0~100% 사이여야 합니다.", "VALIDATION")
+
+        # Phase 8 — target_buckets 는 자기 tenant 의 bucket 만 허용 (cross-tenant cleanup 차단).
+        if "target_buckets" in body:
+            from backend.services.minio_buckets import (
+                parse_tenant_from_bucket, all_buckets_for,
+            )
+            from backend.services.tenant_filter import _current_tenant_id
+            from backend.services.rbac import is_super
+            tid = _current_tenant_id()
+            allowed = set(all_buckets_for(tid))
+            bad = []
+            for b in (body["target_buckets"] or []):
+                bt = parse_tenant_from_bucket(b)
+                # 알려진 tenant bucket 이면 자기 tenant 인지 확인.
+                # 시스템/외부 bucket (parse 실패) 은 super_admin 만 허용.
+                if bt is None:
+                    if not is_super(): bad.append(b)
+                elif bt != tid and not is_super():
+                    bad.append(b)
+            if bad:
+                return _err(
+                    f"자기 tenant 의 bucket 만 cleanup 대상으로 지정할 수 있습니다: {bad}",
+                    "INVALID_BUCKET", 400,
+                )
 
         policy = filter_by_tenant(db.query(FileCleanupPolicy), FileCleanupPolicy).first()
         if not policy:
