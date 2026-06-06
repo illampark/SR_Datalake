@@ -700,7 +700,7 @@ def syslog_stats():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
 
-        base_q = db.query(SystemLog)
+        base_q = filter_by_tenant_or_null(db.query(SystemLog), SystemLog)
         if from_dt:
             try:
                 base_q = base_q.filter(SystemLog.timestamp >= datetime.fromisoformat(from_dt))
@@ -765,7 +765,7 @@ def syslog_cleanup():
     try:
         days = max(1, int(request.args.get("days", 30)))
         cutoff = datetime.utcnow() - timedelta(days=days)
-        deleted = db.query(SystemLog).filter(SystemLog.timestamp < cutoff).delete()
+        deleted = filter_by_tenant_or_null(db.query(SystemLog), SystemLog).filter(SystemLog.timestamp < cutoff).delete(synchronize_session=False)
         db.commit()
         return _ok({"deleted": deleted, "cutoff": cutoff.isoformat() + "Z"})
     except Exception as e:
@@ -918,7 +918,7 @@ def audit_stats():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
 
-        base_q = db.query(AuditLog)
+        base_q = filter_by_tenant(db.query(AuditLog), AuditLog)
         if from_dt:
             try:
                 base_q = base_q.filter(AuditLog.timestamp >= datetime.fromisoformat(from_dt))
@@ -1068,7 +1068,7 @@ def audit_cleanup():
     try:
         days = max(1, int(request.args.get("days", 90)))
         cutoff = datetime.utcnow() - timedelta(days=days)
-        deleted = db.query(AuditLog).filter(AuditLog.timestamp < cutoff).delete()
+        deleted = filter_by_tenant(db.query(AuditLog), AuditLog).filter(AuditLog.timestamp < cutoff).delete(synchronize_session=False)
         db.commit()
         return _ok({"deleted": deleted, "cutoff": cutoff.isoformat() + "Z"})
     except Exception as e:
