@@ -215,6 +215,17 @@ def create_import():
             _err_arc = validate_archive_subdir(body.get("archiveSubdir") or "")
             if _err_arc: return _err(*_err_arc)
 
+        # Phase 8 B-3 — minio_bucket 모드의 cross-tenant bucket 차단
+        sb = (body.get("sourceBucket") or "").strip()
+        if sb:
+            from backend.services.minio_buckets import parse_tenant_from_bucket
+            from backend.services.tenant_filter import _current_tenant_id
+            bt = parse_tenant_from_bucket(sb)
+            if bt is not None and bt != _current_tenant_id():
+                return _err(f"다른 tenant 의 bucket 입니다: {sb}", "INVALID_BUCKET", 400)
+            if body.get("sourceMode") == "minio_bucket" and not sb:
+                return _err("sourceBucket 은 minio_bucket 모드에서 필수입니다.", "VALIDATION")
+
         c = ImportCollector(
             name=name,
             description=body.get("description", ""),
@@ -240,6 +251,8 @@ def create_import():
             header_row=body.get("headerRow", 1),
             source_mode=body.get("sourceMode", "upload"),
             local_path=body.get("localPath", ""),
+            source_bucket=body.get("sourceBucket") or None,
+            source_prefix=body.get("sourcePrefix") or None,
             file_patterns=body.get("filePatterns", ["*"]),
             recursive=body.get("recursive", True),
             # MinIO 정본화: 신규 collector 는 archive 기본 (import 후 소스를 격리,
@@ -289,6 +302,16 @@ def update_import(cid):
             _err_arc = validate_archive_subdir(body.get("archiveSubdir") or "")
             if _err_arc: return _err(*_err_arc)
 
+        # Phase 8 B-3 — sourceBucket 변경 시 cross-tenant 차단
+        if "sourceBucket" in body:
+            new_sb = (body.get("sourceBucket") or "").strip()
+            if new_sb and new_sb != (c.source_bucket or ""):
+                from backend.services.minio_buckets import parse_tenant_from_bucket
+                from backend.services.tenant_filter import _current_tenant_id
+                bt = parse_tenant_from_bucket(new_sb)
+                if bt is not None and bt != _current_tenant_id():
+                    return _err(f"다른 tenant 의 bucket 입니다: {new_sb}", "INVALID_BUCKET", 400)
+
         field_map = {
             "name": "name", "description": "description",
             "importType": "import_type", "targetType": "target_type",
@@ -302,6 +325,7 @@ def update_import(cid):
             "publishMqtt": "publish_mqtt",
             "sheetName": "sheet_name", "headerRow": "header_row",
             "sourceMode": "source_mode", "localPath": "local_path",
+            "sourceBucket": "source_bucket", "sourcePrefix": "source_prefix",
             "filePatterns": "file_patterns", "recursive": "recursive",
             "postImportAction": "post_import_action", "archiveSubdir": "archive_subdir",
         }
@@ -748,6 +772,14 @@ def execute_from_path(cid):
 
         if c.status == "running":
             return _err("이미 실행 중입니다.", "ALREADY_RUNNING")
+
+        # Phase 8 B-3 — minio_bucket 모드: 아직 실행 분기 미구현 (B-4 에서)
+        if c.source_mode == "minio_bucket":
+            return _err(
+                "minio_bucket 모드 실행 분기는 다음 단계 (B-4) 에서 구현 예정입니다. "
+                "현재는 모드 등록·조회·격리만 가능합니다.",
+                "NOT_IMPLEMENTED", 501,
+            )
 
         if not c.local_path:
             return _err("서버 경로가 설정되지 않았습니다. 먼저 경로를 스캔하세요.", "VALIDATION")
