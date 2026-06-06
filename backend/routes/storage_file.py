@@ -120,13 +120,23 @@ def get_storage_status():
     cfg = get_minio_config(db)
     try:
         # ── 1) MinIO 사용량 — minio_object 인덱스 집계 ──
+        # Phase 8: tenant 별 bucket 만 노출. super_admin 은 MINIO_BUCKETS 전체.
+        from backend.services.minio_buckets import all_buckets_for
+        from backend.services.tenant_filter import _current_tenant_id
+        from backend.services.rbac import is_super
+        if is_super():
+            visible_buckets = list(MINIO_BUCKETS)
+        else:
+            visible_buckets = all_buckets_for(_current_tenant_id())
+
         from sqlalchemy import text as _sql_text1
         agg = {r[0]: (int(r[1]), int(r[2])) for r in db.execute(_sql_text1(
-            "SELECT bucket, COUNT(*), COALESCE(SUM(size),0) FROM minio_object GROUP BY bucket"
-        )).fetchall()}
+            "SELECT bucket, COUNT(*), COALESCE(SUM(size),0) "
+            "FROM minio_object WHERE bucket = ANY(:bs) GROUP BY bucket"
+        ), {"bs": visible_buckets}).fetchall()}
         minio_total_size = minio_total_objects = 0
         bucket_details = []
-        for b in MINIO_BUCKETS:
+        for b in visible_buckets:
             c, s = agg.get(b, (0, 0))
             minio_total_objects += c
             minio_total_size += s
