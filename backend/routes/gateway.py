@@ -153,18 +153,19 @@ def get_traffic_stats():
         error_case = case(
             (ApiAccessLog.status_code >= 400, 1), else_=0
         )
-        hourly = (
-            db.query(
-                hour_col,
-                func.count(ApiAccessLog.id).label("total"),
-                func.sum(error_case).label("errors"),
-                func.avg(ApiAccessLog.response_time_ms).label("avg_rt"),
-            )
-            .filter(ApiAccessLog.timestamp >= cutoff)
-            .group_by(hour_col)
-            .order_by(hour_col)
-            .all()
-        )
+        # Phase 8: hourly 도 자기 tenant 의 api_key 로만 (super 우회)
+        from backend.services.rbac import is_super as _is_super_hrly
+        from backend.services.tenant_filter import _current_tenant_id as _tid_hrly
+        _hq = db.query(
+            hour_col,
+            func.count(ApiAccessLog.id).label("total"),
+            func.sum(error_case).label("errors"),
+            func.avg(ApiAccessLog.response_time_ms).label("avg_rt"),
+        ).filter(ApiAccessLog.timestamp >= cutoff)
+        if not _is_super_hrly():
+            _hq = _hq.join(ApiKey, ApiKey.id == ApiAccessLog.api_key_id).filter(
+                ApiKey.tenant_id == _tid_hrly())
+        hourly = _hq.group_by(hour_col).order_by(hour_col).all()
         hourly_data = []
         for row in hourly:
             hourly_data.append({
@@ -174,19 +175,27 @@ def get_traffic_stats():
                 "avgResponseTime": round(float(row.avg_rt or 0), 2),
             })
 
-        # 전체 통계
-        total_req = db.query(func.count(ApiAccessLog.id)).filter(
-            ApiAccessLog.timestamp >= cutoff).scalar() or 0
-        err_cnt = db.query(func.count(ApiAccessLog.id)).filter(
+        # 전체 통계 — Phase 8: api_key.tenant_id join 으로 자기 tenant 만
+        from backend.services.rbac import is_super
+        from backend.services.tenant_filter import _current_tenant_id
+        def _tenant_filter(q):
+            if is_super(): return q
+            return q.join(ApiKey, ApiKey.id == ApiAccessLog.api_key_id).filter(
+                ApiKey.tenant_id == _current_tenant_id())
+        total_req = _tenant_filter(db.query(func.count(ApiAccessLog.id)).filter(
+            ApiAccessLog.timestamp >= cutoff)).scalar() or 0
+        err_cnt = _tenant_filter(db.query(func.count(ApiAccessLog.id)).filter(
             ApiAccessLog.timestamp >= cutoff,
-            ApiAccessLog.status_code >= 400).scalar() or 0
-        avg_rt = db.query(func.avg(ApiAccessLog.response_time_ms)).filter(
-            ApiAccessLog.timestamp >= cutoff).scalar() or 0
+            ApiAccessLog.status_code >= 400)).scalar() or 0
+        avg_rt = _tenant_filter(db.query(func.avg(ApiAccessLog.response_time_ms)).filter(
+            ApiAccessLog.timestamp >= cutoff)).scalar() or 0
 
         # Top 10 경로
         top_paths = (
-            db.query(ApiAccessLog.path, func.count(ApiAccessLog.id).label("cnt"))
-            .filter(ApiAccessLog.timestamp >= cutoff)
+            _tenant_filter(
+                db.query(ApiAccessLog.path, func.count(ApiAccessLog.id).label("cnt"))
+                .filter(ApiAccessLog.timestamp >= cutoff)
+            )
             .group_by(ApiAccessLog.path)
             .order_by(desc("cnt"))
             .limit(10).all()
@@ -284,7 +293,7 @@ def update_key(key_id):
     body = request.get_json(silent=True) or {}
     db = SessionLocal()
     try:
-        key = db.query(ApiKey).get(key_id)
+        key = get_by_id_tenant(db, ApiKey, key_id)
         if not key:
             return _err("API 키를 찾을 수 없습니다.", status=404)
         if "name" in body:
@@ -318,7 +327,7 @@ def update_key(key_id):
 def delete_key(key_id):
     db = SessionLocal()
     try:
-        key = db.query(ApiKey).get(key_id)
+        key = get_by_id_tenant(db, ApiKey, key_id)
         if not key:
             return _err("API 키를 찾을 수 없습니다.", status=404)
         db.delete(key)

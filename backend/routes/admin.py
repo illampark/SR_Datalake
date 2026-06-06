@@ -145,6 +145,22 @@ def seed_default_users():
 # 사용자 CRUD
 # ──────────────────────────────────────────────
 
+def _assert_user_in_my_tenant(db, user_id):
+    """user_id 가 현재 tenant 의 멤버인지 확인. super 통과."""
+    from backend.services.rbac import is_super
+    from backend.services.tenant_filter import _current_tenant_id
+    if is_super():
+        return None
+    from backend.models.tenant import TenantMembership
+    tid = _current_tenant_id()
+    m = db.query(TenantMembership).filter(
+        TenantMembership.user_id == user_id,
+        TenantMembership.tenant_id == tid,
+    ).first()
+    if not m:
+        return _err('사용자를 찾을 수 없습니다.', 'NOT_FOUND', 404)
+    return None
+
 @admin_bp.route("/users", methods=["GET"])
 def list_users():
     """사용자 목록 (Phase 7+) — 멤버십 포함.
@@ -290,6 +306,8 @@ def update_user(user_id):
     from backend.services.tenant_filter import _current_tenant_id
     db = SessionLocal()
     try:
+        _guard = _assert_user_in_my_tenant(db, user_id)
+        if _guard is not None: return _guard
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
@@ -348,6 +366,8 @@ def delete_user(user_id):
     """사용자 삭제"""
     db = SessionLocal()
     try:
+        _guard = _assert_user_in_my_tenant(db, user_id)
+        if _guard is not None: return _guard
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
@@ -370,6 +390,8 @@ def toggle_user(user_id):
     """활성/비활성 토글"""
     db = SessionLocal()
     try:
+        _guard = _assert_user_in_my_tenant(db, user_id)
+        if _guard is not None: return _guard
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
@@ -392,6 +414,8 @@ def reset_password(user_id):
     """비밀번호 초기화"""
     db = SessionLocal()
     try:
+        _guard = _assert_user_in_my_tenant(db, user_id)
+        if _guard is not None: return _guard
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
@@ -424,6 +448,8 @@ def unlock_user(user_id):
     """잠금 해제"""
     db = SessionLocal()
     try:
+        _guard = _assert_user_in_my_tenant(db, user_id)
+        if _guard is not None: return _guard
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
@@ -492,7 +518,15 @@ def login_history():
         to_dt = request.args.get("to", "").strip()
         limit = min(500, max(10, int(request.args.get("limit", 100))))
 
+        from backend.services.rbac import is_super
+        from backend.models.tenant import TenantMembership
         q = db.query(LoginHistory).order_by(LoginHistory.created_at.desc())
+        if not is_super():
+            from backend.services.tenant_filter import _current_tenant_id
+            my_users = db.query(User.username).join(
+                TenantMembership, TenantMembership.user_id == User.id
+            ).filter(TenantMembership.tenant_id == _current_tenant_id()).subquery()
+            q = q.filter(LoginHistory.username.in_(my_users))
 
         if username:
             q = q.filter(LoginHistory.username == username)
