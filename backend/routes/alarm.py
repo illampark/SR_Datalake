@@ -9,7 +9,7 @@ from backend.database import SessionLocal
 from backend.models.alarm import AlarmRule, AlarmEvent, AlarmChannel
 from backend.services import alarm_engine
 from backend.services.audit_logger import audit_route
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def list_events():
             })
 
         # 요약
-        all_events = db.query(AlarmEvent).filter(AlarmEvent.status == "active").all()
+        all_events = filter_by_tenant(db.query(AlarmEvent), AlarmEvent).filter(AlarmEvent.status == "active").all()
         summary = {"active": 0, "critical": 0, "warning": 0, "info": 0}
         for e in all_events:
             summary["active"] += 1
@@ -115,9 +115,9 @@ def ack_all_events():
     db = SessionLocal()
     try:
         now = datetime.utcnow()
-        updated = db.query(AlarmEvent).filter(
+        updated = filter_by_tenant(db.query(AlarmEvent), AlarmEvent).filter(
             AlarmEvent.status == "active"
-        ).update({"status": "acknowledged", "acked_at": now})
+        ).update({"status": "acknowledged", "acked_at": now}, synchronize_session=False)
         db.commit()
         return _ok({"updated": updated})
     finally:
@@ -132,7 +132,7 @@ def ack_all_events():
 def list_rules():
     db = SessionLocal()
     try:
-        rules = db.query(AlarmRule).order_by(AlarmRule.id).all()
+        rules = filter_by_tenant(db.query(AlarmRule), AlarmRule).order_by(AlarmRule.id).all()
         items = []
         for r in rules:
             items.append({
@@ -171,6 +171,7 @@ def create_rule():
         )
         if not rule.name or not rule.condition:
             return _err("규칙명과 조건은 필수입니다")
+        inject_tenant(rule)
         db.add(rule)
         db.commit()
         return _ok({"id": rule.id, "name": rule.name})
@@ -239,7 +240,7 @@ def toggle_rule(rule_id):
 def list_channels():
     db = SessionLocal()
     try:
-        channels = db.query(AlarmChannel).order_by(AlarmChannel.id).all()
+        channels = filter_by_tenant(db.query(AlarmChannel), AlarmChannel).order_by(AlarmChannel.id).all()
         items = []
         for ch in channels:
             items.append({
@@ -272,6 +273,7 @@ def create_channel():
         )
         if not ch.name:
             return _err("채널명은 필수입니다")
+        inject_tenant(ch)
         db.add(ch)
         db.commit()
         return _ok({"id": ch.id, "name": ch.name})
