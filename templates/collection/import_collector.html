@@ -47,6 +47,17 @@
   </div>
 </div>
 
+<!-- Phase 8 B-7: legacy local_path 마이그 알림 배너 -->
+<div id="legacy-banner" class="alert alert-warning" style="display:none;margin-bottom:12px;padding:12px 14px;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;">
+  <div class="d-flex" style="justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div>
+      <strong><i class="fas fa-triangle-exclamation" style="color:#f0ad4e"></i> <span id="legacy-banner-title"></span></strong>
+      <div class="fs-12 text-muted" style="margin-top:4px;" id="legacy-banner-detail"></div>
+    </div>
+    <button class="btn btn-sm btn-outline" onclick="openLegacyAuditModal()"><i class="fas fa-list-check"></i> {{ t('page.import_collector.legacy_audit_btn') }}</button>
+  </div>
+</div>
+
 <!-- Import List Table -->
 <div class="card">
   <div class="card-header">
@@ -413,6 +424,44 @@
   </div>
 </div>
 
+<!-- Phase 8 B-7: Legacy local_path Audit Modal -->
+<div class="modal-overlay" id="legacy-audit-overlay" style="display:none" onclick="if(event.target===this)closeLegacyAuditModal()">
+  <div class="modal" style="max-width:900px">
+    <div class="modal-header">
+      <h3><i class="fas fa-list-check"></i> {{ t('page.import_collector.legacy_audit_title') }}</h3>
+      <button class="modal-close" onclick="closeLegacyAuditModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert" style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:10px 12px;margin-bottom:12px;">
+        <strong><i class="fas fa-info-circle"></i> {{ t('page.import_collector.legacy_migration_guide_title') }}</strong>
+        <ol style="margin:8px 0 0 0;padding-left:22px;font-size:13px;line-height:1.7;">
+          <li>{{ t('page.import_collector.legacy_migration_step1') }}</li>
+          <li>{{ t('page.import_collector.legacy_migration_step2') }}</li>
+          <li>{{ t('page.import_collector.legacy_migration_step3') }}</li>
+          <li>{{ t('page.import_collector.legacy_migration_step4') }}</li>
+        </ol>
+        <div class="text-muted" style="margin-top:8px;font-size:12px;" id="legacy-suggested-bucket"></div>
+      </div>
+      <div class="table-wrapper" style="max-height:380px;overflow:auto;">
+        <table>
+          <thead><tr>
+            <th>{{ t('page.import_collector.th_name') }}</th>
+            <th>{{ t('page.import_collector.lbl_local_path') }}</th>
+            <th>{{ t('page.import_collector.th_result') }}</th>
+            <th>{{ t('page.import_collector.scan_th_modified') }}</th>
+            <th>{{ t('page.import_collector.legacy_suggested_target') }}</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="legacy-audit-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeLegacyAuditModal()">{{ t('common.close') }}</button>
+    </div>
+  </div>
+</div>
+
 <!-- Phase 8 B-6: MinIO Folder Picker Modal -->
 <div class="modal-overlay" id="minio-picker-overlay" style="display:none" onclick="if(event.target===this)closeMinioPicker()">
   <div class="modal" style="max-width:680px">
@@ -580,8 +629,14 @@ function loadList(){
         republishBtn +
         '<button class="btn btn-outline btn-sm" title="'+__t('common.edit')+'" onclick="openEditModal('+c.id+')"><i class="fas fa-pen"></i></button>' +
         '<button class="btn btn-outline btn-sm" title="'+__t('common.delete')+'" onclick="deleteImport('+c.id+',\''+escHtml(c.name)+'\')"><i class="fas fa-trash text-danger"></i></button>';
+      var modeBadge = '';
+      if(c.sourceMode === 'local_path'){
+        modeBadge = ' <span class="tag" style="background:#fff3cd;color:#856404;border:1px solid #ffe082;font-size:10px;" title="'+escHtml(__t('page.import_collector.legacy_badge_tooltip'))+'">'+escHtml(__t('page.import_collector.legacy_badge'))+'</span>';
+      } else if(c.sourceMode === 'minio_bucket'){
+        modeBadge = ' <span class="tag tag-green" style="font-size:10px;">MinIO</span>';
+      }
       $tb.append('<tr>'+
-        '<td><strong>'+escHtml(c.name)+'</strong><div class="fs-11 text-muted">'+escHtml(c.description||'')+'</div></td>'+
+        '<td><strong>'+escHtml(c.name)+'</strong>'+modeBadge+'<div class="fs-11 text-muted">'+escHtml(c.description||'')+'</div></td>'+
         '<td><span class="tag tag-blue">'+c.importType.toUpperCase()+'</span></td>'+
         '<td><span class="tag tag-purple">'+(targetLabel[c.targetType]||c.targetType)+'</span></td>'+
         '<td>'+(c.fileName?'<i class="fas fa-file"></i> '+escHtml(c.fileName)+'<div class="fs-11 text-muted">'+fmtSize(c.fileSize)+'</div>':'-')+'</td>'+
@@ -592,6 +647,52 @@ function loadList(){
       '</tr>');
     });
   });
+}
+
+/* ── Phase 8 B-7: legacy local_path 배너 + audit modal ── */
+function loadLegacyBanner(){
+  $.getJSON(API + '/legacy-audit', function(r){
+    if(!r.success) return;
+    var n = (r.data && r.data.total) || 0;
+    if(n === 0){
+      $('#legacy-banner').hide();
+      return;
+    }
+    $('#legacy-banner-title').text(__t('page.import_collector.legacy_banner_title').replace('{n}', n));
+    $('#legacy-banner-detail').text(__t('page.import_collector.legacy_banner_detail'));
+    $('#legacy-banner').show();
+  });
+}
+
+function openLegacyAuditModal(){
+  $.getJSON(API + '/legacy-audit', function(r){
+    if(!r.success) return alert(r.error.message);
+    var d = r.data;
+    var sb = d.suggestedBucket || '-';
+    $('#legacy-suggested-bucket').html('<strong>'+__t('page.import_collector.legacy_suggested_bucket')+':</strong> <code>'+escHtml(sb)+'</code>');
+    var $tb = $('#legacy-audit-tbody').empty();
+    if(!(d.collectors||[]).length){
+      $tb.html('<tr><td colspan="6" class="text-center text-muted" style="padding:24px">'+__t('page.import_collector.legacy_audit_empty')+'</td></tr>');
+      return;
+    }
+    d.collectors.forEach(function(c){
+      var last = c.lastImportedAt ? c.lastImportedAt.replace('T',' ').slice(0,16) : '-';
+      var target = (c.suggestedBucket||'-') + (c.localPath ? '/' + escHtml(c.localPath.replace(/^\//,'').replace(/\/$/,'')) + '/' : '/');
+      $tb.append('<tr>'+
+        '<td><strong>'+escHtml(c.name)+'</strong><div class="fs-11 text-muted">tenant '+c.tenantId+' · id '+c.id+'</div></td>'+
+        '<td class="fs-12" style="font-family:monospace;">'+escHtml(c.localPath||'-')+'</td>'+
+        '<td>'+fmt(c.totalRows||0)+'</td>'+
+        '<td class="fs-12">'+escHtml(last)+'</td>'+
+        '<td class="fs-12" style="font-family:monospace;">'+target+'</td>'+
+        '<td><button class="btn btn-sm btn-outline" onclick="closeLegacyAuditModal();openEditModal('+c.id+')"><i class="fas fa-pen"></i> '+__t('common.edit')+'</button></td>'+
+        '</tr>');
+    });
+  });
+  $('#legacy-audit-overlay').show();
+}
+
+function closeLegacyAuditModal(){
+  $('#legacy-audit-overlay').hide();
 }
 
 /* ── 진행 중 행 자동 갱신 ── */
@@ -1229,6 +1330,7 @@ function pollProgress(cid){
 $(function(){
   loadTargets();
   loadList();
+  loadLegacyBanner();
 });
 </script>
 {% endblock %}

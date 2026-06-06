@@ -205,6 +205,16 @@ def create_import():
         if filter_by_tenant(db.query(ImportCollector), ImportCollector).filter_by(name=name).first():
             return _err(f"이미 존재하는 커넥터명입니다: {name}", "DUPLICATE")
 
+        # Phase 8 B-7 — local_path 모드 신규 생성은 super_admin 만 (legacy 호환).
+        # 경로 가드보다 먼저 검사 — deprecated 모드는 경로 유효성과 무관하게 차단.
+        if body.get("sourceMode") == "local_path":
+            from backend.services.rbac import is_super
+            if not is_super():
+                return _err(
+                    "서버 경로 지정 모드는 deprecated 입니다. MinIO 폴더 모드를 사용하세요.",
+                    "LOCAL_PATH_DEPRECATED", 400,
+                )
+
         # Phase 8 — local_path 화이트리스트 가드 (서버 경로 지정 모드)
         from backend.services.local_path_guard import (
             assert_local_path_allowed, validate_archive_subdir,
@@ -311,6 +321,19 @@ def update_import(cid):
                 bt = parse_tenant_from_bucket(new_sb)
                 if bt is not None and bt != _current_tenant_id():
                     return _err(f"다른 tenant 의 bucket 입니다: {new_sb}", "INVALID_BUCKET", 400)
+
+        # Phase 8 B-7 — local_path 모드로 전환 (mode 변경) 은 super_admin 만.
+        # 이미 local_path 모드인 collector 의 다른 필드 수정은 허용 (legacy 호환).
+        if "sourceMode" in body:
+            new_mode = body.get("sourceMode")
+            if new_mode == "local_path" and (c.source_mode or "") != "local_path":
+                from backend.services.rbac import is_super
+                if not is_super():
+                    return _err(
+                        "서버 경로 지정 모드로 전환할 수 없습니다 (deprecated). "
+                        "MinIO 폴더 모드를 사용하세요.",
+                        "LOCAL_PATH_DEPRECATED", 400,
+                    )
 
         field_map = {
             "name": "name", "description": "description",
@@ -1037,6 +1060,61 @@ def list_source_buckets():
     except Exception as e:
         logger.error(f"source-buckets error: {e}")
         return _err(str(e), "SERVER_ERROR", 500)
+
+
+@import_bp.route("/legacy-audit", methods=["GET"])
+def legacy_audit():
+    """Phase 8 B-7 — local_path 모드 collector 의 마이그 audit.
+
+    응답: { collectors: [{id,name,localPath,filePatterns,recursive,
+              postImportAction,archiveSubdir,lastImportedAt,totalRows,
+              status,suggestedBucket,suggestedPrefix}],
+            total: int, suggestedBucket: str }
+    super_admin 은 모든 tenant, 일반 사용자는 filter_by_tenant 로 자기 tenant 만.
+    suggestedBucket 은 호출자 tenant 의 imports bucket (super_admin 은 None — 대상별
+    상이) — UI 가 마이그 가이드에 사용.
+    """
+    db = _db()
+    try:
+        from backend.services.rbac import is_super
+        is_su = is_super()
+        if is_su:
+            # super_admin: 모든 tenant 의 legacy collector 노출 (마이그 전수조사)
+            q = db.query(ImportCollector)
+        else:
+            q = filter_by_tenant(db.query(ImportCollector), ImportCollector)
+        q = q.filter(ImportCollector.source_mode == "local_path")
+        rows = q.order_by(ImportCollector.tenant_id, ImportCollector.id).all()
+        suggested_bucket = None if is_su else bucket_for("imports")
+
+        items = []
+        for c in rows:
+            items.append({
+                "id": c.id,
+                "name": c.name,
+                "tenantId": c.tenant_id,
+                "localPath": c.local_path or "",
+                "filePatterns": c.file_patterns or ["*"],
+                "recursive": bool(c.recursive),
+                "postImportAction": c.post_import_action or "archive",
+                "archiveSubdir": c.archive_subdir or ".imported",
+                "status": c.status or "",
+                "totalRows": int(c.imported_rows or 0),
+                "lastImportedAt": c.last_imported_at.isoformat() if c.last_imported_at else None,
+                "suggestedBucket": (
+                    suggested_bucket if suggested_bucket else bucket_for("imports", c.tenant_id)
+                ),
+            })
+        return _ok({
+            "collectors": items,
+            "total": len(items),
+            "suggestedBucket": suggested_bucket,
+        })
+    except Exception as e:
+        logger.error(f"legacy-audit error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
 
 
 @import_bp.route("/source-folders", methods=["GET"])
