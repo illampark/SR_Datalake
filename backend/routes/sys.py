@@ -126,6 +126,15 @@ def create_tenant():
             logger.info("tenant %s IAM user: %s", t.id, t.minio_username)
         except Exception as e:
             logger.warning("tenant %s IAM provision 실패: %s", t.id, e)
+        # Phase 8 Phase 1: PG schema/user + default Tsdb/Rdbms config 자동 발급
+        try:
+            from backend.services.tenant_pg import ensure_tenant_pg
+            from backend.services.tenant_storage import ensure_tenant_default_storage
+            pg_pw = ensure_tenant_pg(t.id)
+            ensure_tenant_default_storage(t.id, pg_password=pg_pw)
+            logger.info("tenant %s PG schema + default storage configured", t.id)
+        except Exception as e:
+            logger.warning("tenant %s PG/storage provision 실패: %s", t.id, e)
         db.commit()
         db.refresh(t)
         log_audit("system", "tenant.create", "tenant", str(t.id),
@@ -206,6 +215,12 @@ def archive_tenant(tid):
             disable_tenant_iam(t.id)
         except Exception as e:
             logger.warning("tenant %s IAM disable 실패: %s", t.id, e)
+        # Phase 8 Phase 1: PG user 비활성화 (NOLOGIN — schema/데이터 보존)
+        try:
+            from backend.services.tenant_pg import disable_tenant_pg
+            disable_tenant_pg(t.id)
+        except Exception as e:
+            logger.warning("tenant %s PG disable 실패: %s", t.id, e)
         db.commit()
         log_audit("system", "tenant.archive", "tenant", str(tid))
         return _ok({"id": tid, "status": "archived"})
