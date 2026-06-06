@@ -168,6 +168,25 @@
     </div>
   </div>
 
+  <!-- Phase 8 B-1: MinIO SFTP 자격증명 (tenant_admin 전용) -->
+  <div class="card mb-24" id="sftp-cred-card" style="display:none">
+    <div class="card-header">
+      <h3><i class="fas fa-key"></i> MinIO SFTP 자격증명 (대용량 데이터 업로드용)</h3>
+      <span class="badge-sm badge-primary" id="sftp-status-badge">-</span>
+    </div>
+    <div class="card-body">
+      <div class="kv-list" id="sftp-info-list">
+        <div class="text-muted" style="padding:20px;text-align:center;">{{ t('common.loading') }}</div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:8px;">
+        <button class="btn btn-warning" id="btn-sftp-rotate"><i class="fas fa-rotate"></i> 비밀번호 재발급</button>
+      </div>
+      <div class="text-muted" style="margin-top:12px; font-size:12px;">
+        <i class="fas fa-info-circle"></i> 비밀번호는 재발급 시점에만 1회 표시됩니다. 분실 시 새 비밀번호로 재발급하세요.
+      </div>
+    </div>
+  </div>
+
   <!-- 환경 변수 -->
   <div class="card">
     <div class="card-header">
@@ -294,6 +313,72 @@ function loadSystemInfo() {
     });
     $('#env-table-body').html(rows);
   });
+  loadSftpCredentials();
+}
+
+function loadSftpCredentials() {
+  // tenant_admin 만 접근 가능. 403 이면 카드 숨김 유지.
+  $.ajax({
+    url: '/api/tenant/me/sftp-credentials',
+    success: function(res) {
+      if (!res.success) return;
+      var d = res.data;
+      $('#sftp-cred-card').show();
+      $('#sftp-status-badge').text(d.exists ? (d.status || 'active') : '미발급')
+        .removeClass('badge-primary badge-success badge-warning')
+        .addClass(d.exists ? 'badge-success' : 'badge-warning');
+      var html = '';
+      html += kvItem('접속 호스트', '<span class="mono">' + escHtml(d.sftpHost) + ':' + d.sftpPort + '</span>');
+      html += kvItem('접속 메모', '<span class="text-muted" style="font-size:12px">' + escHtml(d.sftpNote || '') + '</span>');
+      html += kvItem('사용자명', '<span class="mono fw-600">' + escHtml(d.username) + '</span>');
+      html += kvItem('정책', '<span class="mono">' + escHtml(d.policy) + '</span>');
+      var bk = (d.allowedBuckets || []).map(function(b) { return '<span class="tag tag-blue">' + escHtml(b) + '</span>'; }).join(' ');
+      html += kvItem('허용 bucket', bk);
+      $('#sftp-info-list').html(html);
+    },
+    error: function() {
+      $('#sftp-cred-card').hide();  // 권한 없으면 숨김
+    }
+  });
+}
+
+$(document).on('click', '#btn-sftp-rotate', function() {
+  if (!confirm('현재 비밀번호가 무효화되고 새 비밀번호가 발급됩니다. 진행할까요?')) return;
+  $.ajax({
+    url: '/api/tenant/me/sftp-credentials/rotate', method: 'POST',
+    success: function(res) {
+      if (!res.success) { alert((res.error || {}).message || '재발급 실패'); return; }
+      var d = res.data;
+      showSftpRotateModal(d.username, d.password);
+      loadSftpCredentials();
+    },
+    error: function(xhr) {
+      var msg = (xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.message) || '재발급 실패';
+      alert(msg);
+    }
+  });
+});
+
+function showSftpRotateModal(username, password) {
+  var body = '<div style="padding:16px">' +
+    '<p style="margin-bottom:12px;"><i class="fas fa-check-circle text-success"></i> 새 비밀번호 발급 완료</p>' +
+    '<div class="kv-list">' +
+    '<div class="kv-item"><span class="kv-label">사용자명</span><span class="kv-value mono fw-600">' + escHtml(username) + '</span></div>' +
+    '<div class="kv-item"><span class="kv-label">비밀번호</span><span class="kv-value mono fw-600" style="user-select:all" id="rot-pw-show">' + escHtml(password) + '</span></div>' +
+    '</div>' +
+    '<button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="navigator.clipboard.writeText(document.getElementById(\'rot-pw-show\').innerText); this.innerHTML=\'<i class=fa-solid fa-check></i> 복사됨\'"><i class="fas fa-copy"></i> 비밀번호 복사</button>' +
+    '<div class="alert alert-warning" style="margin-top:14px"><i class="fas fa-triangle-exclamation"></i> 이 비밀번호는 다시 표시되지 않습니다. 안전한 곳에 즉시 보관하세요.</div>' +
+    '<div style="margin-top:12px; font-size:12px;">' +
+    '<strong>WinSCP 설정 예시</strong><br>' +
+    '프로토콜: SFTP &nbsp; · &nbsp; 포트: 8022 (SSH 터널 경유)<br>' +
+    '사용자명·비밀번호: 위 값 그대로' +
+    '</div></div>';
+  var footer = '<button class="btn btn-primary" onclick="closeModal()">확인 (모달 닫기)</button>';
+  if (typeof openModal === 'function') {
+    openModal('SFTP 비밀번호 재발급', body, footer);
+  } else {
+    alert('새 비밀번호 (한 번만 표시): ' + password + '\n안전한 곳에 보관하세요.');
+  }
 }
 
 function kvItem(label, value) {

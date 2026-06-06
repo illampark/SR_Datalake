@@ -34,6 +34,7 @@ class Tenant(Base):
     status = Column(String(20), nullable=False, default="active") # active/suspended/archived
     plan = Column(String(20), nullable=False, default="default")
     settings = Column(JSONB, nullable=False, default=dict)        # 브랜딩, locale, quota 등
+    minio_username = Column(String(100), unique=True, nullable=True)  # Phase 8 B-1: SFTP IAM 사용자명 (비번은 MinIO hash 보관)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -53,6 +54,7 @@ class Tenant(Base):
             "status": self.status,
             "plan": self.plan,
             "settings": self.settings or {},
+            "minioUsername": self.minio_username or "",
             "createdAt": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else "",
             "updatedAt": self.updated_at.strftime("%Y-%m-%d %H:%M:%S") if self.updated_at else "",
         }

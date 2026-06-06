@@ -119,6 +119,13 @@ def create_tenant():
             logger.info("tenant %s buckets provisioned: %s", t.id, buckets)
         except Exception as e:
             logger.warning("tenant %s MinIO provision 실패: %s", t.id, e)
+        # Phase 8 B-1: MinIO IAM 사용자·정책 자동 발급
+        try:
+            from backend.services.minio_iam import ensure_tenant_iam
+            t.minio_username = ensure_tenant_iam(t.id)
+            logger.info("tenant %s IAM user: %s", t.id, t.minio_username)
+        except Exception as e:
+            logger.warning("tenant %s IAM provision 실패: %s", t.id, e)
         db.commit()
         db.refresh(t)
         log_audit("system", "tenant.create", "tenant", str(t.id),
@@ -193,6 +200,12 @@ def archive_tenant(tid):
         if t.id in (0, 1):
             return _err(f"tenant {tid} 은 보호 — 삭제 불가", "FORBIDDEN", 403)
         t.status = "archived"
+        # Phase 8 B-1: IAM 사용자 비활성화 (삭제 X — 복구 가능)
+        try:
+            from backend.services.minio_iam import disable_tenant_iam
+            disable_tenant_iam(t.id)
+        except Exception as e:
+            logger.warning("tenant %s IAM disable 실패: %s", t.id, e)
         db.commit()
         log_audit("system", "tenant.archive", "tenant", str(tid))
         return _ok({"id": tid, "status": "archived"})

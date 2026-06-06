@@ -393,3 +393,59 @@ def revoke_api_key(kid):
         return _err(str(e), "SERVER_ERROR", 500)
     finally:
         db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 8 B-1: SFTP/IAM 자격증명 관리 (rotate-only, MinIO hash 보관)
+# ═══════════════════════════════════════════════════════════════════
+
+@tenant_me_bp.route("/sftp-credentials", methods=["GET"])
+def get_sftp_credentials():
+    """현 tenant 의 MinIO IAM 사용자 메타 (비밀번호 X).
+
+    응답: username, exists, status, allowedBuckets, sftpHost, sftpPort.
+    """
+    err = _require_tenant_admin()
+    if err is not None:
+        return err
+    from backend.services.minio_iam import get_iam_info
+    from backend.services.tenant_filter import _current_tenant_id
+    import os
+    info = get_iam_info(_current_tenant_id())
+    info["sftpHost"] = os.getenv("SFTP_PUBLIC_HOST", "localhost")
+    info["sftpPort"] = int(os.getenv("SFTP_PUBLIC_PORT", "8022"))
+    info["sftpNote"] = os.getenv(
+        "SFTP_PUBLIC_NOTE",
+        "SSH 터널 경유: ssh -L 8022:127.0.0.1:8022 <server>"
+    )
+    return _ok(info)
+
+
+@tenant_me_bp.route("/sftp-credentials/rotate", methods=["POST"])
+def rotate_sftp_password():
+    """비밀번호 재발급. 응답에 새 비밀번호를 1회만 평문 노출.
+
+    호출 후 즉시 안전한 곳에 보관해야 함. 분실 시 다시 재발급.
+    """
+    err = _require_tenant_admin()
+    if err is not None:
+        return err
+    from backend.services.minio_iam import rotate_password
+    from backend.services.tenant_filter import _current_tenant_id
+    tid = _current_tenant_id()
+    username, new_pw = rotate_password(tid)
+    # Tenant.minio_username 동기화
+    db = SessionLocal()
+    try:
+        t = db.query(Tenant).get(tid)
+        if t and t.minio_username != username:
+            t.minio_username = username
+            db.commit()
+    finally:
+        db.close()
+    log_audit("tenant", "sftp.password_rotate", "tenant", str(tid))
+    return _ok({
+        "username": username,
+        "password": new_pw,
+        "warning": "비밀번호는 다시 표시되지 않습니다. 안전한 곳에 즉시 보관하세요.",
+    })
