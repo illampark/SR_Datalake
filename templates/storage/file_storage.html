@@ -115,9 +115,7 @@
         <option value="local">{{ t('page.file_storage.source_inbox') }}</option>
       </select>
       <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="filter-bucket">
-        <option value="sdl-files">sdl-files</option>
-        <option value="sdl-archive">sdl-archive</option>
-        <option value="sdl-backup">sdl-backup</option>
+        <!-- Phase 8: loadStatus 가 자기 tenant 의 bucket 으로 동적 채움 -->
       </select>
       <select class="form-select" style="width:auto;min-width:200px;padding:4px 8px;display:none;" id="filter-collector"></select>
       <select class="form-select" style="width:auto;min-width:120px;padding:4px 8px;" id="filter-filetype">
@@ -212,10 +210,10 @@ var _loadFilesXhr = null;      // in-flight 가드: 같은 collector/필터에 �
 var _loadFilesReqId = 0;       // 늦게 도착한 응답 무시용
 
 $(function() {
+  // loadStatus 가 filter-bucket 옵션 채움 → 그 콜백에서 loadFiles 트리거.
   loadStatus();
   loadStats();
   loadLocalCollectors();
-  loadFiles();
 
   var searchTimer;
   $('#search-file').on('input', function() {
@@ -298,10 +296,30 @@ function renderLocalBreadcrumb(breadcrumb) {
 }
 
 /* ── 스토리지 상태 조회 ── */
+var _fbInitialized = false;
 function loadStatus() {
   $.getJSON(API + '/status', function(res) {
     if (!res.success) return;
     var d = res.data;
+
+    // Phase 8: filter-bucket 옵션을 자기 tenant 의 bucket 으로 채움.
+    // status 응답의 buckets[] 가 이미 tenant 격리된 목록 (서버에서 보정 완료).
+    var $fb = $('#filter-bucket');
+    if (d.buckets && d.buckets.length) {
+      var cur = $fb.val();
+      $fb.empty();
+      d.buckets.forEach(function(b) {
+        $fb.append('<option value="' + b.bucket + '">' + b.bucket + '</option>');
+      });
+      if (cur && $fb.find('option[value="' + cur + '"]').length) {
+        $fb.val(cur);
+      }
+      // 옵션이 처음 채워진 직후 1회만 loadFiles 트리거 (init 의 직접 호출은 제거됨).
+      if (!_fbInitialized) {
+        _fbInitialized = true;
+        loadFiles();
+      }
+    }
 
     // Stat cards
     if (d.totalGB >= 1024) {
