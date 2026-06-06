@@ -126,7 +126,12 @@ def create_tenant():
             logger.info("tenant %s IAM user: %s", t.id, t.minio_username)
         except Exception as e:
             logger.warning("tenant %s IAM provision 실패: %s", t.id, e)
-        # Phase 8 Phase 1: PG schema/user + default Tsdb/Rdbms config 자동 발급
+        db.commit()
+        db.refresh(t)
+        # Phase 8 Phase 1/2: PG schema/user + default Tsdb/Rdbms config 자동 발급.
+        # outer db.commit() 이후에 호출 — ensure_tenant_default_storage 가 자체
+        # SessionLocal() 로 commit 하는데, outer transaction 이 활성이면 우선
+        # 순위 충돌로 row 가 보이지 않게 됨 (이전 사고). commit 후 별도 호출.
         try:
             from backend.services.tenant_pg import ensure_tenant_pg
             from backend.services.tenant_storage import ensure_tenant_default_storage
@@ -135,8 +140,6 @@ def create_tenant():
             logger.info("tenant %s PG schema + default storage configured", t.id)
         except Exception as e:
             logger.warning("tenant %s PG/storage provision 실패: %s", t.id, e)
-        db.commit()
-        db.refresh(t)
         log_audit("system", "tenant.create", "tenant", str(t.id),
                   detail={"slug": slug, "name": name})
         return _ok(t.to_dict()), 201
