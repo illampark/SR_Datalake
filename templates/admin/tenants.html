@@ -436,6 +436,8 @@ function doImpersonate(tid, slug) {
   });
 }
 
-loadTenants();
+// jQuery 는 base.html 의 content block 다음에 로드되므로 즉시 실행 금지.
+// DOMContentLoaded 시점에는 jQuery 도 이미 동기 로드 완료.
+document.addEventListener('DOMContentLoaded', loadTenants);
 </script>
 {% endblock %}
