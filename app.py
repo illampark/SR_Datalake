@@ -440,7 +440,18 @@ def storage_rdbms():
 
 @app.route("/storage/retention")
 def storage_retention():
-    return render_template("storage/retention.html", active="stor-retention")
+    # Phase 8: 보관 정책은 운영자 콘솔 (super_admin) 로 이관.
+    # 기존 URL 진입 시 새 URL 로 redirect (사이드바·북마크 호환).
+    return redirect("/admin/infra/retention")
+
+
+@app.route("/admin/infra/retention")
+def admin_retention():
+    # /admin/infra/retention -> super_admin 전용 (Phase 8)
+    from backend.services.rbac import is_super as _is_super_rt
+    if not _is_super_rt():
+        return redirect("/")
+    return render_template("storage/retention.html", active="adm-retention")
 
 
 # ── Integration ──

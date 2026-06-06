@@ -187,14 +187,13 @@ function stopImpersonate() {
           <li class="{% if active == 'stor-tsdb' %}active{% endif %}"><a href="/storage/tsdb"><i class="fas fa-clock-rotate-left"></i><span>{{ t('nav.tsdb') }}</span></a></li>
           <li class="{% if active == 'stor-file' %}active{% endif %}"><a href="/storage/file"><i class="fas fa-folder-open"></i><span>{{ t('nav.file_storage') }}</span></a></li>
           <li class="{% if active == 'stor-rdbms' %}active{% endif %}"><a href="/storage/rdbms"><i class="fas fa-table"></i><span>{{ t('nav.rdbms') }}</span></a></li>
-          <li class="{% if active == 'stor-retention' %}active{% endif %}"><a href="/storage/retention"><i class="fas fa-calendar-check"></i><span>{{ t('nav.retention') }}</span></a></li>
         </ul>
       </li>
       {% endif %}
 
       <!-- 8. 시스템 설정 (tenant_admin 이상) -->
       {% if is_tenant_admin %}
-      <li class="menu-item has-sub {% if active and active.startswith('adm-') and not active.startswith('adm-sys-') %}open{% endif %}">
+      <li class="menu-item has-sub {% if active in ('adm-users','adm-gateway','adm-settings') %}open{% endif %}">
         <a href="#"><i class="fas fa-cog"></i><span>{{ t('nav.admin') }}</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
           <li class="{% if active == 'adm-users' %}active{% endif %}"><a href="/admin/users"><i class="fas fa-users"></i><span>{{ t('nav.users') }}</span></a></li>
@@ -206,10 +205,11 @@ function stopImpersonate() {
 
       <!-- 9. 운영자 콘솔 (super_admin 전용) -->
       {% if is_super %}
-      <li class="menu-item has-sub {% if active and active.startswith('adm-sys-') %}open{% endif %}">
+      <li class="menu-item has-sub {% if active in ('adm-sys-tenants','adm-backup','adm-retention') %}open{% endif %}">
         <a href="#"><i class="fas fa-shield-alt"></i><span>운영자 콘솔</span><i class="fas fa-chevron-right arrow"></i></a>
         <ul class="sub-menu">
           <li class="{% if active == 'adm-sys-tenants' %}active{% endif %}"><a href="/admin/sys/tenants"><i class="fas fa-building"></i><span>테넌트 관리</span></a></li>
+          <li class="{% if active == 'adm-retention' %}active{% endif %}"><a href="/admin/infra/retention"><i class="fas fa-calendar-check"></i><span>{{ t('nav.retention') }}</span></a></li>
           <li class="{% if active == 'adm-backup' %}active{% endif %}"><a href="/admin/infra/backup"><i class="fas fa-cloud-arrow-up"></i><span>{{ t('nav.backup') }}</span></a></li>
         </ul>
       </li>

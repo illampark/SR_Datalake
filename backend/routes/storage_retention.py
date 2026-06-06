@@ -28,6 +28,14 @@ def _db():
     return SessionLocal()
 
 
+def _require_super():
+    """Phase 8: 보관 정책은 super_admin 전용 (운영자 콘솔로 이관)."""
+    from backend.services.rbac import is_super
+    if not is_super():
+        return _err("super_admin 권한이 필요합니다.", "FORBIDDEN", 403)
+    return None
+
+
 def _fmt_bytes(b):
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if abs(b) < 1024:
@@ -83,6 +91,9 @@ _TASK_MAP = {
 # ──────────────────────────────────────────────
 @retention_bp.route("", methods=["GET"])
 def get_policy():
+    err = _require_super()
+    if err is not None:
+        return err
     db = _db()
     try:
         policy = filter_by_tenant(db.query(RetentionPolicy), RetentionPolicy).first()
@@ -98,6 +109,9 @@ def get_policy():
 # ──────────────────────────────────────────────
 @retention_bp.route("", methods=["PUT"])
 def update_policy():
+    err = _require_super()
+    if err is not None:
+        return err
     db = _db()
     try:
         body = request.get_json(force=True)
@@ -150,6 +164,9 @@ def update_policy():
 # ──────────────────────────────────────────────
 @retention_bp.route("/tiers", methods=["GET"])
 def get_tiers():
+    err = _require_super()
+    if err is not None:
+        return err
     db = _db()
     try:
         policy = filter_by_tenant(db.query(RetentionPolicy), RetentionPolicy).first()
@@ -275,6 +292,9 @@ def _get_minio_size():
 # ──────────────────────────────────────────────
 @retention_bp.route("/history", methods=["GET"])
 def get_history():
+    err = _require_super()
+    if err is not None:
+        return err
     db = _db()
     try:
         page = request.args.get("page", 1, type=int)
@@ -300,6 +320,9 @@ def get_history():
 # ──────────────────────────────────────────────
 @retention_bp.route("/execute", methods=["POST"])
 def manual_execute():
+    err = _require_super()
+    if err is not None:
+        return err
     db = _db()
     try:
         body = request.get_json(force=True)
@@ -344,6 +367,9 @@ def manual_execute():
 # ──────────────────────────────────────────────
 @retention_bp.route("/summary", methods=["GET"])
 def get_summary():
+    err = _require_super()
+    if err is not None:
+        return err
     db = _db()
     try:
         total = filter_by_tenant(db.query(func.count(RetentionExecutionLog.id)), RetentionExecutionLog).scalar() or 0
@@ -377,5 +403,8 @@ def get_summary():
 # ──────────────────────────────────────────────
 @retention_bp.route("/scheduler/status", methods=["GET"])
 def scheduler_status():
+    err = _require_super()
+    if err is not None:
+        return err
     from backend.services.retention_scheduler import get_scheduler_status
     return _ok(get_scheduler_status())
