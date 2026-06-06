@@ -102,6 +102,18 @@ def _classify(filename):
 # ──────────────────────────────────────────────
 # STR-011: GET /api/storage/file/status
 # ──────────────────────────────────────────────
+def _assert_bucket_tenant(bucket):
+    """bucket 이름의 tenant_id 가 현재 컨텍스트와 일치하는지 확인.
+    super_admin 은 통과. 다른 tenant 이면 (메시지, 403 응답) 튜플 반환.
+    파싱 실패 (시스템 버킷 등) 는 통과 — Phase 5 정책."""
+    from backend.services.minio_buckets import parse_tenant_from_bucket
+    from backend.services.tenant_filter import _current_tenant_id
+    from flask import g as _g
+    bt = parse_tenant_from_bucket(bucket)
+    if bt is not None and bt != _current_tenant_id() and not getattr(_g, 'is_super', False):
+        return _err(f'bucket {bucket} 권한 없음', 'FORBIDDEN', 403)
+    return None
+
 @file_bp.route("/status", methods=["GET"])
 def get_storage_status():
     db = SessionLocal()
@@ -350,6 +362,8 @@ def _table_browse(bucket, file_type, search, page, size):
 def browse_files():
     try:
         bucket = request.args.get("bucket", bucket_for("files"))
+        _bg = _assert_bucket_tenant(bucket)
+        if _bg is not None: return _bg
         file_type = request.args.get("type", "")
         search = request.args.get("search", "").lower()
         page = request.args.get("page", 1, type=int)
@@ -740,6 +754,8 @@ def preview_file():
     """파일 미리보기 — 텍스트 컨텐츠 일부 또는 raw 스트리밍 URL 반환."""
     try:
         bucket = request.args.get("bucket") or bucket_for("files")
+        _bg = _assert_bucket_tenant(bucket)
+        if _bg is not None: return _bg
         object_name = request.args.get("objectName") or request.args.get("object_name")
         max_bytes = request.args.get("maxBytes", _PREVIEW_MAX_BYTES_DEFAULT, type=int)
         if not object_name:
@@ -786,6 +802,8 @@ def raw_file():
     from flask import Response, stream_with_context
     try:
         bucket = request.args.get("bucket") or bucket_for("files")
+        _bg = _assert_bucket_tenant(bucket)
+        if _bg is not None: return _bg
         object_name = request.args.get("objectName") or request.args.get("object_name")
         if not object_name:
             return _err("objectName 이 필요합니다.", "VALIDATION")
@@ -851,6 +869,10 @@ def delete_files_batch():
             if not object_name:
                 errors.append({"bucket": bucket, "objectName": "", "error": "objectName 누락"})
                 continue
+            _bg = _assert_bucket_tenant(bucket)
+            if _bg is not None:
+                errors.append({"bucket": bucket, "objectName": object_name, "error": "권한 없음"})
+                continue
             try:
                 client.remove_object(bucket, object_name)
                 deleted += 1
@@ -876,6 +898,8 @@ def delete_file():
         body = request.get_json(force=True)
         body = normalize_camel_to_snake(body)
         bucket = body.get("bucket", bucket_for("files"))
+        _bg = _assert_bucket_tenant(bucket)
+        if _bg is not None: return _bg
         object_name = body.get("objectName") or body.get("object_name")
 
         if not object_name:
@@ -903,6 +927,8 @@ def delete_file():
 def download_file():
     try:
         bucket = request.args.get("bucket", bucket_for("files"))
+        _bg = _assert_bucket_tenant(bucket)
+        if _bg is not None: return _bg
         object_name = request.args.get("objectName") or request.args.get("object_name")
 
         if not object_name:
