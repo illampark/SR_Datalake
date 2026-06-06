@@ -265,9 +265,10 @@
               <select class="form-control" id="f-postImportAction" onchange="onPostImportActionChange()">
                 <option value="archive">{{ t('page.import_collector.post_archive') }}</option>
                 <option value="delete">{{ t('page.import_collector.post_delete') }}</option>
-                <option value="keep">{{ t('page.import_collector.post_keep') }}</option>
+                <option value="keep" id="opt-post-keep">{{ t('page.import_collector.post_keep') }}</option>
               </select>
-              <small style="color:var(--text-secondary)">{{ t('page.import_collector.post_import_action_help') }}</small>
+              <small id="post-help-local" style="color:var(--text-secondary)">{{ t('page.import_collector.post_import_action_help') }}</small>
+              <small id="post-help-bucket" style="color:var(--text-secondary);display:none;">{{ t('page.import_collector.post_import_action_help_bucket') }}</small>
             </div>
             <div class="form-group" id="grp-archiveSubdir" style="grid-column:1/-1">
               <label>{{ t('page.import_collector.lbl_archive_subdir') }}</label>
@@ -914,6 +915,22 @@ function onSourceModeChange(){
   $('#grp-localPath').toggle(mode === 'local_path');
   $('#grp-minioBucket').toggle(mode === 'minio_bucket');
   $('#grp-importOptions').toggle(mode === 'local_path' || mode === 'minio_bucket');
+
+  // minio_bucket 모드에서 'keep' 은 재실행 시 중복 import 사고의 원인이라 숨김.
+  // 기본 archive 가 원본 보존 + 재실행 안전을 모두 만족.
+  var $sel = $('#f-postImportAction');
+  var $keep = $('#opt-post-keep');
+  if(mode === 'minio_bucket'){
+    if($sel.val() === 'keep') $sel.val('archive');
+    $keep.prop('disabled', true).hide();
+    $('#post-help-local').hide();
+    $('#post-help-bucket').show();
+  } else {
+    $keep.prop('disabled', false).show();
+    $('#post-help-local').show();
+    $('#post-help-bucket').hide();
+  }
+  onPostImportActionChange();
 }
 
 /* ── Phase 8 B-6: source bucket dropdown 로드 ── */

@@ -647,6 +647,7 @@
       "post_delete": "삭제",
       "post_keep": "유지 (MinIO와 중복 발생)",
       "post_import_action_help": "MinIO가 정본입니다. 가져온 파일을 서버 경로에 그대로 두면 NFS·MinIO에 중복 저장됩니다. '보관 이동'은 하위 디렉토리로 격리하고, '삭제'는 즉시 제거합니다.",
+      "post_import_action_help_bucket": "재실행 시 중복 import 를 막기 위한 처리입니다. '보관 이동'은 같은 버킷의 하위 디렉토리로 옮겨 다음 스캔에서 자동 제외되고, '삭제'는 즉시 제거합니다. '유지'는 매 실행마다 모든 파일이 다시 import 되어 중복 행이 쌓이므로 minio_bucket 모드에서는 선택할 수 없습니다.",
       "lbl_archive_subdir": "보관 디렉토리명",
       "btn_scan": "스캔",
       "scan_title": "서버 경로 스캔 및 실행",

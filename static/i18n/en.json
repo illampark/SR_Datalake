@@ -647,6 +647,7 @@
       "post_delete": "Delete",
       "post_keep": "Keep (duplicates with MinIO)",
       "post_import_action_help": "MinIO is canonical. Leaving imported files in the server path stores them twice (NFS + MinIO). 'Move to archive' isolates them in a subdirectory; 'Delete' removes them immediately.",
+      "post_import_action_help_bucket": "Prevents duplicate import on re-execute. 'Move to archive' relocates files to a subdirectory of the same bucket (auto-excluded from subsequent scans); 'Delete' removes them immediately. 'Keep' would re-import every file on each run, so it's unavailable in minio_bucket mode.",
       "lbl_archive_subdir": "Archive directory name",
       "btn_scan": "Scan",
       "scan_title": "Server Path Scan & Execute",
