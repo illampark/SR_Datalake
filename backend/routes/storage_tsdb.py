@@ -8,7 +8,7 @@ from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, DownsamplingPolicy
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +52,9 @@ def list_instances():
     try:
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", get_default_page_size(), type=int)
-        total = db.query(func.count(TsdbConfig.id)).scalar()
+        total = filter_by_tenant(db.query(func.count(TsdbConfig.id)), TsdbConfig).scalar()
         rows = (
-            db.query(TsdbConfig)
+            filter_by_tenant(db.query(TsdbConfig), TsdbConfig)
             .order_by(TsdbConfig.id)
             .offset((page - 1) * size)
             .limit(size)
@@ -325,7 +325,7 @@ def list_downsampling(tsdb_id):
             return _err("TSDB 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         policies = (
-            db.query(DownsamplingPolicy)
+            filter_by_tenant(db.query(DownsamplingPolicy), DownsamplingPolicy)
             .filter(DownsamplingPolicy.tsdb_id == tsdb_id)
             .order_by(DownsamplingPolicy.id)
             .all()
@@ -363,6 +363,7 @@ def create_downsampling(tsdb_id):
             target_data=body.get("target_data", ""),
             enabled=body.get("enabled", True),
         )
+        inject_tenant(policy)
         db.add(policy)
         db.commit()
         db.refresh(policy)
@@ -384,7 +385,7 @@ def delete_downsampling(tsdb_id, policy_id):
     db = _db()
     try:
         policy = (
-            db.query(DownsamplingPolicy)
+            filter_by_tenant(db.query(DownsamplingPolicy), DownsamplingPolicy)
             .filter(DownsamplingPolicy.id == policy_id, DownsamplingPolicy.tsdb_id == tsdb_id)
             .first()
         )
@@ -411,7 +412,7 @@ def update_downsampling(tsdb_id, policy_id):
     db = _db()
     try:
         policy = (
-            db.query(DownsamplingPolicy)
+            filter_by_tenant(db.query(DownsamplingPolicy), DownsamplingPolicy)
             .filter(DownsamplingPolicy.id == policy_id, DownsamplingPolicy.tsdb_id == tsdb_id)
             .first()
         )
@@ -448,7 +449,7 @@ def toggle_downsampling(tsdb_id, policy_id):
     db = _db()
     try:
         policy = (
-            db.query(DownsamplingPolicy)
+            filter_by_tenant(db.query(DownsamplingPolicy), DownsamplingPolicy)
             .filter(DownsamplingPolicy.id == policy_id, DownsamplingPolicy.tsdb_id == tsdb_id)
             .first()
         )

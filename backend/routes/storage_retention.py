@@ -8,6 +8,7 @@ from backend.models.storage import TsdbConfig, RdbmsConfig, RetentionPolicy, Ret
 from backend.config import MINIO_BUCKETS
 from backend.services.minio_client import get_minio_client
 from backend.services.system_settings import get_default_page_size
+from backend.services.tenant_filter import filter_by_tenant, inject_tenant
 
 retention_bp = Blueprint("storage_retention", __name__, url_prefix="/api/storage/retention")
 
@@ -84,7 +85,7 @@ _TASK_MAP = {
 def get_policy():
     db = _db()
     try:
-        policy = db.query(RetentionPolicy).first()
+        policy = filter_by_tenant(db.query(RetentionPolicy), RetentionPolicy).first()
         if not policy:
             return _ok(dict(_DEFAULTS))
         return _ok(policy.to_dict())
@@ -116,9 +117,10 @@ def update_policy():
         if ap is not None and (float(ap) < 0 or float(ap) > 100):
             return _err("알림 임계치는 0~100% 사이여야 합니다.", "VALIDATION")
 
-        policy = db.query(RetentionPolicy).first()
+        policy = filter_by_tenant(db.query(RetentionPolicy), RetentionPolicy).first()
         if not policy:
             policy = RetentionPolicy()
+            inject_tenant(policy)
             db.add(policy)
 
         for field in _ALLOWED_FIELDS:
@@ -150,7 +152,7 @@ def update_policy():
 def get_tiers():
     db = _db()
     try:
-        policy = db.query(RetentionPolicy).first()
+        policy = filter_by_tenant(db.query(RetentionPolicy), RetentionPolicy).first()
         p = policy.to_dict() if policy else dict(_DEFAULTS)
 
         hot_used = _get_tsdb_size(db)
@@ -206,7 +208,7 @@ def get_tiers():
 def _get_tsdb_size(db):
     """TimescaleDB (시계열 DB) 사이즈 조회 (bytes). TsdbConfig 접속 정보 사용."""
     try:
-        tsdb = db.query(TsdbConfig).first()
+        tsdb = filter_by_tenant(db.query(TsdbConfig), TsdbConfig).first()
         if not tsdb:
             return 0
         import psycopg2
@@ -229,7 +231,7 @@ def _get_tsdb_size(db):
 def _get_rdbms_size(db):
     """PostgreSQL RDBMS 사이즈 조회 (bytes). RdbmsConfig 접속 정보 사용."""
     try:
-        rdbms = db.query(RdbmsConfig).first()
+        rdbms = filter_by_tenant(db.query(RdbmsConfig), RdbmsConfig).first()
         if not rdbms:
             return 0
         import psycopg2
@@ -277,9 +279,9 @@ def get_history():
     try:
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", get_default_page_size(), type=int)
-        total = db.query(func.count(RetentionExecutionLog.id)).scalar()
+        total = filter_by_tenant(db.query(func.count(RetentionExecutionLog.id)), RetentionExecutionLog).scalar()
         rows = (
-            db.query(RetentionExecutionLog)
+            filter_by_tenant(db.query(RetentionExecutionLog), RetentionExecutionLog)
             .order_by(RetentionExecutionLog.execution_time.desc())
             .offset((page - 1) * size)
             .limit(size)
@@ -344,17 +346,17 @@ def manual_execute():
 def get_summary():
     db = _db()
     try:
-        total = db.query(func.count(RetentionExecutionLog.id)).scalar() or 0
-        success = db.query(func.count(RetentionExecutionLog.id)).filter(
+        total = filter_by_tenant(db.query(func.count(RetentionExecutionLog.id)), RetentionExecutionLog).scalar() or 0
+        success = filter_by_tenant(db.query(func.count(RetentionExecutionLog.id)), RetentionExecutionLog).filter(
             RetentionExecutionLog.status == "success"
         ).scalar() or 0
-        failed = db.query(func.count(RetentionExecutionLog.id)).filter(
+        failed = filter_by_tenant(db.query(func.count(RetentionExecutionLog.id)), RetentionExecutionLog).filter(
             RetentionExecutionLog.status == "failed"
         ).scalar() or 0
-        total_bytes = int(db.query(func.sum(RetentionExecutionLog.processed_bytes)).scalar() or 0)
-        last_exec = db.query(func.max(RetentionExecutionLog.execution_time)).scalar()
+        total_bytes = int(filter_by_tenant(db.query(func.sum(RetentionExecutionLog.processed_bytes)), RetentionExecutionLog).scalar() or 0)
+        last_exec = filter_by_tenant(db.query(func.max(RetentionExecutionLog.execution_time)), RetentionExecutionLog).scalar()
 
-        policy = db.query(RetentionPolicy).first()
+        policy = filter_by_tenant(db.query(RetentionPolicy), RetentionPolicy).first()
 
         return _ok({
             "total_executions": total,

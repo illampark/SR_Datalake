@@ -6,7 +6,7 @@ from backend.database import SessionLocal
 from backend.models.storage import RdbmsConfig
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +87,9 @@ def list_instances():
     try:
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", get_default_page_size(), type=int)
-        total = db.query(func.count(RdbmsConfig.id)).scalar()
+        total = filter_by_tenant(db.query(func.count(RdbmsConfig.id)), RdbmsConfig).scalar()
         rows = (
-            db.query(RdbmsConfig)
+            filter_by_tenant(db.query(RdbmsConfig), RdbmsConfig)
             .order_by(RdbmsConfig.id)
             .offset((page - 1) * size)
             .limit(size)

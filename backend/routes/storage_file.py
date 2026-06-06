@@ -14,7 +14,7 @@ from backend.models.storage import FileCleanupPolicy
 from backend.config import MINIO_BUCKETS
 from backend.services.audit_logger import audit_route
 from backend.services.minio_client import get_minio_client, get_minio_config
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 from backend.services.minio_buckets import bucket_for
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ def get_storage_status():
         try:
             from backend.models.collector import ImportCollector
             ic_rows = (
-                db.query(ImportCollector)
+                filter_by_tenant(db.query(ImportCollector), ImportCollector)
                   .filter(ImportCollector.source_mode == "local_path")
                   .all()
             )
@@ -483,7 +483,7 @@ def get_file_stats():
 def get_cleanup_policy():
     db = _db()
     try:
-        policy = db.query(FileCleanupPolicy).first()
+        policy = filter_by_tenant(db.query(FileCleanupPolicy), FileCleanupPolicy).first()
         if not policy:
             return _ok({
                 "retention_days": 90,
@@ -514,9 +514,10 @@ def update_cleanup_policy():
         if thr is not None and (float(thr) < 0 or float(thr) > 100):
             return _err("임계치는 0~100% 사이여야 합니다.", "VALIDATION")
 
-        policy = db.query(FileCleanupPolicy).first()
+        policy = filter_by_tenant(db.query(FileCleanupPolicy), FileCleanupPolicy).first()
         if not policy:
             policy = FileCleanupPolicy()
+            inject_tenant(policy)
             db.add(policy)
 
         if ret is not None:
@@ -972,7 +973,7 @@ def list_local_collectors():
     try:
         from backend.models.collector import ImportCollector
         rows = (
-            db.query(ImportCollector)
+            filter_by_tenant(db.query(ImportCollector), ImportCollector)
               .filter(ImportCollector.source_mode == "local_path")
               .order_by(ImportCollector.id)
               .all()
@@ -1467,7 +1468,7 @@ def local_index_state():
         if cid:
             s = get_by_id_tenant(db, FileIndexState, cid)
             return _ok(s.to_dict() if s else {"collectorId": cid, "indexed": False})
-        items = [s.to_dict() for s in db.query(FileIndexState).order_by(FileIndexState.collector_id).all()]
+        items = [s.to_dict() for s in filter_by_tenant(db.query(FileIndexState), FileIndexState).order_by(FileIndexState.collector_id).all()]
         return _ok(items)
     finally:
         db.close()
