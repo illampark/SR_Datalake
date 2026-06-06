@@ -191,24 +191,54 @@
           <label class="form-label fw-600">{{ t('page.import_collector.lbl_source_mode') }}</label>
         </div>
         <div class="form-group" style="grid-column:1/-1">
-          <div class="d-flex gap-16">
+          <div class="d-flex gap-16" style="flex-wrap:wrap;">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
               <input type="radio" name="sourceMode" value="upload" checked onchange="onSourceModeChange()"> {{ t('page.import_collector.source_upload') }}
             </label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="sourceMode" value="minio_bucket" onchange="onSourceModeChange()"> {{ t('page.import_collector.source_minio_bucket') }}
+            </label>
+            {% if is_super %}
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-secondary);">
               <input type="radio" name="sourceMode" value="local_path" onchange="onSourceModeChange()"> {{ t('page.import_collector.source_local_path') }}
             </label>
+            {% endif %}
           </div>
         </div>
-        <div id="grp-localPath" style="display:none;grid-column:1/-1">
+
+        <!-- Phase 8 B-6: MinIO bucket 모드 (자기 tenant 의 imports bucket + prefix) -->
+        <div id="grp-minioBucket" style="display:none;grid-column:1/-1">
           <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:12px;">
-            <div class="form-group" style="grid-column:1/-1">
-              <label>{{ t('page.import_collector.lbl_local_path') }}</label>
+            <div class="form-group">
+              <label>{{ t('page.import_collector.lbl_source_bucket') }}</label>
+              <select class="form-control" id="f-sourceBucket"></select>
+            </div>
+            <div class="form-group">
+              <label>{{ t('page.import_collector.lbl_source_prefix') }}</label>
               <div class="d-flex gap-8">
-                <input type="text" class="form-control" id="f-localPath" placeholder="{{ t('page.import_collector.ph_local_path') }}" style="flex:1">
-                <button class="btn btn-secondary btn-sm" type="button" onclick="openBrowse('f-localPath')"><i class="fas fa-folder-open"></i> {{ t('page.import_collector.btn_browse') }}</button>
+                <input type="text" class="form-control" id="f-sourcePrefix" placeholder="{{ t('page.import_collector.ph_source_prefix') }}" style="flex:1">
+                <button class="btn btn-secondary btn-sm" type="button" onclick="openMinioPicker('f-sourcePrefix')"><i class="fas fa-folder-open"></i> {{ t('page.import_collector.btn_browse_minio') }}</button>
               </div>
             </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <small class="text-muted">{{ t('page.import_collector.minio_bucket_help') }}</small>
+            </div>
+          </div>
+        </div>
+
+        <div id="grp-localPath" style="display:none;grid-column:1/-1">
+          <div class="form-group">
+            <label>{{ t('page.import_collector.lbl_local_path') }}</label>
+            <div class="d-flex gap-8">
+              <input type="text" class="form-control" id="f-localPath" placeholder="{{ t('page.import_collector.ph_local_path') }}" style="flex:1">
+              <button class="btn btn-secondary btn-sm" type="button" onclick="openBrowse('f-localPath')"><i class="fas fa-folder-open"></i> {{ t('page.import_collector.btn_browse') }}</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Phase 8 B-6: 공통 import options (local_path + minio_bucket 모두) -->
+        <div id="grp-importOptions" style="display:none;grid-column:1/-1">
+          <div class="form-grid" style="grid-template-columns:1fr 1fr;gap:12px;">
             <div class="form-group">
               <label>{{ t('page.import_collector.lbl_file_patterns') }}</label>
               <input type="text" class="form-control" id="f-filePatterns" placeholder="*.csv, *.jpg, *.png" value="*">
@@ -272,6 +302,19 @@
             </div>
             <div class="text-muted" id="upload-progress-detail" style="margin-top:6px;font-size:13px;">0 / 0 KB</div>
           </div>
+        </div>
+        <!-- Phase 8 B-6: MinIO bucket 모드 — bucket+prefix 읽기 전용 + execute -->
+        <div id="upload-mode-minio" style="display:none">
+          <div class="form-group">
+            <label>{{ t('page.import_collector.lbl_source_bucket') }}</label>
+            <input type="text" class="form-control" id="upload-minio-bucket" readonly style="background:#f8f9fa">
+          </div>
+          <div class="form-group">
+            <label>{{ t('page.import_collector.lbl_source_prefix') }}</label>
+            <input type="text" class="form-control" id="upload-minio-prefix" readonly style="background:#f8f9fa">
+          </div>
+          <button class="btn btn-success" onclick="doExecutePath()"><i class="fas fa-play"></i> {{ t('page.import_collector.btn_execute_path') }}</button>
+          <small class="text-muted" style="display:block;margin-top:8px;">{{ t('page.import_collector.minio_bucket_help') }}</small>
         </div>
         <!-- Server path mode -->
         <div id="upload-mode-path" style="display:none">
@@ -366,6 +409,40 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeBrowse()">{{ t('common.cancel') }}</button>
       <button class="btn btn-primary" id="browse-select-current-btn" onclick="confirmBrowseCurrent()"><i class="fas fa-check"></i> {{ t('page.import_collector.browse_select_current') }}</button>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 8 B-6: MinIO Folder Picker Modal -->
+<div class="modal-overlay" id="minio-picker-overlay" style="display:none" onclick="if(event.target===this)closeMinioPicker()">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-header">
+      <h3>{{ t('page.import_collector.minio_picker_title') }}</h3>
+      <button class="modal-close" onclick="closeMinioPicker()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:8px;">
+        <label class="text-muted" style="font-size:12px;">{{ t('page.import_collector.lbl_source_bucket') }}</label>
+        <div id="minio-picker-bucket" style="font-family:monospace;background:#f8f9fa;padding:6px 10px;border-radius:4px;border:1px solid #dee2e6;">-</div>
+      </div>
+      <div style="margin-bottom:8px;">
+        <label class="text-muted" style="font-size:12px;">{{ t('page.import_collector.minio_picker_current') }}</label>
+        <div id="minio-picker-current" style="font-family:monospace;background:#f8f9fa;padding:6px 10px;border-radius:4px;border:1px solid #dee2e6;word-break:break-all;">/</div>
+      </div>
+      <div class="table-wrapper" style="max-height:380px;overflow:auto;">
+        <table>
+          <thead><tr>
+            <th style="width:30px"></th>
+            <th>{{ t('page.import_collector.browse_th_name') }}</th>
+            <th style="width:90px"></th>
+          </tr></thead>
+          <tbody id="minio-picker-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeMinioPicker()">{{ t('common.cancel') }}</button>
+      <button class="btn btn-primary" onclick="confirmMinioPickerCurrent()"><i class="fas fa-check"></i> {{ t('page.import_collector.minio_picker_select') }}</button>
     </div>
   </div>
 </div>
@@ -490,7 +567,7 @@ function loadList(){
       var republishBtn = (c.status==='completed')
         ? '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_republish')+'" onclick="doRepublish('+c.id+')"><i class="fas fa-rotate"></i></button>'
         : '';
-      var executeBtn = c.localPath
+      var executeBtn = (c.localPath || c.sourceBucket)
         ? '<button class="btn btn-outline btn-sm" title="'+__t('page.import_collector.btn_execute_path')+'" onclick="doExecutePathFromList('+c.id+')"><i class="fas fa-play" style="color:#28a745"></i></button>'
         : '';
       var stopBtn = (c.status==='running')
@@ -574,12 +651,14 @@ function openAddModal(){
   $('#f-publishMqtt').prop('checked', true);
   $('#f-sheetName').val('');
   $('#f-headerRow').val(1);
-  $('input[name=sourceMode][value="upload"]').prop('checked', true);
+  $('input[name=sourceMode][value="minio_bucket"]').prop('checked', true);
   $('#f-localPath').val('');
+  $('#f-sourcePrefix').val('');
   $('#f-filePatterns').val('*');
   $('#f-recursive').prop('checked', true);
   $('#f-postImportAction').val('archive');
   $('#f-archiveSubdir').val('.imported');
+  loadSourceBuckets();
   onSourceModeChange();
   onPostImportActionChange();
   loadTargets(function(){onTargetTypeChange();});
@@ -609,10 +688,12 @@ function openEditModal(id){
     $('#f-headerRow').val(c.headerRow||1);
     $('input[name=sourceMode][value="'+(c.sourceMode||'upload')+'"]').prop('checked',true);
     $('#f-localPath').val(c.localPath||'');
+    $('#f-sourcePrefix').val(c.sourcePrefix||'');
     $('#f-filePatterns').val((c.filePatterns||['*']).join(', '));
     $('#f-recursive').prop('checked', c.recursive!==false);
     $('#f-postImportAction').val(c.postImportAction||'archive');
     $('#f-archiveSubdir').val(c.archiveSubdir||'.imported');
+    loadSourceBuckets(c.sourceBucket||'');
     onSourceModeChange();
     onPostImportActionChange();
     loadTargets(function(){
@@ -646,6 +727,8 @@ function saveImport(){
     headerRow: parseInt($('#f-headerRow').val())||1,
     sourceMode: $('input[name=sourceMode]:checked').val() || 'upload',
     localPath: $('#f-localPath').val() || '',
+    sourceBucket: $('#f-sourceBucket').val() || '',
+    sourcePrefix: ($('#f-sourcePrefix').val()||'').trim(),
     filePatterns: ($('#f-filePatterns').val()||'*').split(',').map(function(s){return s.trim()}).filter(Boolean),
     recursive: $('#f-recursive').is(':checked'),
     postImportAction: $('#f-postImportAction').val() || 'archive',
@@ -727,11 +810,110 @@ function deleteImport(id,name){
 /* ── Upload & Execute ── */
 function onSourceModeChange(){
   var mode = $('input[name=sourceMode]:checked').val();
-  if(mode==='local_path'){
-    $('#grp-localPath').show();
-  } else {
-    $('#grp-localPath').hide();
-  }
+  $('#grp-localPath').toggle(mode === 'local_path');
+  $('#grp-minioBucket').toggle(mode === 'minio_bucket');
+  $('#grp-importOptions').toggle(mode === 'local_path' || mode === 'minio_bucket');
+}
+
+/* ── Phase 8 B-6: source bucket dropdown 로드 ── */
+function loadSourceBuckets(selectedBucket){
+  $.getJSON(API + '/source-buckets', function(r){
+    if(!r.success) return;
+    var $sel = $('#f-sourceBucket').empty();
+    (r.data.buckets||[]).forEach(function(b){
+      $sel.append('<option value="'+escHtml(b.bucket)+'">'+escHtml(b.label)+'</option>');
+    });
+    if(selectedBucket){
+      $sel.val(selectedBucket);
+      if($sel.val() !== selectedBucket){
+        // cross-tenant 또는 알려지지 않은 bucket — 옵션 추가하여 보여주기
+        $sel.append('<option value="'+escHtml(selectedBucket)+'">'+escHtml(selectedBucket)+' (?)</option>');
+        $sel.val(selectedBucket);
+      }
+    }
+  });
+}
+
+/* ── Phase 8 B-6: MinIO Folder Picker ── */
+var _minioPickerTarget = null;
+var _minioPickerBucket = '';
+var _minioPickerPrefix = '';
+
+function openMinioPicker(targetFieldId){
+  var bucket = $('#f-sourceBucket').val();
+  if(!bucket) return alert(__t('page.import_collector.lbl_source_bucket'));
+  _minioPickerTarget = targetFieldId;
+  _minioPickerBucket = bucket;
+  var seed = ($('#'+targetFieldId).val() || '').trim();
+  $('#minio-picker-bucket').text(bucket);
+  loadMinioFolder(seed);
+  $('#minio-picker-overlay').show();
+}
+
+function closeMinioPicker(){
+  $('#minio-picker-overlay').hide();
+  _minioPickerTarget = null;
+}
+
+function loadMinioFolder(prefix){
+  prefix = (prefix || '').replace(/^\/+/, '');
+  if(prefix && !prefix.endsWith('/')) prefix += '/';
+  _minioPickerPrefix = prefix;
+  $('#minio-picker-current').text(prefix || ('/  (' + __t('page.import_collector.minio_picker_root') + ')'));
+  $.ajax({
+    url: API + '/source-folders',
+    method: 'GET',
+    data: {bucket: _minioPickerBucket, prefix: prefix},
+    success: function(r){
+      var $tb = $('#minio-picker-tbody').empty();
+      if(!r.success){
+        $tb.html('<tr><td colspan="3" class="text-muted" style="text-align:center;padding:24px;">'+escHtml(r.error.message)+'</td></tr>');
+        return;
+      }
+      var d = r.data;
+      // 상위 폴더
+      if(prefix){
+        var parent = prefix.replace(/\/$/, '').split('/').slice(0, -1).join('/');
+        if(parent) parent += '/';
+        $tb.append('<tr style="cursor:pointer" onclick="loadMinioFolder(\''+escHtml(parent).replace(/\x27/g,"\\x27")+'\')">'
+          +'<td><i class="fas fa-level-up-alt"></i></td>'
+          +'<td colspan="2">..  ('+__t('page.import_collector.minio_picker_parent')+')</td></tr>');
+      }
+      (d.folders||[]).forEach(function(f){
+        var sub = (prefix || '') + f + '/';
+        var safe = sub.replace(/\x27/g,"\\x27");
+        $tb.append('<tr style="cursor:pointer">'
+          +'<td onclick="loadMinioFolder(\''+escHtml(safe)+'\')"><i class="fas fa-folder" style="color:#f0ad4e"></i></td>'
+          +'<td onclick="loadMinioFolder(\''+escHtml(safe)+'\')">'+escHtml(f)+'/</td>'
+          +'<td><button class="btn btn-sm btn-success" onclick="event.stopPropagation();selectMinioFolder(\''+escHtml(safe)+'\')">'+__t('page.import_collector.minio_picker_select')+'</button></td></tr>');
+      });
+      if((d.folders||[]).length === 0){
+        $tb.append('<tr><td colspan="3" class="text-muted" style="text-align:center;padding:14px;font-size:12px;">'+__t('page.import_collector.minio_picker_no_folder')+'</td></tr>');
+      }
+      // 미리보기용 파일 일부
+      (d.files||[]).slice(0,30).forEach(function(f){
+        $tb.append('<tr><td><i class="fas fa-file" style="color:#888"></i></td>'
+          +'<td>'+escHtml(f.name)+'</td>'
+          +'<td class="text-muted fs-12">'+fmtSize(f.size)+'</td></tr>');
+      });
+      if(d.fileCount > 30){
+        $tb.append('<tr><td colspan="3" class="text-muted" style="text-align:center;font-size:12px;">… +'+(d.fileCount-30)+' more files</td></tr>');
+      }
+    },
+    error: function(){
+      $('#minio-picker-tbody').html('<tr><td colspan="3" class="text-muted" style="text-align:center;padding:24px;">'+__t('common.error')+'</td></tr>');
+    }
+  });
+}
+
+function selectMinioFolder(prefix){
+  if(!_minioPickerTarget) return;
+  $('#'+_minioPickerTarget).val(prefix).trigger('change');
+  closeMinioPicker();
+}
+
+function confirmMinioPickerCurrent(){
+  selectMinioFolder(_minioPickerPrefix);
 }
 
 /* import 후 소스 정리 정책 — archive 일 때만 하위 디렉토리 입력 노출 */
@@ -753,13 +935,22 @@ function openUpload(id){
     var mode = c.sourceMode || 'upload';
     $('#upload-source-mode').val(mode);
 
-    if(mode === 'local_path'){
+    if(mode === 'minio_bucket'){
       $('#upload-mode-upload').hide();
+      $('#upload-mode-path').hide();
+      $('#upload-mode-minio').show();
+      $('#upload-title').text(__t('page.import_collector.scan_title'));
+      $('#upload-minio-bucket').val(c.sourceBucket || '');
+      $('#upload-minio-prefix').val(c.sourcePrefix || '/');
+    } else if(mode === 'local_path'){
+      $('#upload-mode-upload').hide();
+      $('#upload-mode-minio').hide();
       $('#upload-mode-path').show();
       $('#upload-title').text(__t('page.import_collector.scan_title'));
       $('#scan-path-input').val(c.localPath || '');
     } else {
       $('#upload-mode-upload').show();
+      $('#upload-mode-minio').hide();
       $('#upload-mode-path').hide();
       $('#upload-title').text(__t('page.import_collector.upload_title'));
       // 모든 모드에서 멀티 + ZIP 자동 해제 지원

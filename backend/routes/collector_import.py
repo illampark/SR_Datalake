@@ -1011,3 +1011,84 @@ def list_targets():
         return _err(str(e), "SERVER_ERROR", 500)
     finally:
         db.close()
+
+
+# ──────────────────────────────────────────────
+# Phase 8 B-6: minio_bucket 모드 빌더 보조 API
+# ──────────────────────────────────────────────
+@import_bp.route("/source-buckets", methods=["GET"])
+def list_source_buckets():
+    """현재 사용자가 import source 로 사용할 수 있는 bucket 목록.
+
+    tenant 단위 — 자기 tenant 의 `imports` bucket 1 개. super_admin 도 g.tenant_id
+    컨텍스트 기준 (impersonate 중이면 해당 tenant) 으로 동일 1 개 반환.
+
+    응답: { buckets: [{ bucket, label, isDefault }] }
+    """
+    try:
+        b = bucket_for("imports")
+        return _ok({
+            "buckets": [{
+                "bucket": b,
+                "label": b,
+                "isDefault": True,
+            }],
+        })
+    except Exception as e:
+        logger.error(f"source-buckets error: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
+
+
+@import_bp.route("/source-folders", methods=["GET"])
+def list_source_folders():
+    """주어진 bucket + prefix 의 하위 폴더 목록 (browse picker 용).
+
+    list_objects(delimiter='/') 로 직접 prefix 1 레벨만 나열. cross-tenant bucket
+    은 parse_tenant_from_bucket 가드로 차단.
+
+    Query: bucket (필수), prefix (선택, 기본 "")
+    응답: { bucket, prefix, folders: [str], files: [{name,size}] }
+    """
+    from backend.services.minio_buckets import parse_tenant_from_bucket
+    from backend.services.tenant_filter import _current_tenant_id
+    bucket = (request.args.get("bucket") or "").strip()
+    prefix = (request.args.get("prefix") or "").strip()
+    if not bucket:
+        return _err("bucket 이 필요합니다.", "VALIDATION")
+    bt = parse_tenant_from_bucket(bucket)
+    cur = _current_tenant_id()
+    if bt is None or bt != cur:
+        return _err("자기 tenant 의 bucket 만 사용할 수 있습니다.",
+                    "FORBIDDEN", 403)
+    if prefix and not prefix.endswith("/"):
+        prefix = prefix + "/"
+    try:
+        from backend.services.import_parser import _minio_client
+        client = _minio_client()
+        folders = []
+        files = []
+        for o in client.list_objects(bucket, prefix=prefix, recursive=False):
+            key = o.object_name
+            if key.endswith("/"):
+                rel = key[len(prefix):].rstrip("/")
+                if rel:
+                    folders.append(rel)
+            else:
+                rel = key[len(prefix):]
+                if rel:
+                    files.append({
+                        "name": rel,
+                        "size": int(getattr(o, "size", 0) or 0),
+                    })
+        folders.sort()
+        files.sort(key=lambda f: f["name"].lower())
+        return _ok({
+            "bucket": bucket,
+            "prefix": prefix,
+            "folders": folders,
+            "files": files[:100],
+            "fileCount": len(files),
+        })
+    except Exception as e:
+        logger.error(f"source-folders error bucket={bucket} prefix={prefix}: {e}")
+        return _err(str(e), "SERVER_ERROR", 500)
