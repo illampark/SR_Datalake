@@ -845,6 +845,23 @@ from backend.services.system_settings import get_default_page_size
 from backend.services.tenant_filter import filter_by_tenant, filter_by_tenant_or_null
 
 
+def _audit_base_query(db):
+    """tenant 격리 + super_admin 의 audit 제외 (Phase 8).
+
+    super_admin 본인은 자기 작업 audit 포함 (전체 권한).
+    일반 tenant_admin/editor 는 자기 tenant 의 audit 중 super 가 한 작업은 제외.
+    """
+    from backend.services.rbac import is_super
+    from backend.models.user import User
+    q = filter_by_tenant(db.query(AuditLog), AuditLog)
+    if not is_super():
+        # super_admin user 들의 username 을 조회해서 제외 — username 은 unique 컬럼.
+        super_names = [u.username for u in db.query(User).filter(User.is_super == True).all()]  # noqa: E712
+        if super_names:
+            q = q.filter(~AuditLog.username.in_(super_names))
+    return q
+
+
 # ──────────────────────────────────────────────
 # AUDIT-01: GET /api/monitoring/audit — 감사 로그 목록
 # ──────────────────────────────────────────────
@@ -862,7 +879,7 @@ def audit_list():
         page = max(1, int(request.args.get("page", 1)))
         size = min(200, max(10, int(request.args.get("size", get_default_page_size()))))
 
-        q = filter_by_tenant(db.query(AuditLog), AuditLog).order_by(AuditLog.timestamp.desc())
+        q = _audit_base_query(db).order_by(AuditLog.timestamp.desc())
 
         if username:
             q = q.filter(AuditLog.username == username)
@@ -918,7 +935,7 @@ def audit_stats():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
 
-        base_q = filter_by_tenant(db.query(AuditLog), AuditLog)
+        base_q = _audit_base_query(db)
         if from_dt:
             try:
                 base_q = base_q.filter(AuditLog.timestamp >= datetime.fromisoformat(from_dt))
@@ -1007,7 +1024,7 @@ def audit_export():
         from_dt = request.args.get("from", "").strip()
         to_dt = request.args.get("to", "").strip()
 
-        q = filter_by_tenant(db.query(AuditLog), AuditLog).order_by(AuditLog.timestamp.desc())
+        q = _audit_base_query(db).order_by(AuditLog.timestamp.desc())
         if username:
             q = q.filter(AuditLog.username == username)
         if action_type:
@@ -1068,7 +1085,7 @@ def audit_cleanup():
     try:
         days = max(1, int(request.args.get("days", 90)))
         cutoff = datetime.utcnow() - timedelta(days=days)
-        deleted = filter_by_tenant(db.query(AuditLog), AuditLog).filter(AuditLog.timestamp < cutoff).delete(synchronize_session=False)
+        deleted = _audit_base_query(db).filter(AuditLog.timestamp < cutoff).delete(synchronize_session=False)
         db.commit()
         return _ok({"deleted": deleted, "cutoff": cutoff.isoformat() + "Z"})
     except Exception as e:
