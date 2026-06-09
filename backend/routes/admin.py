@@ -176,9 +176,12 @@ def list_users():
             users = db.query(User).order_by(User.created_at).all()
         else:
             tid = _current_tenant_id()
+            # Phase 8: super_admin 은 cross-tenant 권한자라 일반 tenant_admin 의
+            # 관리 대상에서 제외 (같은 tenant 의 멤버여도 권한 격상 위험).
             users = (db.query(User)
                        .join(TenantMembership, TenantMembership.user_id == User.id)
                        .filter(TenantMembership.tenant_id == tid)
+                       .filter(User.is_super == False)  # noqa: E712
                        .order_by(User.created_at).all())
         if not users:
             return _ok({"users": []})
@@ -311,6 +314,11 @@ def update_user(user_id):
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        # Phase 8: super_admin user 는 일반 tenant_admin 이 수정 불가
+        # (자기 tenant 의 멤버여도). super_admin 본인은 통과.
+        if user.is_super and not is_super():
+            return _err("super_admin 사용자는 super_admin 만 수정할 수 있습니다.",
+                        "FORBIDDEN", 403)
 
         body = request.get_json(force=True)
         if "displayName" in body:
@@ -364,6 +372,7 @@ def update_user(user_id):
 @admin_bp.route("/users/<int:user_id>", methods=["DELETE"])
 def delete_user(user_id):
     """사용자 삭제"""
+    from backend.services.rbac import is_super
     db = SessionLocal()
     try:
         _guard = _assert_user_in_my_tenant(db, user_id)
@@ -371,6 +380,11 @@ def delete_user(user_id):
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        # Phase 8: super_admin user 는 일반 tenant_admin 이 삭제 불가
+        # (자기 tenant 의 멤버여도). super_admin 본인은 통과.
+        if user.is_super and not is_super():
+            return _err("super_admin 사용자는 super_admin 만 삭제할 수 있습니다.",
+                        "FORBIDDEN", 403)
         username = user.username
         db.delete(user)
         db.commit()
