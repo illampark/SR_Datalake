@@ -35,15 +35,22 @@ services:
     image: minio/minio:latest
     container_name: sdl-minio
     restart: always
-    command: server /data --address ":9000" --console-address ":9001"
+    command: >
+      server /data
+      --address ":9000"
+      --console-address ":9001"
+      --sftp="address=:8022"
+      --sftp="ssh-private-key=/etc/minio/sftp_host_key"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sdladmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sdladmin1234}
     volumes:
       - minio-data:/data                      # 오브젝트 스토리지 (분리)
+      - ./config/sftp_host_key:/etc/minio/sftp_host_key:ro    # SFTP host key (read-only)
     ports:
       - "127.0.0.1:19000:9000"                # API (demiurge 9000 회피)
       - "127.0.0.1:19001:9001"                # Console (demiurge 9001 회피)
+      - "0.0.0.0:8022:8022"                  # SFTP (loopback - SSH 터널 경유)
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -65,6 +72,8 @@ services:
         mc mb --ignore-existing local/sdl-files;
         mc mb --ignore-existing local/sdl-archive;
         mc mb --ignore-existing local/sdl-backup;
+        mc mb --ignore-existing local/sdl-exports;
+        mc mb --ignore-existing local/sdl-imports;
         echo '=== 버킷 생성 완료 ===';
       "
     environment:

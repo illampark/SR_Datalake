@@ -15,3 +15,4 @@ docs/github.txt
 
 # i18n 자동 백업
 static/i18n/.backup/
+deploy/config/sftp_host_key
