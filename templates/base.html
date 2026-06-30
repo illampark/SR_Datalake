@@ -270,6 +270,13 @@ function stopImpersonate() {
               <span class="user-role-badge">{{ session.get('role', '') }}</span>
             </div>
             <div class="user-dropdown-divider"></div>
+            <a class="user-dropdown-item" onclick="openMyProfileModal()">
+              <i class="fas fa-user-circle"></i> {{ t('nav.my_profile') }}
+            </a>
+            <a class="user-dropdown-item" onclick="openChangePasswordModal()">
+              <i class="fas fa-key"></i> {{ t('nav.change_password') }}
+            </a>
+            <div class="user-dropdown-divider"></div>
             <a class="user-dropdown-item" onclick="doLogout()">
               <i class="fas fa-sign-out-alt"></i> {{ t('nav.logout') }}
             </a>
@@ -440,6 +447,97 @@ function stopImpersonate() {
       method: 'POST',
       success: function() { window.location.href = '/login'; },
       error: function() { window.location.href = '/login'; }
+    });
+  }
+
+  /* 내 정보 (display_name 만 편집 가능) */
+  function openMyProfileModal() {
+    closeAllDropdowns();
+    $.ajax({
+      url: '/api/admin/auth/me', method: 'GET',
+      success: function(res) {
+        if (!res.success) { showToast(res.error && res.error.message || 'fail', 'error'); return; }
+        var u = res.data;
+        var body = '<div style="padding:16px">' +
+          '<div class="form-group"><label class="form-label">' + __t('nav.my_email') + '</label>' +
+          '<input class="form-control" value="' + (u.email || u.username || '') + '" readonly style="background:var(--bg-main)"></div>' +
+          '<div class="form-group"><label class="form-label">' + __t('nav.my_username') + '</label>' +
+          '<input class="form-control" value="' + (u.username || '') + '" readonly style="background:var(--bg-main)"></div>' +
+          '<div class="form-group"><label class="form-label">' + __t('nav.my_display_name') + ' *</label>' +
+          '<input class="form-control" id="my-display-name" maxlength="100" value="' + (u.displayName || '').replace(/"/g,'&quot;') + '"></div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">' + __t('nav.my_email_immutable') + '</div>' +
+          '</div>';
+        var footer = '<button class="btn btn-secondary" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+                     '<button class="btn btn-primary" onclick="saveMyProfile()">' + __t('common.save') + '</button>';
+        openModal(__t('nav.my_profile'), body, footer);
+      },
+      error: function() { showToast(__t('common.error'), 'error'); }
+    });
+  }
+  function saveMyProfile() {
+    var dn = ($('#my-display-name').val() || '').trim();
+    if (!dn) { showToast(__t('nav.my_name_required'), 'warning'); return; }
+    $.ajax({
+      url: '/api/admin/auth/profile', method: 'PUT',
+      contentType: 'application/json',
+      data: JSON.stringify({ displayName: dn }),
+      success: function(res) {
+        if (res.success) {
+          showToast(__t('nav.my_profile_saved'), 'success');
+          closeModal();
+          $('.user-name').text(res.data.displayName);
+          $('.user-dropdown-header strong').text(res.data.displayName);
+          $('.user-avatar').text((res.data.displayName || 'U').charAt(0).toUpperCase());
+        } else {
+          showToast(res.error && res.error.message || 'fail', 'error');
+        }
+      },
+      error: function(xhr) {
+        var msg = (xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.message) || __t('common.error');
+        showToast(msg, 'error');
+      }
+    });
+  }
+
+  /* 비밀번호 변경 (본인) */
+  function openChangePasswordModal() {
+    closeAllDropdowns();
+    var body = '<div style="padding:16px">' +
+      '<div class="form-group"><label class="form-label">' + __t('nav.current_password') + ' *</label>' +
+      '<input type="password" class="form-control" id="cp-current" autocomplete="current-password"></div>' +
+      '<div class="form-group"><label class="form-label">' + __t('nav.new_password') + ' *</label>' +
+      '<input type="password" class="form-control" id="cp-new" autocomplete="new-password"></div>' +
+      '<div class="form-group"><label class="form-label">' + __t('nav.confirm_password') + ' *</label>' +
+      '<input type="password" class="form-control" id="cp-confirm" autocomplete="new-password"></div>' +
+      '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">' + __t('nav.pw_helper') + '</div>' +
+      '</div>';
+    var footer = '<button class="btn btn-secondary" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+                 '<button class="btn btn-primary" onclick="submitChangePassword()">' + __t('common.save') + '</button>';
+    openModal(__t('nav.change_password'), body, footer);
+  }
+  function submitChangePassword() {
+    var cur = $('#cp-current').val() || '';
+    var pw1 = $('#cp-new').val() || '';
+    var pw2 = $('#cp-confirm').val() || '';
+    if (!cur || !pw1 || !pw2) { showToast(__t('nav.pw_required'), 'warning'); return; }
+    if (pw1 !== pw2) { showToast(__t('nav.pw_mismatch'), 'warning'); return; }
+    if (pw1 === cur) { showToast(__t('nav.pw_same_as_current'), 'warning'); return; }
+    $.ajax({
+      url: '/api/admin/auth/change-password', method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ currentPassword: cur, newPassword: pw1 }),
+      success: function(res) {
+        if (res.success) {
+          showToast(__t('nav.pw_changed'), 'success');
+          closeModal();
+        } else {
+          showToast(res.error && res.error.message || 'fail', 'error');
+        }
+      },
+      error: function(xhr) {
+        var msg = (xhr.responseJSON && xhr.responseJSON.error && xhr.responseJSON.error.message) || __t('common.error');
+        showToast(msg, 'error');
+      }
     });
   }
 

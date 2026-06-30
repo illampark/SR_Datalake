@@ -1085,6 +1085,76 @@ def auth_me():
     })
 
 
+@admin_bp.route("/auth/profile", methods=["PUT"])
+def update_own_profile():
+    """본인 프로필 변경 — display_name 만 허용. email/username 은 immutable."""
+    if "user_id" not in session:
+        return _err("로그인이 필요합니다.", "UNAUTHORIZED", 401)
+    body = request.get_json(force=True)
+    display_name = (body.get("displayName") or "").strip()
+    if not display_name:
+        return _err("표시 이름은 비울 수 없습니다.")
+    if len(display_name) > 100:
+        return _err("표시 이름이 너무 깁니다. (최대 100자)")
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == session["user_id"]).first()
+        if not user:
+            return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        old = user.display_name
+        if old == display_name:
+            return _ok({"displayName": user.display_name})
+        user.display_name = display_name
+        db.commit()
+        db.refresh(user)
+        session["display_name"] = user.display_name
+        log_audit("user", "user.profile.update", "user", user.email or user.username,
+                  detail={"old": old, "new": display_name})
+        logger.info("프로필 변경: %s (display_name: %s -> %s)", user.email, old, display_name)
+        return _ok({"displayName": user.display_name})
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@admin_bp.route("/auth/change-password", methods=["POST"])
+def change_own_password():
+    """본인 비밀번호 변경 — 현재 비번 검증 후 신규 비번 저장."""
+    if "user_id" not in session:
+        return _err("로그인이 필요합니다.", "UNAUTHORIZED", 401)
+    body = request.get_json(force=True)
+    cur_pw = (body.get("currentPassword") or "").strip()
+    new_pw = (body.get("newPassword") or "").strip()
+    if not cur_pw or not new_pw:
+        return _err("현재 비밀번호와 새 비밀번호 모두 입력하세요.")
+    if cur_pw == new_pw:
+        return _err("새 비밀번호가 현재 비밀번호와 동일합니다.", "SAME_PASSWORD")
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == session["user_id"]).first()
+        if not user:
+            return _err("사용자를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        if not check_password_hash(user.password_hash, cur_pw):
+            return _err("현재 비밀번호가 올바르지 않습니다.", "WRONG_PASSWORD")
+        min_len = _get_policy_int(db, "login.password_min_length", 8)
+        if len(new_pw) < min_len:
+            return _err("새 비밀번호는 최소 %d자 이상이어야 합니다." % min_len)
+        user.password_hash = generate_password_hash(new_pw)
+        user.login_fail_count = 0
+        user.locked_until = None
+        db.commit()
+        log_audit("user", "user.password.change", "user", user.email or user.username)
+        logger.info("자체 비밀번호 변경: %s", user.email)
+        return _ok({"username": user.username})
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
 @admin_bp.route("/lang", methods=["POST"])
 def switch_language():
     """UI 언어 전환 (ko/en)"""
