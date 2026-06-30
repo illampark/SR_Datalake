@@ -84,8 +84,13 @@ def ensure_tenant_iam(tid: int) -> str:
     policy_name = policy_name_for(tid)
     admin = _admin()
 
-    # 정책 add (idempotent — 같은 이름 재추가는 덮어쓰기)
+    # 정책 갱신 — policy_add 가 silent overwrite 안 하는 케이스가 있어
+    # 안전하게 remove 후 add. attach 는 아래 policy_set 으로 재부여.
     policy_dict = _build_policy(tid)
+    try:
+        admin.policy_remove(policy_name=policy_name)
+    except Exception:
+        pass  # 정책 없으면 무시
     admin.policy_add(policy_name=policy_name, policy=policy_dict)
 
     # 사용자 존재 확인 (없으면 추가)
