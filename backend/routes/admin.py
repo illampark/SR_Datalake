@@ -218,33 +218,65 @@ _TENANT_TO_LEGACY = {
 _TENANT_ROLES = ("tenant_admin", "tenant_editor", "tenant_viewer")
 
 
-@admin_bp.route("/users", methods=["POST"])
-def create_user():
-    """사용자 생성 (Phase 8 4-role).
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 
-    body:
-      - username, displayName, email, password : 기본
-      - tenantRole : tenant_admin / tenant_editor / tenant_viewer (기본: tenant_viewer)
-      - isSuper    : True 이면 super_admin (super_admin 만 설정 가능)
-    동작:
-      - User row 생성 (user.role=legacy 매핑, is_super=isSuper)
-      - 현 tenant 에 TenantMembership 자동 부여
+
+def _derive_username(email: str, db, tenant_id: int) -> str:
+    """email local part 를 username 으로 추출 — 같은 tenant 안 충돌 시 suffix 자동.
+
+    예: admin@acme.com → 'admin' (tenant 안 'admin' 이미 있으면 admin2, admin3 …)
+    다른 tenant 의 'admin' 과는 충돌 안 함 (mig 0012 가 username UNIQUE drop).
     """
     from backend.models.tenant import TenantMembership
+    base = email.split("@", 1)[0].strip()
+    candidate = base
+    i = 2
+    while db.query(User).join(
+        TenantMembership, TenantMembership.user_id == User.id,
+    ).filter(
+        TenantMembership.tenant_id == tenant_id,
+        User.username == candidate,
+    ).first():
+        candidate = f"{base}{i}"
+        i += 1
+    return candidate
+
+
+@admin_bp.route("/users", methods=["POST"])
+def create_user():
+    """사용자 생성 (Phase 8+ email 기반).
+
+    body:
+      - email       : (필수) 로그인 ID. 글로벌 unique.
+      - displayName : (필수) 표시명
+      - password    : (필수)
+      - tenantRole  : tenant_admin / tenant_editor / tenant_viewer (기본 viewer)
+      - tenantId    : (super_admin only) 임의 tenant 지정. 일반 tenant_admin
+                      은 무시되고 자기 컨텍스트 tenant 적용.
+      - isSuper     : (super_admin only) True 시 user.is_super=True
+    동작:
+      - username = email.split("@")[0] 자동 추출
+      - 같은 tenant 안 username 충돌 시 자동 suffix (admin2, admin3)
+      - email 글로벌 unique 충돌 시 400
+      - User row 생성 (role=legacy 매핑) + TenantMembership 생성
+    """
+    from backend.models.tenant import TenantMembership, Tenant
     from backend.services.rbac import is_super
     from backend.services.tenant_filter import _current_tenant_id
     db = SessionLocal()
     try:
         body = request.get_json(force=True)
-        username = (body.get("username") or "").strip()
+        email = (body.get("email") or "").strip().lower()
         display_name = (body.get("displayName") or "").strip()
-        email = (body.get("email") or "").strip()
         password = (body.get("password") or "").strip()
         tenant_role = (body.get("tenantRole") or "tenant_viewer").strip()
         want_super = bool(body.get("isSuper", False))
+        body_tid = body.get("tenantId")
 
-        if not username or not display_name:
-            return _err("사용자 ID와 이름은 필수입니다.")
+        if not email or not display_name:
+            return _err("이메일과 이름은 필수입니다.")
+        if not _EMAIL_RE.match(email):
+            return _err("이메일 형식이 올바르지 않습니다.", "INVALID_EMAIL")
         if not password:
             return _err("비밀번호는 필수입니다.")
         if tenant_role not in _TENANT_ROLES:
@@ -253,16 +285,28 @@ def create_user():
             return _err("super_admin 권한 부여는 super_admin 만 가능합니다.",
                         "FORBIDDEN", 403)
 
-        exists = db.query(User).filter(User.username == username).first()
-        if exists:
-            return _err("이미 존재하는 사용자 ID입니다.")
+        # tenantId 결정 — super 만 임의 지정 가능. 일반 tenant_admin 은 자기 tenant.
+        if body_tid is not None and is_super():
+            try:
+                tid = int(body_tid)
+            except (TypeError, ValueError):
+                return _err("tenantId 가 숫자가 아닙니다.", "VALIDATION")
+            if not db.query(Tenant).filter(Tenant.id == tid).first():
+                return _err(f"tenant id={tid} 가 존재하지 않습니다.", "NOT_FOUND", 404)
+        else:
+            tid = _current_tenant_id()
+
+        # email 글로벌 unique 검증
+        if db.query(User).filter(User.email == email).first():
+            return _err("이미 등록된 이메일입니다.", "DUPLICATE_EMAIL")
 
         min_len = _get_policy_int(db, "login.password_min_length", 8)
         if len(password) < min_len:
             return _err("비밀번호는 최소 %d자 이상이어야 합니다." % min_len)
 
+        # username = email local part (tenant 안 충돌 시 자동 suffix)
+        username = _derive_username(email, db, tid)
         legacy_role = _TENANT_TO_LEGACY.get(tenant_role, "viewer")
-        tid = _current_tenant_id()
 
         user = User(
             username=username,
@@ -280,11 +324,12 @@ def create_user():
         ))
         db.commit()
         db.refresh(user)
-        logger.info("사용자 생성: %s (tenant=%d / %s / super=%s)",
-                    username, tid, tenant_role, want_super)
-        log_audit("user", "user.create", "user", username, detail={
+        logger.info("사용자 생성: %s <%s> (tenant=%d / %s / super=%s)",
+                    username, email, tid, tenant_role, want_super)
+        log_audit("user", "user.create", "user", email, detail={
             "tenantId": tid, "tenantRole": tenant_role,
-            "isSuper": want_super, "displayName": display_name,
+            "isSuper": want_super, "username": username,
+            "displayName": display_name,
         })
         return _ok(user.to_dict())
     except Exception as e:
@@ -323,8 +368,11 @@ def update_user(user_id):
         body = request.get_json(force=True)
         if "displayName" in body:
             user.display_name = body["displayName"].strip()
-        if "email" in body:
-            user.email = body["email"].strip()
+        # Phase 8+ (mig 0012): email 은 로그인 ID 라 변경 거부.
+        # 변경 필요 시 사용자 삭제 후 재등록.
+        if "email" in body and (body["email"] or "").strip().lower() != (user.email or "").lower():
+            return _err("이메일은 변경할 수 없습니다. 변경 필요 시 사용자 재등록.",
+                        "EMAIL_IMMUTABLE", 400)
         if "enabled" in body:
             user.enabled = bool(body["enabled"])
 
@@ -855,22 +903,36 @@ def get_logo():
 
 @admin_bp.route("/auth/login", methods=["POST"])
 def auth_login():
-    """사용자 로그인"""
+    """사용자 로그인 — email primary, username fallback (legacy compat).
+
+    Phase 8+ (mig 0012): email 이 로그인 ID 의 primary key.
+    deprecation 기간 (1-2주) 동안 username 도 허용 — audit 로그에 표시.
+    """
     body = request.get_json(silent=True) or {}
-    username = (body.get("username") or "").strip()
+    # email 또는 username 어느 쪽이든 받음 (UI 가 점진 변경)
+    login_id = (body.get("email") or body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
 
-    if not username or not password:
-        return _err("사용자 ID와 비밀번호를 입력하세요.")
+    if not login_id or not password:
+        return _err("이메일과 비밀번호를 입력하세요.")
 
     ip = request.remote_addr or ""
     ua = (request.user_agent.string or "")[:500]
+    is_email_form = "@" in login_id
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.username == username).first()
+        # 1차: email 매칭 — 표준
+        user = db.query(User).filter(User.email == login_id).first()
+        # 2차: username 매칭 (legacy fallback) — '@' 미포함 입력만
+        if not user and not is_email_form:
+            user = db.query(User).filter(User.username == login_id).first()
+            if user:
+                logger.info("legacy username login: %s (deprecated, use email)", login_id)
+        # audit / history 에는 user 의 실제 email 기록 — 일관성 유지
+        username = (user.email if user else login_id)
         if not user:
-            return _err("사용자 ID 또는 비밀번호가 올바르지 않습니다.", "AUTH_FAIL")
+            return _err("이메일 또는 비밀번호가 올바르지 않습니다.", "AUTH_FAIL")
 
         # 계정 비활성 체크
         if not user.enabled:

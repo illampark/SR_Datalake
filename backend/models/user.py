@@ -10,9 +10,12 @@ class User(Base):
     __tablename__ = "app_user"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String(50), unique=True, nullable=False)
+    # Phase 8+ (mig 0012): username 의 UNIQUE 제거 — tenant 별 같은 username
+    # (예: admin@acme.com / admin@beta.com → 둘 다 username='admin') 허용.
+    # email 이 글로벌 unique 이며 로그인 식별자.
+    username = Column(String(100), nullable=False)
     display_name = Column(String(100), nullable=False)
-    email = Column(String(200), default="")
+    email = Column(String(200), unique=True, nullable=False)
     password_hash = Column(String(200), nullable=False)
     role = Column(String(30), default="viewer")  # admin / engineer / operator / viewer
     is_super = Column(Boolean, nullable=False, default=False)  # super_admin (cross-tenant) 표식 — Phase 1
