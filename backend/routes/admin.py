@@ -903,32 +903,27 @@ def get_logo():
 
 @admin_bp.route("/auth/login", methods=["POST"])
 def auth_login():
-    """사용자 로그인 — email primary, username fallback (legacy compat).
+    """사용자 로그인 — email only (Phase 8+ mig 0012, deprecation 완료).
 
-    Phase 8+ (mig 0012): email 이 로그인 ID 의 primary key.
-    deprecation 기간 (1-2주) 동안 username 도 허용 — audit 로그에 표시.
+    body.username 도 호환을 위해 받지만 반드시 email 형식 (@ 포함) 이어야 함.
     """
     body = request.get_json(silent=True) or {}
-    # email 또는 username 어느 쪽이든 받음 (UI 가 점진 변경)
+    # email primary, username (UI 의 input name) 도 받되 email 형식만 허용
     login_id = (body.get("email") or body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
 
     if not login_id or not password:
         return _err("이메일과 비밀번호를 입력하세요.")
+    if "@" not in login_id:
+        return _err("이메일 형식으로 로그인하세요. (예: user@example.com)",
+                    "EMAIL_REQUIRED")
 
     ip = request.remote_addr or ""
     ua = (request.user_agent.string or "")[:500]
-    is_email_form = "@" in login_id
 
     db = SessionLocal()
     try:
-        # 1차: email 매칭 — 표준
         user = db.query(User).filter(User.email == login_id).first()
-        # 2차: username 매칭 (legacy fallback) — '@' 미포함 입력만
-        if not user and not is_email_form:
-            user = db.query(User).filter(User.username == login_id).first()
-            if user:
-                logger.info("legacy username login: %s (deprecated, use email)", login_id)
         # audit / history 에는 user 의 실제 email 기록 — 일관성 유지
         username = (user.email if user else login_id)
         if not user:
