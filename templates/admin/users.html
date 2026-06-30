@@ -411,41 +411,76 @@ function _roleSelectOptions(selectedKey) {
 
 function openAddUserModal() {
   var superBox = '';
+  var tenantDropdown = '';
   if (window.currentIsSuper) {
     superBox = '<div class="form-group"><label class="form-label" style="display:flex; align-items:center; gap:8px;">' +
-      '<input type="checkbox" id="add-is-super"> super_admin 권한 부여 (cross-tenant)</label>' +
-      '<small class="text-muted">체크 시 user.is_super=True. 테넌트 관리·impersonate·전역 설정 가능.</small></div>';
+      '<input type="checkbox" id="add-is-super"> super_admin ' + __t('page.users.label_grant_super') + '</label>' +
+      '<small class="text-muted">' + __t('page.users.helper_super') + '</small></div>';
+    // super 만 tenant 선택 가능. /api/sys/tenants?status=active 로 채움.
+    tenantDropdown = '<div class="form-group"><label class="form-label">' + __t('page.users.label_target_tenant') + '</label>' +
+      '<select class="form-select" id="add-tenant-id"><option value="">' + __t('common.loading') + '</option></select>' +
+      '<small class="text-muted">' + __t('page.users.helper_tenant_select') + '</small></div>';
+  } else {
+    tenantDropdown = '<div class="form-group"><label class="form-label">' + __t('page.users.label_target_tenant') + '</label>' +
+      '<input type="text" class="form-control" value="tenant_id=' + (window.currentTenantId || 1) + '" readonly style="background:#f8f9fa;"></div>';
   }
-  var body = '<div class="form-row">' +
-    '<div class="form-group"><label class="form-label">' + __t('page.users.label_user_id') + ' <span class="text-danger">*</span></label>' +
-    '<input type="text" class="form-control" id="add-username" placeholder="' + __t('page.users.placeholder_user_id') + '"></div>' +
+  var body =
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_email') + ' <span class="text-danger">*</span></label>' +
+    '<input type="email" class="form-control" id="add-email" placeholder="' + __t('page.users.placeholder_email') + '" oninput="_previewUsername()"></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_username_preview') + '</label>' +
+    '<input type="text" class="form-control" id="add-username-preview" readonly style="background:#f8f9fa;" placeholder="—">' +
+    '<small class="text-muted">' + __t('page.users.helper_username_auto') + '</small></div>' +
+    '<div class="form-row">' +
     '<div class="form-group"><label class="form-label">' + __t('page.users.label_name') + ' <span class="text-danger">*</span></label>' +
     '<input type="text" class="form-control" id="add-name" placeholder="' + __t('page.users.placeholder_name') + '"></div>' +
-    '</div>' +
-    '<div class="form-group"><label class="form-label">' + __t('page.users.label_email') + '</label>' +
-    '<input type="email" class="form-control" id="add-email" placeholder="' + __t('page.users.placeholder_email') + '"></div>' +
-    '<div class="form-row">' +
     '<div class="form-group"><label class="form-label">' + __t('page.users.label_password') + ' <span class="text-danger">*</span></label>' +
     '<input type="password" class="form-control" id="add-pw" placeholder="' + __t('page.users.placeholder_password') + '"></div>' +
-    '<div class="form-group"><label class="form-label">현 테넌트에서의 역할</label>' +
-    '<select class="form-select" id="add-tenant-role">' + _roleSelectOptions('tenant_viewer') + '</select>' +
-    '<small class="text-muted">tenant_id=' + (window.currentTenantId || 1) + ' 에 자동 부여</small></div>' +
+    '</div>' +
+    '<div class="form-row">' +
+    tenantDropdown +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_tenant_role') + '</label>' +
+    '<select class="form-select" id="add-tenant-role">' + _roleSelectOptions('tenant_viewer') + '</select></div>' +
     '</div>' + superBox;
   var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
     '<button class="btn btn-primary" onclick="createUser()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
   openModal(__t('page.users.modal_add_user'), body, footer);
+
+  // super 일 때 tenant dropdown 로드
+  if (window.currentIsSuper) {
+    $.getJSON('/api/sys/tenants?status=active', function(res) {
+      if (!res.success) return;
+      var $sel = $('#add-tenant-id').empty();
+      (res.data || []).forEach(function(t) {
+        $sel.append('<option value="' + t.id + '"' + (t.id === window.currentTenantId ? ' selected' : '') + '>' +
+                    t.id + ' · ' + (t.name || t.slug) + '</option>');
+      });
+    });
+  }
+}
+
+function _previewUsername() {
+  var email = ($('#add-email').val() || '').trim();
+  var i = email.indexOf('@');
+  $('#add-username-preview').val(i > 0 ? email.substring(0, i) : '');
 }
 
 function createUser() {
+  var email = $('#add-email').val().trim();
+  if (!email || email.indexOf('@') < 0) {
+    showToast(__t('page.users.toast_email_invalid'), 'error'); return;
+  }
   var data = {
-    username: $('#add-username').val().trim(),
+    email: email,
     displayName: $('#add-name').val().trim(),
-    email: $('#add-email').val().trim(),
     password: $('#add-pw').val(),
     tenantRole: $('#add-tenant-role').val()
   };
-  if (window.currentIsSuper) data.isSuper = $('#add-is-super').is(':checked');
-  if (!data.username || !data.displayName) { showToast(__t('page.users.toast_user_id_required'), 'error'); return; }
+  if (window.currentIsSuper) {
+    data.isSuper = $('#add-is-super').is(':checked');
+    var tid = parseInt($('#add-tenant-id').val(), 10);
+    if (tid) data.tenantId = tid;
+  }
+  if (!data.displayName) { showToast(__t('page.users.toast_name_required'), 'error'); return; }
   if (!data.password) { showToast(__t('page.users.toast_password_required'), 'error'); return; }
   $.ajax({
     url: API + '/users', method: 'POST',
@@ -486,27 +521,29 @@ function openEditModal(userId) {
       '<small class="text-muted">user.is_super 직접 토글. 운영자 콘솔 접근 권한.</small></div>';
   }
 
-  var body = '<div class="form-group"><label class="form-label">' + __t('page.users.label_user_id') + '</label>' +
-    '<input type="text" class="form-control" value="' + _esc(u.username) + '" readonly style="background:var(--bg-subtle)"></div>' +
+  var body = '<div class="form-row">' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_email') + '</label>' +
+    '<input type="email" class="form-control" value="' + _esc(u.email) + '" readonly style="background:#f8f9fa">' +
+    '<small class="text-muted">' + __t('page.users.helper_email_immutable') + '</small></div>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_username') + '</label>' +
+    '<input type="text" class="form-control" value="' + _esc(u.username) + '" readonly style="background:#f8f9fa"></div>' +
+    '</div>' +
     '<div class="form-row">' +
     '<div class="form-group"><label class="form-label">' + __t('page.users.label_name') + '</label>' +
     '<input type="text" class="form-control" id="edit-name" value="' + _esc(u.displayName) + '"></div>' +
-    '<div class="form-group"><label class="form-label">현 테넌트에서의 역할</label>' +
+    '<div class="form-group"><label class="form-label">' + __t('page.users.label_tenant_role') + '</label>' +
     '<select class="form-select" id="edit-tenant-role">' + _roleSelectOptions(curRole) + '</select>' +
-    '<small class="text-muted">tenant_id=' + (window.currentTenantId || 1) + ' 의 membership 갱신</small></div>' +
-    '</div>' +
-    '<div class="form-group"><label class="form-label">' + __t('page.users.label_email') + '</label>' +
-    '<input type="email" class="form-control" id="edit-email" value="' + _esc(u.email) + '"></div>' +
-    superBox;
+    '<small class="text-muted">tenant_id=' + (window.currentTenantId || 1) + ' membership</small></div>' +
+    '</div>' + superBox;
   var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
     '<button class="btn btn-primary" onclick="updateUser(' + u.id + ')"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
   openModal(__t('page.users.modal_edit_user') + ' — ' + u.username, body, footer);
 }
 
 function updateUser(userId) {
+  // email 은 immutable — body 에 안 보냄.
   var data = {
     displayName: $('#edit-name').val().trim(),
-    email: $('#edit-email').val().trim(),
     tenantRole: $('#edit-tenant-role').val()
   };
   if (window.currentIsSuper) data.isSuper = $('#edit-is-super').is(':checked');
