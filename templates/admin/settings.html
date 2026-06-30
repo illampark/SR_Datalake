@@ -366,7 +366,7 @@ function showSftpRotateModal(username, password) {
     '<div class="kv-item"><span class="kv-label">사용자명</span><span class="kv-value mono fw-600">' + escHtml(username) + '</span></div>' +
     '<div class="kv-item"><span class="kv-label">비밀번호</span><span class="kv-value mono fw-600" style="user-select:all" id="rot-pw-show">' + escHtml(password) + '</span></div>' +
     '</div>' +
-    '<button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="navigator.clipboard.writeText(document.getElementById(\'rot-pw-show\').innerText); this.innerHTML=\'<i class=fa-solid fa-check></i> 복사됨\'"><i class="fas fa-copy"></i> 비밀번호 복사</button>' +
+    '<button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="copySftpRotatedPw(this)"><i class="fas fa-copy"></i> 비밀번호 복사</button>' +
     '<div class="alert alert-warning" style="margin-top:14px"><i class="fas fa-triangle-exclamation"></i> 이 비밀번호는 다시 표시되지 않습니다. 안전한 곳에 즉시 보관하세요.</div>' +
     '<div style="margin-top:12px; font-size:12px;">' +
     '<strong>WinSCP 설정 예시</strong><br>' +
@@ -378,6 +378,38 @@ function showSftpRotateModal(username, password) {
     openModal('SFTP 비밀번호 재발급', body, footer);
   } else {
     alert('새 비밀번호 (한 번만 표시): ' + password + '\n안전한 곳에 보관하세요.');
+  }
+}
+
+// 비-secure context (HTTP) 대응 — navigator.clipboard 미가용 시 textarea+execCommand fallback
+function copySftpRotatedPw(btn) {
+  var el = document.getElementById('rot-pw-show');
+  if (!el) return;
+  var text = el.innerText;
+  var ok = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text);
+      ok = true;
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+    }
+  } catch (e) { ok = false; }
+  if (ok) {
+    btn.innerHTML = '<i class="fa-solid fa-check"></i> 복사됨';
+  } else {
+    // 마지막 fallback — 위 값 영역 자체를 선택 시켜 사용자가 Ctrl+C 로 복사 가능
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    var sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+    btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 자동 복사 실패 — Ctrl+C 로 복사';
   }
 }
 
