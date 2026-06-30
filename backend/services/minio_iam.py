@@ -45,7 +45,11 @@ def policy_name_for(tid: int) -> str:
 
 
 def _build_policy(tid: int) -> dict:
-    """자기 tenant 의 4 종 bucket + ListAllMyBuckets 정책."""
+    """자기 tenant 의 5 종 bucket 만 허용 — ListAllMyBuckets 미부여.
+
+    SFTP root level ls 는 AccessDenied. 사용자가 자기 bucket 이름을
+    명시 cd 하면 정상 접근. 다른 tenant 의 bucket 이름 정보 자체를 차단.
+    """
     buckets = all_buckets_for(tid)
     resources: list[str] = []
     for b in buckets:
@@ -58,11 +62,6 @@ def _build_policy(tid: int) -> dict:
                 "Effect": "Allow",
                 "Action": ["s3:*"],
                 "Resource": resources,
-            },
-            {
-                "Effect": "Allow",
-                "Action": ["s3:ListAllMyBuckets"],
-                "Resource": ["arn:aws:s3:::*"],
             },
         ],
     }
