@@ -605,6 +605,14 @@ function stopImpersonate() {
     $r.html(html).addClass('show');
   });
 
+  /* 단축키: Ctrl+K (Windows/Linux) / Cmd+K (Mac) -> 헤더 검색바 포커스 */
+  $(document).on('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      $('#search-input').trigger('focus').trigger('select');
+    }
+  });
+
   $('#search-input').on('keydown', function(e) {
     var $items = $('#search-results .search-result-item');
     if (!$items.length) return;
