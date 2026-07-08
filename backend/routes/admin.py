@@ -376,7 +376,10 @@ def update_user(user_id):
         if "enabled" in body:
             user.enabled = bool(body["enabled"])
 
-        # tenantRole: 현 tenant 의 membership 갱신/생성
+        # tenantRole: 기존 membership 만 갱신. 새 membership 생성 안 함.
+        # 이유: super_admin 이 default 컨텍스트에서 다른 tenant 사용자를 편집하면
+        # _current_tenant_id() = 1 (default) 로 새 membership 이 자동 생성되던 버그.
+        # 다른 tenant 사용자의 역할을 바꾸려면 super 는 impersonate 로 그 tenant 진입 후 편집.
         if "tenantRole" in body:
             tenant_role = (body.get("tenantRole") or "").strip()
             if tenant_role not in _TENANT_ROLES:
@@ -387,12 +390,13 @@ def update_user(user_id):
                            TenantMembership.tenant_id == tid).first())
             if m:
                 m.role = tenant_role
+                # 레거시 user.role 도 함께 갱신 (UI 일부 fallback)
+                user.role = _TENANT_TO_LEGACY.get(tenant_role, user.role)
             else:
-                db.add(TenantMembership(
-                    user_id=user_id, tenant_id=tid, role=tenant_role,
-                ))
-            # 레거시 user.role 도 함께 갱신 (UI 일부 fallback)
-            user.role = _TENANT_TO_LEGACY.get(tenant_role, user.role)
+                logger.warning(
+                    "user.update: user_id=%d has no membership in tenant=%d — tenantRole 무시",
+                    user_id, tid,
+                )
 
         # isSuper: super_admin 만
         if "isSuper" in body:
