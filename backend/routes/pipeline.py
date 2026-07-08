@@ -173,6 +173,7 @@ def create_pipeline():
             description=body.get("description", ""),
             enabled=body.get("enabled", True),
         )
+        inject_tenant(p)
         db.add(p)
         db.flush()
 
@@ -187,13 +188,15 @@ def create_pipeline():
 
         # Steps 추가
         for i, step_data in enumerate(body.get("steps", [])):
-            db.add(PipelineStep(
+            step = PipelineStep(
                 pipeline_id=p.id,
                 step_order=i,
                 module_type=step_data.get("moduleType", ""),
                 enabled=step_data.get("enabled", True),
                 config=step_data.get("config", {}),
-            ))
+            )
+            inject_tenant(step)
+            db.add(step)
 
         # Bindings 추가 - cross-tenant 참조 가드 포함
         _BIND_MODELS = {
@@ -215,13 +218,15 @@ def create_pipeline():
                         f"connector {ctype}/{cid} 없거나 권한 없음",
                         "FORBIDDEN", 403,
                     )
-            db.add(PipelineBinding(
+            binding = PipelineBinding(
                 pipeline_id=p.id,
                 connector_type=ctype,
                 connector_id=cid,
                 tag_filter=bind_data.get("tagFilter", "*"),
                 enabled=bind_data.get("enabled", True),
-            ))
+            )
+            inject_tenant(binding)
+            db.add(binding)
 
         db.commit()
         db.refresh(p)
@@ -283,13 +288,15 @@ def update_pipeline(pid):
         if "steps" in body:
             filter_by_tenant(db.query(PipelineStep), PipelineStep).filter_by(pipeline_id=pid).delete()
             for i, step_data in enumerate(body["steps"]):
-                db.add(PipelineStep(
+                step = PipelineStep(
                     pipeline_id=pid,
                     step_order=i,
                     module_type=step_data.get("moduleType", ""),
                     enabled=step_data.get("enabled", True),
                     config=step_data.get("config", {}),
-                ))
+                )
+                inject_tenant(step)
+                db.add(step)
 
         # Bindings 교체 - cross-tenant connector_id 참조 가드 포함
         if "bindings" in body:
@@ -307,13 +314,15 @@ def update_pipeline(pid):
             filter_by_tenant(db.query(PipelineBinding), PipelineBinding).filter_by(pipeline_id=pid).delete()
             for bind_data in body["bindings"]:
                 ctype = (bind_data.get("connectorType") or "").lower()
-                db.add(PipelineBinding(
+                binding = PipelineBinding(
                     pipeline_id=pid,
                     connector_type=ctype,
                     connector_id=bind_data.get("connectorId", 0),
                     tag_filter=bind_data.get("tagFilter", "*"),
                     enabled=bind_data.get("enabled", True),
-                ))
+                )
+                inject_tenant(binding)
+                db.add(binding)
 
         db.commit()
         db.refresh(p)
