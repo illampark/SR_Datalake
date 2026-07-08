@@ -435,6 +435,7 @@ def create_tag(cid):
             tag_name=tag_name,
             data_type=body.get("dataType", "float"),
             description=body.get("description", ""),
+            tenant_id=c.tenant_id,
         )
         db.add(tag)
         db.commit()
