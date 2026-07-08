@@ -7,7 +7,7 @@ from backend.services import benthos_manager as bm
 from backend.services import connector_workers
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 opcua_bp = Blueprint("collector_opcua", __name__, url_prefix="/api/connectors/opcua")
 
@@ -121,6 +121,7 @@ def create_connector():
             polling_interval=int(body.get("pollingInterval", 1000)),
             config=config,
         )
+        inject_tenant(c)
         db.add(c)
         db.commit()
         db.refresh(c)

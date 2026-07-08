@@ -273,6 +273,10 @@ def create_import():
         # target=file은 MinIO 저장 결과를 파이프라인이 직접 읽으므로 MQTT 재발행 불필요·위험
         if c.target_type == "file":
             c.publish_mqtt = False
+        # tenant_id 주입 — 없으면 mixin default(=1) 로 저장되어 다른 tenant 세션의
+        # get_by_id_tenant() 조회에서 NOT_FOUND 로 사라진다.
+        from backend.services.tenant_filter import inject_tenant
+        inject_tenant(c)
         db.add(c)
         db.commit()
         db.refresh(c)

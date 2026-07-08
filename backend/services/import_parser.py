@@ -941,9 +941,11 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
                         db_session.execute(text(f"""
                             INSERT INTO {ts_table_fqn}
                             (tsdb_id, tag_name, connector_type, connector_id, measurement,
-                             value, value_str, data_type, unit, quality, timestamp, created_at)
+                             value, value_str, data_type, unit, quality, timestamp, created_at,
+                             tenant_id)
                             VALUES (:tsdb_id, :tag, :ctype, :cid, :meas,
-                                    :val, :vstr, :dtype, :unit, :qual, :ts, :now)
+                                    :val, :vstr, :dtype, :unit, :qual, :ts, :now,
+                                    :tenant_id)
                         """), {
                             "tsdb_id": tsdb_id,
                             "tag": tag_name, "ctype": "import", "cid": cid,
@@ -952,6 +954,7 @@ def _execute_import_direct(collector, file_content, db_session, source_filename=
                             "vstr": str(raw_val),
                             "dtype": dtype, "unit": "", "qual": 100,
                             "ts": ts_dt, "now": datetime.utcnow(),
+                            "tenant_id": collector.tenant_id or 1,
                         })
                     imported += 1
                 except Exception as e:

@@ -6,7 +6,7 @@ from backend.models.collector import MqttConnector, MqttTag
 from backend.services import benthos_manager as bm
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 mqtt_bp = Blueprint("collector_mqtt", __name__, url_prefix="/api/connectors/mqtt")
 
@@ -124,6 +124,7 @@ def create_connector():
             port=port,
             config=config,
         )
+        inject_tenant(c)
         db.add(c)
         db.commit()
         db.refresh(c)

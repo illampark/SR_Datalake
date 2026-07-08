@@ -8,7 +8,7 @@ from backend.services import file_scanner as fs
 from backend.services import mqtt_manager
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 from backend.services.minio_buckets import bucket_for
 
 file_watch_bp = Blueprint("collector_file_watch", __name__, url_prefix="/api/connectors/file")
@@ -154,6 +154,7 @@ def create_collector():
             target_bucket=body.get("targetBucket", bucket_for("files")),
             target_path_prefix=body.get("targetPathPrefix", "raw/{collector_id}/{date}/"),
         )
+        inject_tenant(c)
         db.add(c)
         db.commit()
         db.refresh(c)

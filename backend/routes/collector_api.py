@@ -9,7 +9,7 @@ from backend.services import benthos_manager as bm
 from backend.services import mqtt_manager
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 api_bp = Blueprint("collector_api", __name__, url_prefix="/api/connectors/api")
 
@@ -122,12 +122,13 @@ def create_connector():
             timeout=int(body.get("timeout", 30)),
             custom_headers=body.get("customHeaders", {}),
         )
+        inject_tenant(c)
         db.add(c)
         db.flush()
 
         # 엔드포인트 동시 등록
         for ep_data in body.get("endpoints", []):
-            db.add(ApiEndpoint(
+            ep = ApiEndpoint(
                 connector_id=c.id,
                 tag_name=ep_data.get("tagName", ""),
                 method=ep_data.get("method", "GET"),
@@ -137,7 +138,9 @@ def create_connector():
                 data_type=ep_data.get("dataType", "json"),
                 enabled=ep_data.get("enabled", True),
                 description=ep_data.get("description", ""),
-            ))
+            )
+            inject_tenant(ep)
+            db.add(ep)
 
         db.commit()
         db.refresh(c)

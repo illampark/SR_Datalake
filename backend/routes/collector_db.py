@@ -9,7 +9,7 @@ from backend.services import benthos_manager as bm
 from backend.services import mqtt_manager
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 db_bp = Blueprint("collector_db", __name__, url_prefix="/api/connectors/db")
 
@@ -136,6 +136,7 @@ def create_connector():
             collect_mode=body.get("collectMode", "polling"),
             config=config,
         )
+        inject_tenant(c)
         db.add(c)
         db.commit()
         db.refresh(c)

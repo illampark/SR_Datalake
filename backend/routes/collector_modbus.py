@@ -7,7 +7,7 @@ from backend.services import benthos_manager as bm
 from backend.services import connector_workers
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
-from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant
+from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 
 modbus_bp = Blueprint("collector_modbus", __name__, url_prefix="/api/connectors/modbus")
 
@@ -132,6 +132,7 @@ def create_connector():
             timeout=int(body.get("timeout", 3000)),
             config=config,
         )
+        inject_tenant(c)
         db.add(c)
         db.commit()
         db.refresh(c)
