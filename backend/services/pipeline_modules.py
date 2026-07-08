@@ -743,26 +743,65 @@ def _flush_tsdb_batch(cache_key):
 
 
 def _write_tsdb_rows(rows):
+    """내부 TSDB sink — schema-qualified INSERT (Phase 8 격리).
+
+    - schema: TsdbConfig.schema_name (기본 public, tenant_N 인스턴스는 tenant_N)
+    - tenant_id: pipeline.tenant_id 명시 (background thread — g.tenant_id 접근 불가)
+    """
+    if not rows:
+        return
     pid = _pid_from_rows(rows)
+    tsdb_id = rows[0].get("tsdb_id") or 0
     try:
         from backend.database import SessionLocal
-        from backend.models.storage import TimeSeriesData
+        from backend.models.storage import TsdbConfig
         from backend.models.pipeline import Pipeline
+        from sqlalchemy import text
         db = SessionLocal()
         try:
-            # tenant_id 결정: 이 함수는 background thread (MQTT 소비자 등) 에서
-            # 호출돼 g.tenant_id 접근 불가. pipeline_id 로 Pipeline 조회하여
-            # tenant_id 를 명시 주입. 없으면 1 fallback (single-tenant 호환).
+            # tenant_id 결정 (pipeline_id → Pipeline.tenant_id)
             _tid = 1
             if pid:
                 _pl = db.query(Pipeline).get(pid)
                 if _pl and getattr(_pl, "tenant_id", None):
                     _tid = _pl.tenant_id
+            # schema 결정 (tsdb_id → TsdbConfig.schema_name)
+            tsdb_cfg = db.query(TsdbConfig).get(tsdb_id) if tsdb_id else None
+            tsdb_schema = (getattr(tsdb_cfg, "schema_name", None) or "public") if tsdb_cfg else "public"
+            ts_table_fqn = f'"{tsdb_schema}".time_series_data'
+            now = datetime.utcnow()
             for r in rows:
-                r.setdefault("tenant_id", _tid)
-                db.add(TimeSeriesData(**r))
+                tags_val = r.get("tags") or {}
+                if isinstance(tags_val, dict):
+                    tags_val = json.dumps(tags_val, ensure_ascii=False, default=str)
+                db.execute(text(f"""
+                    INSERT INTO {ts_table_fqn}
+                    (tsdb_id, tag_name, connector_type, connector_id, pipeline_id,
+                     measurement, value, value_str, data_type, unit, quality, tags,
+                     timestamp, created_at, tenant_id)
+                    VALUES (:tsdb_id, :tag_name, :ctype, :cid, :pid,
+                            :measurement, :value, :vstr, :dtype, :unit, :quality, :tags,
+                            :ts, :now, :tenant_id)
+                """), {
+                    "tsdb_id": r.get("tsdb_id"),
+                    "tag_name": r.get("tag_name", ""),
+                    "ctype": r.get("connector_type", ""),
+                    "cid": r.get("connector_id", 0),
+                    "pid": r.get("pipeline_id"),
+                    "measurement": r.get("measurement", ""),
+                    "value": r.get("value"),
+                    "vstr": r.get("value_str", ""),
+                    "dtype": r.get("data_type", ""),
+                    "unit": r.get("unit", ""),
+                    "quality": r.get("quality", 100),
+                    "tags": tags_val,
+                    "ts": r.get("timestamp"),
+                    "now": now,
+                    "tenant_id": r.get("tenant_id", _tid),
+                })
             db.commit()
-            logger.debug("TSDB sink: %d rows written (tenant=%d)", len(rows), _tid)
+            logger.debug("TSDB sink: %d rows → %s (tenant=%d)",
+                         len(rows), ts_table_fqn, _tid)
         except Exception as e:
             db.rollback()
             logger.error("TSDB sink write error: %s", e,
