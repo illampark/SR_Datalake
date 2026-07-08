@@ -106,7 +106,8 @@ def evaluate():
                 if recent:
                     continue
 
-                # 6) 신규 알람 이벤트 생성
+                # 6) 신규 알람 이벤트 생성 — tenant_id 는 rule 로부터 명시 주입
+                # (background thread — g.tenant_id 접근 불가)
                 msg = _build_message(rule, comp)
                 event = AlarmEvent(
                     rule_id=rule.id,
@@ -117,6 +118,7 @@ def evaluate():
                     message=msg,
                     status="active",
                     fired_at=now,
+                    tenant_id=getattr(rule, "tenant_id", 1) or 1,
                 )
                 db.add(event)
                 fired_count += 1

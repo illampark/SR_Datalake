@@ -77,6 +77,7 @@ def create_notice():
         except ValueError:
             pass
 
+    from backend.services.tenant_filter import inject_tenant
     db = SessionLocal()
     try:
         notice = Notice(
@@ -87,6 +88,7 @@ def create_notice():
             author=author,
             expires_at=expires_at,
         )
+        inject_tenant(notice)
         db.add(notice)
         db.commit()
         db.refresh(notice)

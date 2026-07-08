@@ -747,12 +747,22 @@ def _write_tsdb_rows(rows):
     try:
         from backend.database import SessionLocal
         from backend.models.storage import TimeSeriesData
+        from backend.models.pipeline import Pipeline
         db = SessionLocal()
         try:
+            # tenant_id 결정: 이 함수는 background thread (MQTT 소비자 등) 에서
+            # 호출돼 g.tenant_id 접근 불가. pipeline_id 로 Pipeline 조회하여
+            # tenant_id 를 명시 주입. 없으면 1 fallback (single-tenant 호환).
+            _tid = 1
+            if pid:
+                _pl = db.query(Pipeline).get(pid)
+                if _pl and getattr(_pl, "tenant_id", None):
+                    _tid = _pl.tenant_id
             for r in rows:
+                r.setdefault("tenant_id", _tid)
                 db.add(TimeSeriesData(**r))
             db.commit()
-            logger.debug("TSDB sink: %d rows written", len(rows))
+            logger.debug("TSDB sink: %d rows written (tenant=%d)", len(rows), _tid)
         except Exception as e:
             db.rollback()
             logger.error("TSDB sink write error: %s", e,

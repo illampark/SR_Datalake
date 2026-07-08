@@ -344,6 +344,7 @@ def execute_recipe(db, recipe):
             conn.close()
 
         # snapshot 모드: 기존 결과 삭제 후 새 결과 저장
+        _tid = getattr(recipe, "tenant_id", 1) or 1
         if recipe.execution_mode == "snapshot":
             db.query(AggregatedData).filter_by(recipe_id=recipe.id).delete()
             for idx, row in enumerate(items):
@@ -351,6 +352,7 @@ def execute_recipe(db, recipe):
                     recipe_id=recipe.id,
                     row_data=row,
                     row_index=idx,
+                    tenant_id=_tid,
                 ))
 
         # 카탈로그 생성/갱신
@@ -369,6 +371,7 @@ def execute_recipe(db, recipe):
                 category=recipe.category,
                 format="json",
                 is_published=True,
+                tenant_id=_tid,
             )
             db.add(cat)
             db.flush()
@@ -376,7 +379,7 @@ def execute_recipe(db, recipe):
             # 검색 태그
             for tag in ["recipe", recipe.name, source_name]:
                 if tag:
-                    db.add(CatalogSearchTag(catalog_id=cat.id, tag=tag))
+                    db.add(CatalogSearchTag(catalog_id=cat.id, tag=tag, tenant_id=_tid))
         else:
             cat.name = recipe.name
             cat.description = recipe.description or cat.description

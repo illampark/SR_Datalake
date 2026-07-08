@@ -17,6 +17,46 @@ from backend.models.catalog import DataCatalog, CatalogSearchTag
 logger = logging.getLogger(__name__)
 
 
+# ── tenant_id 결정 헬퍼 ──
+# 이 모듈의 함수들은 background thread (MQTT 소비자 · import 실행 등) 에서
+# 호출되어 g.tenant_id 접근 불가. connector_type + connector_id 로 원 커넥터를
+# 조회하여 tenant_id 를 얻는다. 없으면 1 (single-tenant fallback).
+_CONN_MODEL_MAP = None
+
+
+def _lookup_connector_tenant(db, connector_type, connector_id):
+    global _CONN_MODEL_MAP
+    if _CONN_MODEL_MAP is None:
+        from backend.models.collector import (
+            MqttConnector, OpcuaConnector, ModbusConnector,
+            FileCollector, ApiConnector, DbConnector, ImportCollector,
+        )
+        _CONN_MODEL_MAP = {
+            "mqtt": MqttConnector, "opcua": OpcuaConnector,
+            "modbus": ModbusConnector, "file": FileCollector,
+            "api": ApiConnector, "db": DbConnector, "import": ImportCollector,
+        }
+    Model = _CONN_MODEL_MAP.get(connector_type)
+    if not Model or not connector_id:
+        return 1
+    try:
+        obj = db.query(Model).get(connector_id)
+    except Exception:
+        return 1
+    return (getattr(obj, "tenant_id", 1) if obj else 1) or 1
+
+
+def _lookup_pipeline_tenant(db, pipeline_id):
+    if not pipeline_id:
+        return None
+    try:
+        from backend.models.pipeline import Pipeline
+        pl = db.query(Pipeline).get(pipeline_id)
+    except Exception:
+        return None
+    return (getattr(pl, "tenant_id", None) if pl else None)
+
+
 def upsert_tag_metadata(connector_type, connector_id, connector_name, tag_name,
                         value=None, data_type="float", unit=""):
     """태그 메타데이터 upsert — 수집 때마다 호출"""
@@ -31,6 +71,7 @@ def upsert_tag_metadata(connector_type, connector_id, connector_name, tag_name,
         now = datetime.utcnow()
 
         if not meta:
+            _tid = _lookup_connector_tenant(db, connector_type, connector_id)
             meta = TagMetadata(
                 tag_name=tag_name,
                 connector_type=connector_type,
@@ -42,6 +83,7 @@ def upsert_tag_metadata(connector_type, connector_id, connector_name, tag_name,
                 last_seen_at=now,
                 sample_count=0,
                 mqtt_topic=f"sdl/raw/{connector_type}/{connector_id}/{tag_name}",
+                tenant_id=_tid,
             )
             db.add(meta)
 
@@ -130,6 +172,11 @@ def record_lineage(source_connector_type, source_connector_id, source_tag,
     """데이터 계보 기록 (배치 단위)"""
     db = SessionLocal()
     try:
+        # tenant_id: pipeline 우선, 없으면 source connector 로 fallback
+        _tid = _lookup_pipeline_tenant(db, pipeline_id)
+        if _tid is None:
+            _tid = _lookup_connector_tenant(db, source_connector_type,
+                                            source_connector_id)
         lineage = DataLineage(
             source_connector_type=source_connector_type,
             source_connector_id=source_connector_id,
@@ -143,6 +190,7 @@ def record_lineage(source_connector_type, source_connector_id, source_tag,
             record_count=record_count,
             error_count=error_count,
             processing_ms=processing_ms,
+            tenant_id=_tid,
         )
         db.add(lineage)
         db.commit()
@@ -233,6 +281,7 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
         except Exception:
             conn_desc = ""
 
+        _tid = _lookup_connector_tenant(db, connector_type, connector_id)
         catalog = DataCatalog(
             name=f"{label} {conn_label} — 전체 데이터",
             description=f"{label} 커넥터 {conn_label}의 모든 태그 데이터를 조회합니다",
@@ -248,13 +297,14 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
             format="mixed",
             sink_type=_sink_type,
             is_published=True,
+            tenant_id=_tid,
         )
         db.add(catalog)
         db.flush()
 
         search_tags = [connector_type, label, conn_label]
         for st in search_tags:
-            db.add(CatalogSearchTag(catalog_id=catalog.id, tag=st))
+            db.add(CatalogSearchTag(catalog_id=catalog.id, tag=st, tenant_id=_tid))
 
         db.commit()
         logger.info("커넥터 카탈로그 자동 생성: %s (connector=%s#%s)",

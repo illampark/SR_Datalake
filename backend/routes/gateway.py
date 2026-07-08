@@ -264,6 +264,7 @@ def create_key():
         except ValueError:
             return _err("만료일 형식이 올바르지 않습니다 (YYYY-MM-DD).")
 
+    from backend.services.tenant_filter import _current_tenant_id
     db = SessionLocal()
     try:
         key = ApiKey(
@@ -272,6 +273,7 @@ def create_key():
             description=body.get("description", ""),
             allowed_paths=body.get("allowedPaths", "*"),
             expires_at=expires_at,
+            tenant_id=_current_tenant_id(),
         )
         db.add(key)
         db.commit()

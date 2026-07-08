@@ -47,6 +47,7 @@ def log_audit(action_type, action, target_type="", target_name="",
         from backend.database import SessionLocal
         from backend.models.audit import AuditLog
 
+        from flask import g
         db = SessionLocal()
         try:
             db.add(AuditLog(
@@ -60,6 +61,7 @@ def log_audit(action_type, action, target_type="", target_name="",
                 if hasattr(request, "user_agent") else "",
                 result=result,
                 detail=_sanitize(detail or {}),
+                tenant_id=getattr(g, "tenant_id", 1) or 1,
             ))
             db.commit()
         except Exception:

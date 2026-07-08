@@ -53,6 +53,7 @@ def setup_access_logging(app):
                     request_size=request.content_length or 0,
                     response_size=response.content_length or 0,
                     api_key_id=getattr(g, "api_key_id", None),
+                    tenant_id=getattr(g, "tenant_id", 1) or 1,
                 )
                 db.add(entry)
                 db.commit()

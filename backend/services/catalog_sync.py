@@ -183,12 +183,12 @@ def sync_pipeline_catalogs(db, pipeline_id, pipeline_name, steps):
                 db.add(cat)
                 db.flush()
 
-                # 검색 태그 추가
+                # 검색 태그 추가 (tenant_id 는 위에서 확보한 _tid 그대로 명시)
                 sink_label = _SINK_LABELS.get(sink_type, sink_type)
                 search_tags = ["pipeline", pipeline_name, sink_label, info["tag_name"]]
                 for st in search_tags:
                     if st:
-                        db.add(CatalogSearchTag(catalog_id=cat.id, tag=st))
+                        db.add(CatalogSearchTag(catalog_id=cat.id, tag=st, tenant_id=_tid))
                 created += 1
 
         # 제거된 싱크의 카탈로그 삭제
