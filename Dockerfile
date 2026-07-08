@@ -4,7 +4,7 @@
 # Multi-stage build for minimal image size
 # ============================================================
 
-# ── Stage 1: Build dependencies ──
+# ── Stage 1: Build Python dependencies ──
 FROM python:3.12-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,7 +15,31 @@ WORKDIR /build
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# ── Stage 2: Production image ──
+# ── Stage 2: Download Benthos / Redpanda Connect ──
+# MQTT/DB/API 커넥터는 Benthos streams mode 기반. sdl-app 컨테이너에서
+# subprocess.Popen 으로 실행 (backend/services/benthos_manager.py:start_benthos).
+# BENTHOS_BIN=/usr/local/bin/redpanda-connect (backend/config.py).
+FROM debian:bookworm-slim AS benthos
+
+ARG REDPANDA_CONNECT_VERSION=4.99.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ARCH=$(dpkg --print-architecture) \
+    && case "$ARCH" in \
+         amd64) RC_ARCH=amd64 ;; \
+         arm64) RC_ARCH=arm64 ;; \
+         *)     echo "unsupported arch: $ARCH" && exit 1 ;; \
+       esac \
+    && curl -fSL -o /tmp/rc.tar.gz \
+        "https://github.com/redpanda-data/connect/releases/download/v${REDPANDA_CONNECT_VERSION}/redpanda-connect_${REDPANDA_CONNECT_VERSION}_linux_${RC_ARCH}.tar.gz" \
+    && mkdir -p /out \
+    && tar -xzf /tmp/rc.tar.gz -C /out redpanda-connect \
+    && chmod +x /out/redpanda-connect \
+    && rm -f /tmp/rc.tar.gz
+
+# ── Stage 3: Production image ──
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd -r sdl && useradd -r -g sdl -d /app sdl
 
 COPY --from=builder /install /usr/local
+COPY --from=benthos /out/redpanda-connect /usr/local/bin/redpanda-connect
 
 WORKDIR /app
 COPY app.py .
