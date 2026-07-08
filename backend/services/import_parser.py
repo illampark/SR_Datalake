@@ -1247,7 +1247,10 @@ def _register_catalog(db, collector):
         existing.sink_type = sink_type
         existing.connector_description = collector.description or ""
         existing.updated_at = datetime.utcnow()
+        # tenant_id 는 collector 로부터 재확인 (기존이 잘못됐을 수 있음)
+        existing.tenant_id = getattr(collector, "tenant_id", 1) or 1
     else:
+        _tid = getattr(collector, "tenant_id", 1) or 1
         cat = DataCatalog(
             name=f"Import {collector.name} — 전체 데이터",
             tag_name="",
@@ -1264,6 +1267,7 @@ def _register_catalog(db, collector):
             schema_info=schema_info,
             sink_type=sink_type,
             is_published=True,
+            tenant_id=_tid,
         )
         db.add(cat)
         db.flush()
@@ -1273,7 +1277,7 @@ def _register_catalog(db, collector):
             tags.append(collector.target_measurement)
         if collector.target_table:
             tags.append(collector.target_table)
-        _add_search_tags(db, cat.id, tags)
+        _add_search_tags(db, cat.id, tags, tenant_id=_tid)
 
     # 태그별 카탈로그는 생성하지 않음 — TagMetadata에서 거버넌스 통합 관리
     db.commit()
@@ -1304,7 +1308,10 @@ def _ensure_tag_metadata(db_session, connector_type, connector_id, connector_nam
         ).first()
 
         if not existing:
-            from backend.services.metadata_tracker import _guess_category
+            from backend.services.metadata_tracker import (
+                _guess_category, _lookup_connector_tenant,
+            )
+            _tid = _lookup_connector_tenant(db_session, connector_type, connector_id)
             meta = TagMetadata(
                 tag_name=tag_name,
                 connector_type=connector_type,
@@ -1321,6 +1328,7 @@ def _ensure_tag_metadata(db_session, connector_type, connector_id, connector_nam
                 data_level="user_created",
                 sensitivity="internal",
                 is_published=True,
+                tenant_id=_tid,
             )
             db_session.add(meta)
 
@@ -1328,16 +1336,22 @@ def _ensure_tag_metadata(db_session, connector_type, connector_id, connector_nam
     logger.info(f"TagMetadata ensured for {connector_type}#{connector_id}: {len(cols)} tags")
 
 
-def _add_search_tags(db_session, catalog_id, tags):
-    """카탈로그 검색 태그 생성"""
-    from backend.models.catalog import CatalogSearchTag
+def _add_search_tags(db_session, catalog_id, tags, tenant_id=None):
+    """카탈로그 검색 태그 생성. tenant_id 를 명시적으로 주입 (background 안전)."""
+    from backend.models.catalog import CatalogSearchTag, DataCatalog
+    tid = tenant_id
+    if tid is None:
+        cat = db_session.query(DataCatalog).get(catalog_id)
+        tid = (getattr(cat, "tenant_id", 1) if cat else 1) or 1
     for tag in tags:
         if tag and tag.strip():
             existing = db_session.query(CatalogSearchTag).filter_by(
                 catalog_id=catalog_id, tag=tag.strip()
             ).first()
             if not existing:
-                db_session.add(CatalogSearchTag(catalog_id=catalog_id, tag=tag.strip()))
+                db_session.add(CatalogSearchTag(
+                    catalog_id=catalog_id, tag=tag.strip(), tenant_id=tid,
+                ))
     db_session.flush()
 
 
