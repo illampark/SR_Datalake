@@ -85,11 +85,12 @@
   </div>
 </div>
 
-<!-- Benthos Engine Status -->
+<!-- 수집 엔진 상태 (python-thread 워커) -->
 <div class="card" style="margin-bottom:16px">
   <div class="card-body" style="padding:10px 16px;display:flex;align-items:center;gap:12px">
-    <span class="fw-600" style="font-size:13px"><i class="fas fa-microchip"></i> {{ t('page.opcua.benthos_engine') }}</span>
-    <span id="benthos-badge" class="badge-status badge-stopped">{{ t('page.opcua.benthos_checking') }}</span>
+    <span class="fw-600" style="font-size:13px"><i class="fas fa-microchip"></i> {{ t('page.opcua.worker_engine') }}</span>
+    <span id="worker-badge" class="badge-status badge-running">{{ t('page.opcua.worker_active') }}</span>
+    <span class="text-muted" style="font-size:12px">{{ t('page.opcua.worker_hint') }}</span>
   </div>
 </div>
 
@@ -166,8 +167,7 @@ function loadSummary() {
     $('#stat-running').text(fmt(d.runningConnectors));
     $('#stat-points').text(fmt(d.totalPointCount));
     $('#stat-nodes').text(fmt(d.totalNodeIds));
-    $('#benthos-badge').attr('class', d.benthos_running ? 'badge-status badge-running' : 'badge-status badge-stopped')
-      .text(d.benthos_running ? __t('common.running') : __t('common.stopped'));
+    // 워커 엔진은 gunicorn worker 당 lazy 시작 — 배지는 상시 running (개별 커넥터 상태는 목록 컬럼)
   });
 }
 

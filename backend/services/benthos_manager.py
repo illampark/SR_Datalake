@@ -370,62 +370,10 @@ def test_db_connection(db_type, host, port, database, username, password, timeou
 
 # ── OPC-UA-specific helpers ──────────────────
 
-def build_opcua_stream_config(connector, callback_url=None):
-    cfg = connector.config or {}
-    node_ids = cfg.get("nodeIds", [])
-    if not node_ids:
-        node_ids = [t.node_id for t in connector.tags] if connector.tags else []
-
-    stream_cfg = {
-        "input": {
-            "generate": {
-                "mapping": 'root = {"timestamp": now(), "connector_id": %d, "node_ids": %s}' % (
-                    connector.id, str(node_ids)),
-                "interval": "%dms" % connector.polling_interval,
-            }
-        },
-        "pipeline": {
-            "processors": [
-                {
-                    "mapping": (
-                        'root = this\n'
-                        'root._meta = {\n'
-                        f'  "connector_id": {connector.id},\n'
-                        f'  "connector_name": "{connector.name}",\n'
-                        f'  "server_url": "{connector.server_url}",\n'
-                        '  "collected_at": now()\n'
-                        '}'
-                    )
-                }
-            ]
-        },
-    }
-    if callback_url:
-        stream_cfg["output"] = {
-            "http_client": {
-                "url": callback_url, "verb": "POST",
-                "headers": {"Content-Type": "application/json"},
-                "max_in_flight": 64, "drop_on": [400, 404],
-                "retries": 3, "retry_period": "1s",
-            }
-        }
-    else:
-        stream_cfg["output"] = {"drop": {}}
-    return stream_cfg
-
-
-def start_opcua_stream(connector, callback_url=None):
-    stream_id = connector.benthos_stream_id()
-    config = build_opcua_stream_config(connector, callback_url)
-    return create_stream(stream_id, config)
-
-
-def stop_opcua_stream(connector):
-    return delete_stream(connector.benthos_stream_id())
-
-
-def get_opcua_stream_status(connector):
-    return get_stream(connector.benthos_stream_id())
+# NOTE: OPC-UA 는 Benthos generate-input stub 대신 asyncua.sync 기반
+# python-thread 워커 (backend/services/connector_workers/opcua_worker.py) 를 사용.
+# start/stop/status stream 함수는 커밋 b4e77e8 이후 dead code 였어 제거.
+# test_opcua_connection 만 UI 의 "연결 테스트" 버튼에서 여전히 사용.
 
 
 def test_opcua_connection(server_url, security_policy="None", auth_type="anonymous",
@@ -451,58 +399,10 @@ def test_opcua_connection(server_url, security_policy="None", auth_type="anonymo
 
 
 # ── Modbus-specific helpers ──────────────────
-
-def build_modbus_stream_config(connector, callback_url=None):
-    stream_cfg = {
-        "input": {
-            "generate": {
-                "mapping": 'root = {"timestamp": now(), "connector_id": %d, "type": "%s"}' % (
-                    connector.id, connector.modbus_type),
-                "interval": "%dms" % connector.polling_interval,
-            }
-        },
-        "pipeline": {
-            "processors": [
-                {
-                    "mapping": (
-                        'root = this\n'
-                        'root._meta = {\n'
-                        f'  "connector_id": {connector.id},\n'
-                        f'  "connector_name": "{connector.name}",\n'
-                        f'  "modbus_type": "{connector.modbus_type}",\n'
-                        '  "collected_at": now()\n'
-                        '}'
-                    )
-                }
-            ]
-        },
-    }
-    if callback_url:
-        stream_cfg["output"] = {
-            "http_client": {
-                "url": callback_url, "verb": "POST",
-                "headers": {"Content-Type": "application/json"},
-                "max_in_flight": 64, "drop_on": [400, 404],
-                "retries": 3, "retry_period": "1s",
-            }
-        }
-    else:
-        stream_cfg["output"] = {"drop": {}}
-    return stream_cfg
-
-
-def start_modbus_stream(connector, callback_url=None):
-    stream_id = connector.benthos_stream_id()
-    config = build_modbus_stream_config(connector, callback_url)
-    return create_stream(stream_id, config)
-
-
-def stop_modbus_stream(connector):
-    return delete_stream(connector.benthos_stream_id())
-
-
-def get_modbus_stream_status(connector):
-    return get_stream(connector.benthos_stream_id())
+# NOTE: Modbus 는 pymodbus 기반 python-thread 워커
+# (backend/services/connector_workers/modbus_worker.py) 를 사용.
+# start/stop/status stream 함수는 커밋 b4e77e8 이후 dead code 였어 제거.
+# test_modbus_connection 만 UI 의 "연결 테스트" 버튼에서 여전히 사용.
 
 
 def test_modbus_connection(modbus_type, host=None, port=502, serial_port=None,

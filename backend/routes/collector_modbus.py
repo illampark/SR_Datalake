@@ -53,18 +53,11 @@ def list_connectors():
         total = q.count()
         rows = q.order_by(ModbusConnector.id).offset((page - 1) * size).limit(size).all()
 
-        # Sync with Benthos runtime status
-        streams = bm.list_streams()
+        # 실 커넥터 상태 — python-thread 워커 alive 여부
         items = []
         for r in rows:
             d = r.to_dict()
-            sid = r.benthos_stream_id()
-            if sid in streams:
-                d["benthos_active"] = streams[sid].get("active", False)
-                d["benthos_uptime"] = streams[sid].get("uptime_str", "")
-            else:
-                d["benthos_active"] = False
-                d["benthos_uptime"] = ""
+            d["workerAlive"] = connector_workers.is_running("modbus", r.id)
             items.append(d)
 
         return _ok(items, {"page": page, "size": size, "total": total})
@@ -83,8 +76,7 @@ def get_connector(cid):
         if not c:
             return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
         d = c.to_dict()
-        stream = bm.get_modbus_stream_status(c)
-        d["benthos_stream"] = stream
+        d["workerAlive"] = connector_workers.is_running("modbus", cid)
         return _ok(d)
     finally:
         db.close()
@@ -513,43 +505,12 @@ def summary():
             "totalPointCount": int(total_points),
             "tcpCount": tcp_count,
             "rtuCount": rtu_count,
-            "benthos_running": bm.is_running(),
             "snapshot_at": datetime.utcnow().isoformat(),
         })
     finally:
         db.close()
 
 
-# ──────────────────────────────────────────────
-# POST /api/connectors/modbus/callback — Benthos 메시지 콜백
-# ──────────────────────────────────────────────
-@modbus_bp.route("/callback", methods=["POST"])
-def message_callback():
-    """Receives data from Benthos HTTP output. Updates connector stats."""
-    db = _db()
-    try:
-        body = request.get_json(force=True)
-        meta = body.get("_meta", {})
-        connector_id = meta.get("connector_id")
-
-        if connector_id:
-            c = get_by_id_tenant(db, ModbusConnector, connector_id)
-            if c:
-                c.point_count = (c.point_count or 0) + 1
-                c.last_collected_at = datetime.utcnow()
-                db.commit()
-                from backend.services.metadata_tracker import ensure_connector_catalog
-                ensure_connector_catalog("modbus", connector_id, c.name)
-
-        return "", 200
-    except Exception:
-        return "", 200
-    finally:
-        db.close()
-
-
-# ──────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────
-def _callback_url():
-    return "http://localhost:5001/api/connectors/modbus/callback"
+# NOTE: 이전에 있던 POST /callback 라우트 + _callback_url 헬퍼는 Benthos HTTP
+# output 이 호출하던 경로. 커밋 b4e77e8 이후 python-thread 워커가
+# mqtt_manager.publish_raw() 로 직접 발행하므로 dead code 였어 제거.
