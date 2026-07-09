@@ -430,6 +430,7 @@ def create_tag(cid):
             json_path=(body.get("jsonPath") or "").strip(),
             description=body.get("description", ""),
         )
+        inject_tenant(tag)
         db.add(tag)
         db.commit()
         db.refresh(tag)
