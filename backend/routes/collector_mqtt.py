@@ -849,6 +849,38 @@ def aasx_download(cid):
         db.close()
 
 
+@mqtt_bp.route("/<int:cid>/aasx-content", methods=["GET"])
+def aasx_content(cid):
+    """저장된 AASX 원본을 재파싱해 shells/submodels/properties 를 반환 (미리보기와 동일 스키마)."""
+    db = _db()
+    try:
+        c = get_by_id_tenant(db, MqttConnector, cid)
+        if not c:
+            return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        cfg = c.config or {}
+        key = cfg.get("aasxObjectKey", "")
+        if not key or "/" not in key:
+            return _err("연동된 AASX 파일이 없습니다.", "NOT_FOUND", 404)
+        bucket, _, obj = key.partition("/")
+        try:
+            from backend.services.minio_client import get_minio_client
+            client = get_minio_client(db)
+            resp = client.get_object(bucket, obj)
+            data = resp.read()
+            resp.close()
+            resp.release_conn()
+        except Exception as e:
+            return _err(f"MinIO 다운로드 실패: {e}", "STORAGE_ERROR", 500)
+        try:
+            from backend.services.aasx_parser import parse_aasx
+            parsed = parse_aasx(data)
+        except Exception as e:
+            return _err(f"AASX 파싱 실패: {e}", "PARSE_ERROR", 400)
+        return _ok(parsed)
+    finally:
+        db.close()
+
+
 @mqtt_bp.route("/<int:cid>/aasx-unlink", methods=["POST"])
 @audit_route("connector", "connector.mqtt.aasx.unlink", target_type="mqtt_connector",
              target_name_kwarg="cid")

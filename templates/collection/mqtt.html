@@ -480,6 +480,7 @@ function renderAasxLinkPanel(cid, cfg) {
     '<div class="fw-600"><i class="fas fa-link"></i> ' + __t('page.mqtt.aasx_link_title') + '</div>' +
     '<div style="display:flex;gap:6px">' +
     '<a class="btn btn-outline btn-sm" href="' + API + '/' + cid + '/aasx-file" target="_blank"><i class="fas fa-download"></i> ' + __t('page.mqtt.aasx_download') + '</a>' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="aasxToggleContent(' + cid + ')"><i class="fas fa-list"></i> ' + __t('page.mqtt.aasx_view_content') + '</button>' +
     '<button type="button" class="btn btn-outline btn-sm" onclick="aasxUnlink(' + cid + ')"><i class="fas fa-unlink text-danger"></i> ' + __t('page.mqtt.aasx_unlink') + '</button>' +
     '</div></div>';
   if (meta && meta.shells && meta.shells.length) {
@@ -493,7 +494,58 @@ function renderAasxLinkPanel(cid, cfg) {
     if (kv) html += '<div class="fs-11 text-muted mt-4">' + kv + '</div>';
   }
   if (key) html += '<div class="fs-11 text-muted mt-4">MinIO: <code>' + escHtml(key) + '</code></div>';
+  html += '<div id="aasx-content-inline" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb"></div>';
   html += '</div>';
+  return html;
+}
+
+function aasxToggleContent(cid) {
+  var $box = $('#aasx-content-inline');
+  if ($box.is(':visible')) {
+    $box.hide().empty();
+    return;
+  }
+  $box.show().html('<div class="text-muted"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.mqtt.aasx_parsing') + '</div>');
+  $.getJSON(API + '/' + cid + '/aasx-content', function(res) {
+    if (!res.success) {
+      $box.html('<div class="text-danger">' + escHtml(((res.error||{}).message) || __t('page.mqtt.aasx_parse_fail')) + '</div>');
+      return;
+    }
+    $box.html(renderAasxContentInline(res.data));
+  }).fail(function(xhr) {
+    var msg = ((xhr.responseJSON||{}).error||{}).message || xhr.statusText;
+    $box.html('<div class="text-danger">' + escHtml(msg) + '</div>');
+  });
+}
+
+function renderAasxContentInline(data) {
+  var html = '';
+  var sms = (data.submodels || []).filter(function(sm) { return (sm.properties || []).length; });
+  if (!sms.length) {
+    return '<div class="fs-11 text-muted">' + __t('page.mqtt.aasx_no_properties') + '</div>';
+  }
+  sms.forEach(function(sm) {
+    html += '<div class="fs-11 fw-600 mt-4"><i class="fas fa-cube"></i> ' + escHtml(sm.id_short);
+    if (sm.semantic_id) html += ' <code class="text-muted">' + escHtml(sm.semantic_id) + '</code>';
+    html += '</div>';
+    html += '<table class="table table-sm" style="width:100%;margin-bottom:4px"><thead><tr>' +
+      '<th style="width:24%">' + __t('page.mqtt.tags_col_name') + '</th>' +
+      '<th style="width:12%">' + __t('page.mqtt.tags_col_type') + '</th>' +
+      '<th style="width:20%">' + __t('page.mqtt.aasx_col_value') + '</th>' +
+      '<th style="width:12%">' + __t('page.mqtt.aasx_col_unit') + '</th>' +
+      '<th>' + __t('page.mqtt.aasx_col_semantic') + '</th>' +
+      '</tr></thead><tbody>';
+    sm.properties.forEach(function(p) {
+      html += '<tr>' +
+        '<td>' + escHtml(p.path || p.id_short) + '</td>' +
+        '<td>' + escHtml(p.value_type || '') + '</td>' +
+        '<td>' + escHtml(p.value === null || p.value === undefined ? '' : String(p.value)) + '</td>' +
+        '<td>' + escHtml(p.unit || '') + '</td>' +
+        '<td><code class="fs-11 text-muted">' + escHtml(p.semantic_id || '') + '</code></td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+  });
   return html;
 }
 

@@ -472,7 +472,11 @@
       "aasx_unlink": "Unlink",
       "aasx_unlink_confirm": "Unlink AASX. The original file will be removed and aasMeta cleared. Existing tags will be kept. Continue?",
       "aasx_unlink_success": "AASX unlinked.",
-      "aasx_unlink_fail": "Failed to unlink"
+      "aasx_unlink_fail": "Failed to unlink",
+      "aasx_view_content": "View content",
+      "aasx_col_value": "Value",
+      "aasx_col_unit": "Unit",
+      "aasx_col_semantic": "semanticId"
     },
     "api_connector": {
       "title": "API Connector",

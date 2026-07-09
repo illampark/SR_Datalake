@@ -472,7 +472,11 @@
       "aasx_unlink": "연동 해제",
       "aasx_unlink_confirm": "AASX 연동을 해제합니다. 원본 파일이 삭제되고 aasMeta 가 초기화됩니다. 등록된 태그는 유지됩니다. 계속할까요?",
       "aasx_unlink_success": "AASX 연동을 해제했습니다.",
-      "aasx_unlink_fail": "연동 해제 실패"
+      "aasx_unlink_fail": "연동 해제 실패",
+      "aasx_view_content": "내용 보기",
+      "aasx_col_value": "값",
+      "aasx_col_unit": "단위",
+      "aasx_col_semantic": "semanticId"
     },
     "api_connector": {
       "title": "API 커넥터",
