@@ -233,6 +233,7 @@ function loadConnectors() {
         actions += '<button class="btn btn-success btn-sm" title="' + __t('common.start') + '" onclick="startConnector(' + c.id + ')"><i class="fas fa-play"></i></button>';
       }
       actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.test') + '" onclick="testConnector(' + c.id + ')"><i class="fas fa-plug"></i></button>';
+      actions += '<button class="btn btn-outline btn-sm" title="' + __t('page.mqtt.btn_aasx') + '" onclick="openAasxModal(' + c.id + ',\'' + escAttr(c.name) + '\')"><i class="fas fa-file-import"></i></button>';
       actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal(' + c.id + ')"><i class="fas fa-pen"></i></button>';
       actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteConnector(' + c.id + ',\'' + escAttr(c.name) + '\')"><i class="fas fa-trash text-danger"></i></button>';
 
@@ -550,6 +551,188 @@ function loadPatterns() {
     });
     html += '</div>';
     $el.html(html);
+  });
+}
+
+// ── AASX 자동 연동 모달 ──
+var _aasxPreview = null;
+var _aasxConnectorId = null;
+
+function openAasxModal(id, name) {
+  _aasxPreview = null;
+  _aasxConnectorId = id;
+  var body =
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.mqtt.aasx_target_connector') + '</label>' +
+    '  <input type="text" class="form-control" value="' + escAttr(name) + '" readonly style="background:#f1f5f9">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="form-label">' + __t('page.mqtt.aasx_file') + ' <span class="text-danger">*</span></label>' +
+    '  <input type="file" id="aasx-file" class="form-control" accept=".aasx">' +
+    '  <div class="fs-11 text-muted mt-4">' + __t('page.mqtt.aasx_file_hint') + '</div>' +
+    '</div>' +
+    '<div class="d-flex" style="gap:8px">' +
+    '  <button class="btn btn-outline btn-sm" onclick="aasxPreview()"><i class="fas fa-eye"></i> ' + __t('page.mqtt.aasx_preview_btn') + '</button>' +
+    '</div>' +
+    '<div id="aasx-preview-area" class="mt-8"></div>';
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" id="aasx-apply-btn" onclick="aasxApply()" disabled><i class="fas fa-check"></i> ' + __t('page.mqtt.aasx_apply_btn') + '</button>';
+  openModal(__t('page.mqtt.aasx_modal_title'), body, footer, 'modal-lg');
+}
+
+function aasxPreview() {
+  var input = document.getElementById('aasx-file');
+  if (!input.files || !input.files[0]) {
+    showToast(__t('page.mqtt.aasx_toast_file_required'), 'error');
+    return;
+  }
+  var fd = new FormData();
+  fd.append('file', input.files[0]);
+  $('#aasx-preview-area').html('<div class="text-muted"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.mqtt.aasx_parsing') + '</div>');
+  $.ajax({
+    url: API + '/aasx-preview',
+    type: 'POST',
+    data: fd,
+    processData: false,
+    contentType: false
+  }).done(function(res) {
+    if (!res.success) {
+      $('#aasx-preview-area').html('<div class="text-danger">' + __t('page.mqtt.aasx_parse_fail') + ': ' + escHtml((res.error || {}).message || '') + '</div>');
+      return;
+    }
+    _aasxPreview = res.data;
+    renderAasxPreview(res.data);
+    $('#aasx-apply-btn').prop('disabled', false);
+  }).fail(function(xhr) {
+    var msg = (xhr.responseJSON || {}).error || {};
+    $('#aasx-preview-area').html('<div class="text-danger">' + __t('page.mqtt.aasx_parse_fail') + ': ' + escHtml(msg.message || xhr.statusText) + '</div>');
+  });
+}
+
+function renderAasxPreview(data) {
+  var html = '';
+  // Shells + technical data
+  if (data.shells && data.shells.length) {
+    var s = data.shells[0];
+    html += '<div class="p-8 mb-8" style="background:#f8fafc;border-radius:4px">' +
+      '<div class="fs-11 text-muted">' + __t('page.mqtt.aasx_asset') + '</div>' +
+      '<div class="fw-600">' + escHtml(s.id_short) + '</div>' +
+      '<div class="fs-11">' + __t('page.mqtt.aasx_asset_id') + ': <code>' + escHtml(s.asset_id) + '</code></div>' +
+      '</div>';
+  }
+  if (data.technical_data && Object.keys(data.technical_data).length) {
+    html += '<div class="p-8 mb-8" style="background:#f8fafc;border-radius:4px">' +
+      '<div class="fs-11 text-muted mb-4">' + __t('page.mqtt.aasx_technical_data') + '</div>';
+    Object.keys(data.technical_data).forEach(function(k) {
+      html += '<div class="fs-11"><b>' + escHtml(k) + ':</b> ' + escHtml(String(data.technical_data[k])) + '</div>';
+    });
+    html += '</div>';
+  }
+
+  // Submodel selector
+  var sms = data.submodels || [];
+  var withProps = sms.filter(function(sm) { return sm.properties && sm.properties.length; });
+  if (!withProps.length) {
+    html += '<div class="text-muted">' + __t('page.mqtt.aasx_no_properties') + '</div>';
+    $('#aasx-preview-area').html(html);
+    return;
+  }
+
+  html += '<div class="form-group">' +
+    '<label class="form-label">' + __t('page.mqtt.aasx_submodel') + '</label>' +
+    '<select class="form-select" id="aasx-submodel" onchange="renderAasxProps()">';
+  withProps.forEach(function(sm, i) {
+    html += '<option value="' + i + '">' + escHtml(sm.id_short) + ' (' + sm.properties.length + ')</option>';
+  });
+  html += '</select></div>';
+  html += '<div class="form-group"><label class="form-label">' + __t('page.mqtt.aasx_properties') + '</label>' +
+    '<div class="mb-4"><label class="fs-11"><input type="checkbox" id="aasx-select-all" onchange="aasxSelectAll(this.checked)" checked> ' + __t('page.mqtt.aasx_select_all') + '</label></div>' +
+    '<div id="aasx-props" style="max-height:260px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:4px;padding:8px"></div>' +
+    '</div>';
+  html += '<div class="form-row">' +
+    '<div class="form-group">' +
+    '  <label class="fs-11"><input type="checkbox" id="aasx-auto-asset" checked> ' + __t('page.mqtt.aasx_auto_asset') + '</label>' +
+    '</div>' +
+    '<div class="form-group">' +
+    '  <label class="fs-11"><input type="checkbox" id="aasx-auto-ts" checked> ' + __t('page.mqtt.aasx_auto_ts') + '</label>' +
+    '</div>' +
+    '</div>';
+  $('#aasx-preview-area').html(html);
+  renderAasxProps();
+}
+
+function renderAasxProps() {
+  if (!_aasxPreview) return;
+  var withProps = (_aasxPreview.submodels || []).filter(function(sm) { return sm.properties && sm.properties.length; });
+  var idx = parseInt($('#aasx-submodel').val()) || 0;
+  var sm = withProps[idx];
+  if (!sm) return;
+  var html = '';
+  sm.properties.forEach(function(p) {
+    var sem = p.semantic_id ? '<code class="fs-11 text-muted">' + escHtml(p.semantic_id) + '</code>' : '';
+    var unit = p.unit ? ' [' + escHtml(p.unit) + ']' : '';
+    html += '<div class="mb-4">' +
+      '<label class="d-flex" style="gap:6px;align-items:flex-start">' +
+      '<input type="checkbox" class="aasx-prop" data-path="' + escAttr(p.path) + '" checked>' +
+      '<div>' +
+      '<span class="fw-600">' + escHtml(p.id_short) + '</span>' +
+      '<span class="fs-11 text-muted"> · ' + escHtml(p.value_type) + unit + '</span>' +
+      (sem ? '<div>' + sem + '</div>' : '') +
+      '</div>' +
+      '</label></div>';
+  });
+  $('#aasx-props').html(html);
+}
+
+function aasxSelectAll(checked) {
+  $('#aasx-props .aasx-prop').prop('checked', checked);
+}
+
+function aasxApply() {
+  var input = document.getElementById('aasx-file');
+  if (!input.files || !input.files[0] || !_aasxPreview) {
+    showToast(__t('page.mqtt.aasx_toast_preview_required'), 'error');
+    return;
+  }
+  var withProps = (_aasxPreview.submodels || []).filter(function(sm) { return sm.properties && sm.properties.length; });
+  var smIdx = parseInt($('#aasx-submodel').val()) || 0;
+  var sm = withProps[smIdx];
+  var selected = [];
+  $('#aasx-props .aasx-prop:checked').each(function() { selected.push($(this).data('path')); });
+  if (!selected.length) {
+    showToast(__t('page.mqtt.aasx_toast_select_property'), 'error');
+    return;
+  }
+
+  var fd = new FormData();
+  fd.append('file', input.files[0]);
+  fd.append('selectedPropertyPaths', JSON.stringify(selected));
+  fd.append('submodelIdShort', sm ? sm.id_short : '');
+  fd.append('autoAssetId', $('#aasx-auto-asset').is(':checked') ? 'true' : 'false');
+  fd.append('autoTimestamp', $('#aasx-auto-ts').is(':checked') ? 'true' : 'false');
+
+  $('#aasx-apply-btn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i>');
+  $.ajax({
+    url: API + '/' + _aasxConnectorId + '/aasx-apply',
+    type: 'POST',
+    data: fd,
+    processData: false,
+    contentType: false
+  }).done(function(res) {
+    if (!res.success) {
+      showToast(((res.error || {}).message) || __t('page.mqtt.aasx_apply_fail'), 'error');
+      $('#aasx-apply-btn').prop('disabled', false).html('<i class="fas fa-check"></i> ' + __t('page.mqtt.aasx_apply_btn'));
+      return;
+    }
+    var n = (res.data.addedTags || []).length;
+    showToast(__t('page.mqtt.aasx_apply_success').replace('{n}', n), 'success');
+    closeModal();
+    refreshAll();
+  }).fail(function(xhr) {
+    var msg = ((xhr.responseJSON || {}).error || {}).message || xhr.statusText;
+    showToast(msg, 'error');
+    $('#aasx-apply-btn').prop('disabled', false).html('<i class="fas fa-check"></i> ' + __t('page.mqtt.aasx_apply_btn'));
   });
 }
 
