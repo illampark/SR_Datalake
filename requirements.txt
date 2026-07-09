@@ -23,3 +23,5 @@ pymssql==2.3.13
 confluent-kafka==2.14.0
 ijson==3.3.0
 openpyxl==3.1.5
+# AAS/AASX support (MQTT connector)
+basyx-python-sdk==2.0.1

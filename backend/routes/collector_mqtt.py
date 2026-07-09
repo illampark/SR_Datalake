@@ -635,3 +635,133 @@ def _extract_json_path(data, path):
         if cur is None:
             return None
     return cur
+
+
+# ══════════════════════════════════════════════
+# AASX (Asset Administration Shell) 연동
+# ══════════════════════════════════════════════
+
+@mqtt_bp.route("/aasx-preview", methods=["POST"])
+def aasx_preview():
+    """AASX 파일 업로드 → 파싱 결과 반환 (저장 없음)."""
+    f = request.files.get("file")
+    if not f:
+        return _err("파일이 필요합니다 (form-data 'file').", "VALIDATION")
+    try:
+        from backend.services.aasx_parser import parse_aasx
+        data = parse_aasx(f.read())
+    except Exception as e:
+        return _err(f"AASX 파싱 실패: {e}", "PARSE_ERROR", 400)
+    return _ok(data)
+
+
+@mqtt_bp.route("/<int:cid>/aasx-apply", methods=["POST"])
+@audit_route("connector", "connector.mqtt.aasx.apply", target_type="mqtt_connector",
+             target_name_kwarg="cid",
+             detail_keys=["submodelIdShort"])
+def aasx_apply(cid):
+    """AASX 파일 저장 (MinIO) + config.aasMeta 병합 + 선택 property → MqttTag 등록."""
+    db = _db()
+    try:
+        c = get_by_id_tenant(db, MqttConnector, cid)
+        if not c:
+            return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        f = request.files.get("file")
+        if not f:
+            return _err("파일이 필요합니다 (form-data 'file').", "VALIDATION")
+        content = f.read()
+
+        try:
+            from backend.services.aasx_parser import parse_aasx
+            aas_data = parse_aasx(content)
+        except Exception as e:
+            return _err(f"AASX 파싱 실패: {e}", "PARSE_ERROR", 400)
+
+        import json as _json
+        selected = _json.loads(request.form.get("selectedPropertyPaths") or "[]")
+        selected_submodel = request.form.get("submodelIdShort") or ""
+        auto_asset_id = (request.form.get("autoAssetId", "true").lower() == "true")
+        auto_ts = (request.form.get("autoTimestamp", "true").lower() == "true")
+
+        # MinIO 업로드 (tenant 스코프 files 버킷 아래 aasx/{cid}.aasx)
+        try:
+            from backend.services.minio_client import get_minio_client
+            from backend.services.minio_buckets import bucket_for
+            from io import BytesIO
+            client = get_minio_client(db)
+            bucket = bucket_for("files", tenant_id=c.tenant_id)
+            object_key = f"aasx/{cid}.aasx"
+            client.put_object(
+                bucket, object_key, BytesIO(content), len(content),
+                content_type="application/asset-administration-shell-package",
+            )
+        except Exception as e:
+            return _err(f"MinIO 업로드 실패: {e}", "STORAGE_ERROR", 500)
+
+        cfg = c.config or {}
+        cfg["aasxObjectKey"] = f"{bucket}/{object_key}"
+        cfg["aasMeta"] = {
+            "shells": aas_data["shells"],
+            "technicalData": aas_data["technical_data"],
+            "digitalNameplate": aas_data["digital_nameplate"],
+        }
+        if auto_asset_id and not cfg.get("assetIdJsonPath"):
+            cfg["assetIdJsonPath"] = "$.asset_id"
+        if auto_ts and not cfg.get("timestampJsonPath"):
+            cfg["timestampJsonPath"] = "$.timestamp"
+        c.config = cfg
+
+        target_sm = None
+        for sm in aas_data["submodels"]:
+            if selected_submodel and sm["id_short"] == selected_submodel:
+                target_sm = sm
+                break
+        if target_sm is None and aas_data["submodels"]:
+            target_sm = aas_data["submodels"][0]
+
+        added_tags = []
+        if target_sm and selected:
+            prop_map = {p["path"]: p for p in target_sm["properties"]}
+            topics = cfg.get("topics") or []
+            topic_default = topics[0].replace("#", "").rstrip("/") if topics else ""
+            for path in selected:
+                p = prop_map.get(path)
+                if not p:
+                    continue
+                exists = db.query(MqttTag).filter_by(
+                    connector_id=cid, tag_name=p["id_short"]).first()
+                if exists:
+                    continue
+                tag = MqttTag(
+                    connector_id=cid,
+                    topic=topic_default or "#",
+                    tag_name=p["id_short"],
+                    data_type=p.get("value_type") or "string",
+                    json_path=f"$.{path.replace('/', '.')}",
+                    description=(p.get("description") or "")[:500],
+                )
+                inject_tenant(tag)
+                db.add(tag)
+                added_tags.append({
+                    "tagName": tag.tag_name,
+                    "jsonPath": tag.json_path,
+                    "dataType": tag.data_type,
+                    "semanticId": p.get("semantic_id", ""),
+                })
+
+        c.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(c)
+
+        return _ok({
+            "connector": c.to_dict(),
+            "aasxObjectKey": cfg["aasxObjectKey"],
+            "addedTags": added_tags,
+            "submodel": (target_sm or {}).get("id_short", ""),
+        })
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
