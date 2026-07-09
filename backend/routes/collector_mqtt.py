@@ -445,6 +445,52 @@ def create_tag(cid):
 
 
 # ──────────────────────────────────────────────
+# CONN-013a: PUT /api/connectors/mqtt/<id>/tags/<tagId> — 태그 수정
+# ──────────────────────────────────────────────
+@mqtt_bp.route("/<int:cid>/tags/<int:tid>", methods=["PUT"])
+@audit_route("connector", "connector.mqtt.tag.update", target_type="mqtt_tag",
+             target_name_kwarg="tid",
+             detail_keys=["topic", "tagName", "dataType", "jsonPath"])
+def update_tag(cid, tid):
+    db = _db()
+    try:
+        # 커넥터 tenant 스코프 검증
+        c = get_by_id_tenant(db, MqttConnector, cid)
+        if not c:
+            return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        tag = db.query(MqttTag).filter_by(id=tid, connector_id=cid).first()
+        if not tag:
+            return _err("태그를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        body = request.get_json(force=True) or {}
+        if "topic" in body:
+            v = (body.get("topic") or "").strip()
+            if not v:
+                return _err("topic 은 비워둘 수 없습니다.", "VALIDATION")
+            tag.topic = v
+        if "tagName" in body:
+            v = (body.get("tagName") or "").strip()
+            if not v:
+                return _err("tagName 은 비워둘 수 없습니다.", "VALIDATION")
+            tag.tag_name = v
+        if "dataType" in body:
+            tag.data_type = body["dataType"] or "string"
+        if "jsonPath" in body:
+            tag.json_path = (body.get("jsonPath") or "").strip()
+        if "description" in body:
+            tag.description = (body["description"] or "")[:500]
+
+        db.commit()
+        db.refresh(tag)
+        return _ok(tag.to_dict())
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────
 # CONN-013: DELETE /api/connectors/mqtt/<id>/tags/<tagId> — 태그 삭제
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/tags/<int:tid>", methods=["DELETE"])
@@ -761,6 +807,77 @@ def aasx_apply(cid):
             "addedTags": added_tags,
             "submodel": (target_sm or {}).get("id_short", ""),
         })
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
+@mqtt_bp.route("/<int:cid>/aasx-file", methods=["GET"])
+def aasx_download(cid):
+    """저장된 AASX 원본 파일 다운로드 (tenant 스코프)."""
+    db = _db()
+    try:
+        c = get_by_id_tenant(db, MqttConnector, cid)
+        if not c:
+            return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        cfg = c.config or {}
+        key = cfg.get("aasxObjectKey", "")
+        if not key or "/" not in key:
+            return _err("연동된 AASX 파일이 없습니다.", "NOT_FOUND", 404)
+        bucket, _, obj = key.partition("/")
+        try:
+            from backend.services.minio_client import get_minio_client
+            client = get_minio_client(db)
+            resp = client.get_object(bucket, obj)
+            data = resp.read()
+            resp.close()
+            resp.release_conn()
+        except Exception as e:
+            return _err(f"MinIO 다운로드 실패: {e}", "STORAGE_ERROR", 500)
+        from flask import Response
+        return Response(
+            data,
+            mimetype="application/asset-administration-shell-package",
+            headers={
+                "Content-Disposition": f'attachment; filename="mqtt-{cid}.aasx"',
+                "Content-Length": str(len(data)),
+            },
+        )
+    finally:
+        db.close()
+
+
+@mqtt_bp.route("/<int:cid>/aasx-unlink", methods=["POST"])
+@audit_route("connector", "connector.mqtt.aasx.unlink", target_type="mqtt_connector",
+             target_name_kwarg="cid")
+def aasx_unlink(cid):
+    """AASX 연동 해제 — MinIO 원본 삭제 + config.aas* 초기화. 등록된 태그는 유지."""
+    db = _db()
+    try:
+        c = get_by_id_tenant(db, MqttConnector, cid)
+        if not c:
+            return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        cfg = dict(c.config or {})
+        key = cfg.get("aasxObjectKey", "")
+        removed = False
+        if key and "/" in key:
+            try:
+                from backend.services.minio_client import get_minio_client
+                client = get_minio_client(db)
+                bucket, _, obj = key.partition("/")
+                client.remove_object(bucket, obj)
+                removed = True
+            except Exception:
+                pass  # 파일이 이미 없어도 config 는 정리
+        for k in ("aasxObjectKey", "aasMeta"):
+            cfg.pop(k, None)
+        c.config = cfg
+        c.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(c)
+        return _ok({"connector": c.to_dict(), "fileRemoved": removed})
     except Exception as e:
         db.rollback()
         return _err(str(e), "SERVER_ERROR", 500)

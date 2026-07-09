@@ -233,6 +233,7 @@ function loadConnectors() {
         actions += '<button class="btn btn-success btn-sm" title="' + __t('common.start') + '" onclick="startConnector(' + c.id + ')"><i class="fas fa-play"></i></button>';
       }
       actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.test') + '" onclick="testConnector(' + c.id + ')"><i class="fas fa-plug"></i></button>';
+      actions += '<button class="btn btn-outline btn-sm" title="' + __t('page.mqtt.btn_tags') + '" onclick="openTagsModal(' + c.id + ',\'' + escAttr(c.name) + '\')"><i class="fas fa-tags"></i></button>';
       actions += '<button class="btn btn-outline btn-sm" title="' + __t('page.mqtt.btn_aasx') + '" onclick="openAasxModal(' + c.id + ',\'' + escAttr(c.name) + '\')"><i class="fas fa-file-import"></i></button>';
       actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.edit') + '" onclick="openEditModal(' + c.id + ')"><i class="fas fa-pen"></i></button>';
       actions += '<button class="btn btn-outline btn-sm" title="' + __t('common.delete') + '" onclick="deleteConnector(' + c.id + ',\'' + escAttr(c.name) + '\')"><i class="fas fa-trash text-danger"></i></button>';
@@ -449,10 +450,67 @@ function openEditModal(id) {
       '  <label class="form-label">' + __t('page.mqtt.form_subscribe_topics') + '</label>' +
       '  <textarea class="form-control" id="e-topics" rows="4">' + escHtml((cfg.topics||[]).join('\n')) + '</textarea>' +
       '</div>' +
+      '<hr>' +
+      '<div class="form-row">' +
+      '  <div class="form-group">' +
+      '    <label class="form-label">' + __t('page.mqtt.aasx_field_asset_path') + '</label>' +
+      '    <input type="text" class="form-control" id="e-asset-path" value="' + escAttr(cfg.assetIdJsonPath || '') + '" placeholder="$.asset_id">' +
+      '  </div>' +
+      '  <div class="form-group">' +
+      '    <label class="form-label">' + __t('page.mqtt.aasx_field_ts_path') + '</label>' +
+      '    <input type="text" class="form-control" id="e-ts-path" value="' + escAttr(cfg.timestampJsonPath || '') + '" placeholder="$.timestamp">' +
+      '  </div>' +
+      '</div>' +
+      renderAasxLinkPanel(c.id, cfg) +
       '</form>';
     var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
       '<button class="btn btn-primary" onclick="updateConnector()"><i class="fas fa-save"></i> ' + __t('common.save') + '</button>';
     openModal(__t('page.mqtt.modal_edit_title') + escHtml(c.name), body, footer, 'modal-lg');
+  });
+}
+
+function renderAasxLinkPanel(cid, cfg) {
+  var meta = cfg.aasMeta || null;
+  var key = cfg.aasxObjectKey || '';
+  if (!meta && !key) {
+    return '<div class="fs-11 text-muted mt-8">' + __t('page.mqtt.aasx_link_none') + '</div>';
+  }
+  var html = '<div class="p-8 mt-8" style="background:#f8fafc;border-radius:4px;border-left:3px solid #6366f1">';
+  html += '<div class="d-flex" style="justify-content:space-between;align-items:center">' +
+    '<div class="fw-600"><i class="fas fa-link"></i> ' + __t('page.mqtt.aasx_link_title') + '</div>' +
+    '<div style="display:flex;gap:6px">' +
+    '<a class="btn btn-outline btn-sm" href="' + API + '/' + cid + '/aasx-file" target="_blank"><i class="fas fa-download"></i> ' + __t('page.mqtt.aasx_download') + '</a>' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="aasxUnlink(' + cid + ')"><i class="fas fa-unlink text-danger"></i> ' + __t('page.mqtt.aasx_unlink') + '</button>' +
+    '</div></div>';
+  if (meta && meta.shells && meta.shells.length) {
+    var s = meta.shells[0];
+    html += '<div class="fs-11 mt-4"><b>' + escHtml(s.id_short) + '</b> · <code>' + escHtml(s.asset_id) + '</code></div>';
+  }
+  if (meta && meta.technicalData) {
+    var kv = Object.keys(meta.technicalData).map(function(k) {
+      return escHtml(k) + '=' + escHtml(String(meta.technicalData[k]));
+    }).join(' · ');
+    if (kv) html += '<div class="fs-11 text-muted mt-4">' + kv + '</div>';
+  }
+  if (key) html += '<div class="fs-11 text-muted mt-4">MinIO: <code>' + escHtml(key) + '</code></div>';
+  html += '</div>';
+  return html;
+}
+
+function aasxUnlink(cid) {
+  confirmAction(__t('page.mqtt.aasx_unlink_confirm'), function() {
+    $.ajax({
+      url: API + '/' + cid + '/aasx-unlink',
+      type: 'POST'
+    }).done(function(res) {
+      if (!res.success) { showToast(((res.error||{}).message) || __t('page.mqtt.aasx_unlink_fail'), 'error'); return; }
+      showToast(__t('page.mqtt.aasx_unlink_success'), 'success');
+      closeModal();
+      refreshAll();
+    }).fail(function(xhr) {
+      var msg = ((xhr.responseJSON||{}).error||{}).message || xhr.statusText;
+      showToast(msg, 'error');
+    });
   });
 }
 
@@ -466,7 +524,9 @@ function updateConnector() {
     port: parseInt($('#e-port').val()) || 1883,
     clientId: $('#e-clientId').val().trim(),
     qos: parseInt($('#e-qos').val()),
-    topics: topics
+    topics: topics,
+    assetIdJsonPath: $('#e-asset-path').val().trim(),
+    timestampJsonPath: $('#e-ts-path').val().trim()
   };
 
   $.ajax({
@@ -733,6 +793,93 @@ function aasxApply() {
     var msg = ((xhr.responseJSON || {}).error || {}).message || xhr.statusText;
     showToast(msg, 'error');
     $('#aasx-apply-btn').prop('disabled', false).html('<i class="fas fa-check"></i> ' + __t('page.mqtt.aasx_apply_btn'));
+  });
+}
+
+// ── 태그 관리 모달 ──
+var _tagsCid = null;
+function openTagsModal(cid, name) {
+  _tagsCid = cid;
+  var body = '<div class="fs-11 text-muted mb-8">' + __t('page.mqtt.tags_target') + ': <b>' + escHtml(name) + '</b></div>' +
+    '<div id="tags-list-area"><div class="text-muted"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</div></div>';
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>';
+  openModal(__t('page.mqtt.tags_modal_title'), body, footer, 'modal-lg');
+  loadTagsForModal();
+}
+
+function loadTagsForModal() {
+  $.getJSON(API + '/' + _tagsCid + '/tags', function(res) {
+    if (!res.success) { $('#tags-list-area').html('<div class="text-danger">' + escHtml(res.error.message) + '</div>'); return; }
+    var tags = res.data || [];
+    if (!tags.length) {
+      $('#tags-list-area').html('<div class="text-muted p-8" style="text-align:center">' + __t('page.mqtt.tags_empty') + '</div>');
+      return;
+    }
+    var html = '<table class="table table-sm" style="width:100%">' +
+      '<thead><tr>' +
+      '<th>' + __t('page.mqtt.tags_col_name') + '</th>' +
+      '<th>' + __t('page.mqtt.tags_col_topic') + '</th>' +
+      '<th>' + __t('page.mqtt.tags_col_type') + '</th>' +
+      '<th>' + __t('page.mqtt.tags_col_json_path') + '</th>' +
+      '<th style="width:90px"></th>' +
+      '</tr></thead><tbody>';
+    tags.forEach(function(t) {
+      html += '<tr data-tid="' + t.id + '">' +
+        '<td><input class="form-control form-control-sm t-name" value="' + escAttr(t.tagName) + '"></td>' +
+        '<td><input class="form-control form-control-sm t-topic" value="' + escAttr(t.topic) + '"></td>' +
+        '<td><select class="form-select form-select-sm t-dtype">' +
+          ['string','float','int','bool','json'].map(function(d){
+            return '<option value="' + d + '"' + (t.dataType===d?' selected':'') + '>' + d + '</option>';
+          }).join('') +
+          '</select></td>' +
+        '<td><input class="form-control form-control-sm t-jsonpath" value="' + escAttr(t.jsonPath || '') + '" placeholder="$.field"></td>' +
+        '<td style="white-space:nowrap">' +
+          '<button class="btn btn-primary btn-sm" onclick="saveTagRow(' + t.id + ')" title="' + __t('common.save') + '"><i class="fas fa-save"></i></button> ' +
+          '<button class="btn btn-outline btn-sm" onclick="deleteTagRow(' + t.id + ')" title="' + __t('common.delete') + '"><i class="fas fa-trash text-danger"></i></button>' +
+          '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    $('#tags-list-area').html(html);
+  });
+}
+
+function saveTagRow(tid) {
+  var $tr = $('#tags-list-area tr[data-tid="' + tid + '"]');
+  var data = {
+    tagName: $tr.find('.t-name').val().trim(),
+    topic: $tr.find('.t-topic').val().trim(),
+    dataType: $tr.find('.t-dtype').val(),
+    jsonPath: $tr.find('.t-jsonpath').val().trim()
+  };
+  $.ajax({
+    url: API + '/' + _tagsCid + '/tags/' + tid,
+    type: 'PUT',
+    contentType: 'application/json',
+    data: JSON.stringify(data)
+  }).done(function(res) {
+    if (!res.success) { showToast(((res.error||{}).message) || __t('page.mqtt.tags_save_fail'), 'error'); return; }
+    showToast(__t('page.mqtt.tags_save_success'), 'success');
+  }).fail(function(xhr) {
+    var msg = ((xhr.responseJSON||{}).error||{}).message || xhr.statusText;
+    showToast(msg, 'error');
+  });
+}
+
+function deleteTagRow(tid) {
+  confirmAction(__t('page.mqtt.tags_delete_confirm'), function() {
+    $.ajax({
+      url: API + '/' + _tagsCid + '/tags/' + tid,
+      type: 'DELETE'
+    }).done(function(res) {
+      if (!res.success) { showToast(((res.error||{}).message) || __t('page.mqtt.tags_delete_fail'), 'error'); return; }
+      showToast(__t('page.mqtt.tags_delete_success'), 'success');
+      loadTagsForModal();
+      refreshAll();
+    }).fail(function(xhr) {
+      var msg = ((xhr.responseJSON||{}).error||{}).message || xhr.statusText;
+      showToast(msg, 'error');
+    });
   });
 }
 
