@@ -595,6 +595,13 @@ def message_callback():
                 if v is not None:
                     source_ts = str(v)
 
+        # payload 에서 asset_id 를 얻지 못했으면 AASX 의 static asset_id 로 fallback.
+        # 1 커넥터 = 1 설비 시나리오에서 payload 에 asset_id 를 넣지 않아도 되도록.
+        if not asset_id:
+            shells = ((conn_cfg.get("aasMeta") or {}).get("shells") or [])
+            if shells:
+                asset_id = shells[0].get("asset_id") or shells[0].get("id_short") or ""
+
         tags = db.query(MqttTag).filter_by(connector_id=connector_id).all()
         for tag in tags:
             if not _mqtt_topic_match(tag.topic or "", raw_topic):
