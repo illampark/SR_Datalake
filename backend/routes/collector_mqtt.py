@@ -4,6 +4,7 @@ from sqlalchemy import func, or_
 from backend.database import SessionLocal
 from backend.models.collector import MqttConnector, MqttTag
 from backend.services import benthos_manager as bm
+from backend.services import mqtt_manager
 from backend.services.audit_logger import audit_route
 from backend.services.system_settings import get_default_page_size
 from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
@@ -407,7 +408,7 @@ def list_tags(cid):
 # ──────────────────────────────────────────────
 @mqtt_bp.route("/<int:cid>/tags", methods=["POST"])
 @audit_route("connector", "connector.mqtt.tag.create", target_type="mqtt_tag",
-             detail_keys=["topic", "tagName", "dataType"])
+             detail_keys=["topic", "tagName", "dataType", "jsonPath"])
 def create_tag(cid):
     db = _db()
     try:
@@ -426,6 +427,7 @@ def create_tag(cid):
             topic=topic,
             tag_name=tag_name,
             data_type=body.get("dataType", "string"),
+            json_path=(body.get("jsonPath") or "").strip(),
             description=body.get("description", ""),
         )
         db.add(tag)
@@ -499,23 +501,55 @@ def summary():
 @mqtt_bp.route("/callback", methods=["POST"])
 def message_callback():
     """
-    Receives messages from Benthos HTTP output.
-    Updates connector stats (message count, rate, last_message_at).
+    Receives messages from Benthos HTTP output and fans out to
+    ``sdl/raw/mqtt/{cid}/{tag}`` for each matching MqttTag.
     """
-    db = _db()
+    db = SessionLocal()
     try:
-        body = request.get_json(force=True)
-        meta = body.get("_meta", {})
+        body = request.get_json(force=True) or {}
+        meta = body.get("_meta") or {}
         connector_id = meta.get("connector_id")
+        if not connector_id:
+            return "", 200
 
-        if connector_id:
-            c = get_by_id_tenant(db, MqttConnector, connector_id)
-            if c:
-                c.message_count = (c.message_count or 0) + 1
-                c.last_message_at = datetime.utcnow()
-                db.commit()
-                from backend.services.metadata_tracker import ensure_connector_catalog
-                ensure_connector_catalog("mqtt", connector_id, c.name)
+        c = db.query(MqttConnector).get(connector_id)
+        if not c:
+            return "", 200
+
+        raw_topic = meta.get("topic") or ""
+        raw_str = body.get("_raw_str") or ""
+        raw_json = body.get("_raw_json")
+
+        c.message_count = (c.message_count or 0) + 1
+        c.last_message_at = datetime.utcnow()
+        db.commit()
+
+        try:
+            from backend.services.metadata_tracker import ensure_connector_catalog
+            ensure_connector_catalog("mqtt", connector_id, c.name)
+        except Exception:
+            pass
+
+        tags = db.query(MqttTag).filter_by(connector_id=connector_id).all()
+        for tag in tags:
+            if not _mqtt_topic_match(tag.topic or "", raw_topic):
+                continue
+            path = (tag.json_path or "").strip()
+            if path:
+                if raw_json is None:
+                    continue
+                value = _extract_json_path(raw_json, path)
+                if value is None:
+                    continue
+            else:
+                value = raw_json if raw_json is not None else raw_str
+            try:
+                mqtt_manager.publish_raw(
+                    "mqtt", connector_id, tag.tag_name, value,
+                    data_type=tag.data_type or "string",
+                )
+            except Exception:
+                pass
 
         return "", 200
     except Exception:
@@ -530,3 +564,53 @@ def message_callback():
 def _callback_url():
     """Build the callback URL for Benthos HTTP output."""
     return "http://localhost:5001/api/connectors/mqtt/callback"
+
+
+def _mqtt_topic_match(pattern, topic):
+    """MQTT wildcard 매칭 (# 다중 레벨, + 단일 레벨)."""
+    if not pattern or not topic:
+        return False
+    if pattern == topic:
+        return True
+    p = pattern.split("/")
+    t = topic.split("/")
+    for i, seg in enumerate(p):
+        if seg == "#":
+            return True
+        if i >= len(t):
+            return False
+        if seg == "+":
+            continue
+        if seg != t[i]:
+            return False
+    return len(p) == len(t)
+
+
+def _extract_json_path(data, path):
+    """단순 dot-notation JSONPath. ``$.a.b`` / ``a.b`` / ``a[0].b`` 지원."""
+    if not path:
+        return data
+    p = path.lstrip("$").lstrip(".")
+    cur = data
+    for raw in p.split("."):
+        if not raw:
+            continue
+        key = raw
+        idx = None
+        if "[" in key and key.endswith("]"):
+            key, rest = key.split("[", 1)
+            try:
+                idx = int(rest[:-1])
+            except ValueError:
+                idx = None
+        if key:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(key)
+        if idx is not None:
+            if not isinstance(cur, list) or idx >= len(cur):
+                return None
+            cur = cur[idx]
+        if cur is None:
+            return None
+    return cur

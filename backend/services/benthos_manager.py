@@ -163,14 +163,15 @@ def build_mqtt_stream_config(connector, callback_url=None):
             "processors": [
                 {
                     "mapping": (
-                        'root = this\n'
                         'root._meta = {\n'
                         '  "topic": meta("mqtt_topic"),\n'
                         '  "qos": meta("mqtt_qos"),\n'
                         f'  "connector_id": {connector.id},\n'
                         f'  "connector_name": "{connector.name}",\n'
                         '  "received_at": now()\n'
-                        '}'
+                        '}\n'
+                        'root._raw_str = content().string()\n'
+                        'root._raw_json = content().parse_json().catch(null)'
                     )
                 }
             ]

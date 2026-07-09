@@ -66,6 +66,7 @@ class MqttTag(Base, TenantScopedMixin):
     topic = Column(String(500), nullable=False)
     tag_name = Column(String(200), nullable=False)
     data_type = Column(String(50), default="string")  # float / int / string / json
+    json_path = Column(String(500), nullable=False, server_default="")
     description = Column(String(500), default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -78,6 +79,7 @@ class MqttTag(Base, TenantScopedMixin):
             "topic": self.topic,
             "tagName": self.tag_name,
             "dataType": self.data_type,
+            "jsonPath": self.json_path or "",
             "description": self.description,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
