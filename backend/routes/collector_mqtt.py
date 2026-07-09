@@ -531,6 +531,22 @@ def message_callback():
         except Exception:
             pass
 
+        # 커넥터 config 에서 asset_id / source timestamp 파싱 경로
+        conn_cfg = c.config or {}
+        asset_path = (conn_cfg.get("assetIdJsonPath") or "").strip()
+        ts_path = (conn_cfg.get("timestampJsonPath") or "").strip()
+        asset_id = ""
+        source_ts = None
+        if raw_json is not None:
+            if asset_path:
+                v = _extract_json_path(raw_json, asset_path)
+                if v is not None:
+                    asset_id = str(v)
+            if ts_path:
+                v = _extract_json_path(raw_json, ts_path)
+                if v is not None:
+                    source_ts = str(v)
+
         tags = db.query(MqttTag).filter_by(connector_id=connector_id).all()
         for tag in tags:
             if not _mqtt_topic_match(tag.topic or "", raw_topic):
@@ -548,6 +564,8 @@ def message_callback():
                 mqtt_manager.publish_raw(
                     "mqtt", connector_id, tag.tag_name, value,
                     data_type=tag.data_type or "string",
+                    asset_id=asset_id,
+                    source_timestamp=source_ts,
                 )
             except Exception:
                 pass

@@ -222,19 +222,27 @@ def build_processed_topic(pipeline_id, tag_name):
     return f"sdl/processed/{pipeline_id}/{tag_name}"
 
 
-def build_raw_message(connector_type, connector_id, tag_name, value, data_type="float", unit="", quality=100):
-    """표준 Raw 메시지 포맷 생성"""
+def build_raw_message(connector_type, connector_id, tag_name, value,
+                      data_type="float", unit="", quality=100,
+                      source_timestamp=None, asset_id=""):
+    """표준 Raw 메시지 포맷 생성.
+
+    source_timestamp: 설비/외부 시스템이 생성한 시각 (ISO8601 문자열). None 이면 수집 시각.
+    asset_id: 설비 식별자. 빈 문자열이면 미지정.
+    """
+    ts = source_timestamp if source_timestamp else (datetime.utcnow().isoformat() + "Z")
     return {
         "source": {
             "connectorType": connector_type,
             "connectorId": connector_id,
             "tagName": tag_name,
+            "assetId": asset_id or "",
         },
         "value": value,
         "dataType": data_type,
         "unit": unit,
         "quality": quality,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": ts,
     }
 
 

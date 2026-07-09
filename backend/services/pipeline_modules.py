@@ -940,6 +940,7 @@ def sink_internal_rdbms(message, config):
     tag_name = source.get("tagName", "unknown")
     connector_type = source.get("connectorType", "")
     connector_id = source.get("connectorId", 0)
+    asset_id = source.get("assetId", "") or ""
     raw_value = message.get("value")
 
     # 타임스탬프 파싱
@@ -967,6 +968,7 @@ def sink_internal_rdbms(message, config):
         row["_connector_type"] = connector_type
         row["_connector_id"] = connector_id
         row["_tag_name"] = tag_name
+        row["_asset_id"] = asset_id
         row["_collected_at"] = ts.isoformat()
     else:
         # 고정 스키마: 표준 컬럼으로 기록
@@ -990,6 +992,7 @@ def sink_internal_rdbms(message, config):
             "pipeline_id": pipeline_id,
             "connector_type": connector_type,
             "connector_id": connector_id,
+            "asset_id": asset_id,
             "tag_name": tag_name,
             "value_num": num_value,
             "value_str": str_value,
