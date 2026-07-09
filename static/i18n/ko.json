@@ -476,7 +476,12 @@
       "aasx_view_content": "내용 보기",
       "aasx_col_value": "값",
       "aasx_col_unit": "단위",
-      "aasx_col_semantic": "semanticId"
+      "aasx_col_semantic": "semanticId",
+      "aasx_submodels_label": "Submodel · Property 선택",
+      "aasx_col_mapped": "매핑",
+      "tags_col_submodel": "Submodel",
+      "tags_col_role": "Role",
+      "tags_col_semantic": "semanticId"
     },
     "api_connector": {
       "title": "API 커넥터",

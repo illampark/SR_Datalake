@@ -476,7 +476,12 @@
       "aasx_view_content": "View content",
       "aasx_col_value": "Value",
       "aasx_col_unit": "Unit",
-      "aasx_col_semantic": "semanticId"
+      "aasx_col_semantic": "semanticId",
+      "aasx_submodels_label": "Submodel · Property selection",
+      "aasx_col_mapped": "Mapped",
+      "tags_col_submodel": "Submodel",
+      "tags_col_role": "Role",
+      "tags_col_semantic": "semanticId"
     },
     "api_connector": {
       "title": "API Connector",

@@ -12,6 +12,36 @@ from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, i
 mqtt_bp = Blueprint("collector_mqtt", __name__, url_prefix="/api/connectors/mqtt")
 
 
+# ── role 기반 필터용 module-level state (gunicorn worker 별로 유지) ──
+# static: 세션 내 첫 값만 발행 → 이후 skip
+# change: 이전 값과 다를 때만 발행
+_static_seen = set()          # {(connector_id, tag_id)}
+_last_value = {}              # {(connector_id, tag_id): value}
+
+
+def _cast_value(v, data_type):
+    """AAS value_type 기반 정규화. 실패 시 원본 유지."""
+    if v is None:
+        return None
+    dt = (data_type or "").lower()
+    try:
+        if dt == "float" and not isinstance(v, float):
+            return float(v)
+        if dt == "int" and not isinstance(v, int):
+            if isinstance(v, float):
+                return int(v)
+            return int(str(v).strip())
+        if dt == "bool" and not isinstance(v, bool):
+            s = str(v).strip().lower()
+            if s in ("true", "1", "yes", "on"):
+                return True
+            if s in ("false", "0", "no", "off"):
+                return False
+    except (ValueError, TypeError):
+        pass
+    return v
+
+
 def _ok(data=None, meta=None):
     resp = {"success": True, "data": data, "error": None}
     if meta:
@@ -477,6 +507,15 @@ def update_tag(cid, tid):
             tag.data_type = body["dataType"] or "string"
         if "jsonPath" in body:
             tag.json_path = (body.get("jsonPath") or "").strip()
+        if "submodelIdShort" in body:
+            tag.submodel_id_short = (body.get("submodelIdShort") or "").strip()
+        if "submodelRole" in body:
+            v = (body.get("submodelRole") or "").strip().lower()
+            if v not in ("", "stream", "change", "static"):
+                return _err("submodelRole 는 stream/change/static 중 하나이거나 빈 문자열.", "VALIDATION")
+            tag.submodel_role = v
+        if "semanticId" in body:
+            tag.semantic_id = (body.get("semanticId") or "").strip()
         if "description" in body:
             tag.description = (body["description"] or "")[:500]
 
@@ -615,6 +654,20 @@ def message_callback():
                     continue
             else:
                 value = raw_json if raw_json is not None else raw_str
+            # value_type 캐스팅 (B1) — 실패 시 원본 유지
+            value = _cast_value(value, tag.data_type or "string")
+            # role 기반 필터 (A4)
+            role = (tag.submodel_role or "").lower()
+            key = (connector_id, tag.id)
+            if role == "static":
+                if key in _static_seen:
+                    continue  # 이번 프로세스 세션 내 이미 발행함
+                _static_seen.add(key)
+            elif role == "change":
+                prev = _last_value.get(key)
+                if prev == value:
+                    continue
+                _last_value[key] = value
             try:
                 mqtt_manager.publish_raw(
                     "mqtt", connector_id, tag.tag_name, value,
@@ -713,7 +766,15 @@ def aasx_preview():
              target_name_kwarg="cid",
              detail_keys=["submodelIdShort"])
 def aasx_apply(cid):
-    """AASX 파일 저장 (MinIO) + config.aasMeta 병합 + 선택 property → MqttTag 등록."""
+    """AASX 파일 저장 (MinIO) + config.aasMeta 병합 + 선택 property → MqttTag 등록.
+
+    body 는 form-data:
+      file                    : .aasx 파일
+      selections (신규 권장)  : JSON [{"submodelIdShort":"OperationalData","propertyPaths":["mode","setpoint"]}, ...]
+      submodelIdShort         : (legacy) 단일 submodel
+      selectedPropertyPaths   : (legacy) 단일 submodel property 목록
+      autoAssetId, autoTimestamp : true|false (기본 true)
+    """
     db = _db()
     try:
         c = get_by_id_tenant(db, MqttConnector, cid)
@@ -732,12 +793,23 @@ def aasx_apply(cid):
             return _err(f"AASX 파싱 실패: {e}", "PARSE_ERROR", 400)
 
         import json as _json
-        selected = _json.loads(request.form.get("selectedPropertyPaths") or "[]")
-        selected_submodel = request.form.get("submodelIdShort") or ""
+        selections_raw = request.form.get("selections")
+        legacy_paths = _json.loads(request.form.get("selectedPropertyPaths") or "[]")
+        legacy_sm = request.form.get("submodelIdShort") or ""
+        if selections_raw:
+            try:
+                selections = _json.loads(selections_raw)
+                if not isinstance(selections, list):
+                    return _err("selections 는 배열이어야 합니다.", "VALIDATION")
+            except Exception:
+                return _err("selections JSON 파싱 실패", "VALIDATION")
+        elif legacy_paths:
+            selections = [{"submodelIdShort": legacy_sm, "propertyPaths": legacy_paths}]
+        else:
+            selections = []
         auto_asset_id = (request.form.get("autoAssetId", "true").lower() == "true")
         auto_ts = (request.form.get("autoTimestamp", "true").lower() == "true")
 
-        # MinIO 업로드 (tenant 스코프 files 버킷 아래 aasx/{cid}.aasx)
         try:
             from backend.services.minio_client import get_minio_client
             from backend.services.minio_buckets import bucket_for
@@ -752,13 +824,24 @@ def aasx_apply(cid):
         except Exception as e:
             return _err(f"MinIO 업로드 실패: {e}", "STORAGE_ERROR", 500)
 
-        # SQLAlchemy JSON 컬럼은 dict in-place 수정을 감지 못 하므로 새 dict 로 rebuild.
+        # aasMeta 에 submodel 요약 (id_short/role/property 수) 도 함께 저장 → UI 매핑 상태 판단용
+        submodel_summaries = [
+            {
+                "id_short": sm["id_short"],
+                "role": sm.get("role", ""),
+                "semantic_id": sm.get("semantic_id", ""),
+                "property_count": len(sm.get("properties") or []),
+            }
+            for sm in aas_data["submodels"]
+        ]
+
         cfg = dict(c.config or {})
         cfg["aasxObjectKey"] = f"{bucket}/{object_key}"
         cfg["aasMeta"] = {
             "shells": aas_data["shells"],
             "technicalData": aas_data["technical_data"],
             "digitalNameplate": aas_data["digital_nameplate"],
+            "submodels": submodel_summaries,
         }
         if auto_asset_id and not cfg.get("assetIdJsonPath"):
             cfg["assetIdJsonPath"] = "$.asset_id"
@@ -766,26 +849,34 @@ def aasx_apply(cid):
             cfg["timestampJsonPath"] = "$.timestamp"
         c.config = cfg
 
-        target_sm = None
-        for sm in aas_data["submodels"]:
-            if selected_submodel and sm["id_short"] == selected_submodel:
-                target_sm = sm
-                break
-        if target_sm is None and aas_data["submodels"]:
-            target_sm = aas_data["submodels"][0]
+        # submodel 별 property map 미리 구성
+        sm_index = {sm["id_short"]: sm for sm in aas_data["submodels"]}
+
+        topics = cfg.get("topics") or []
+        topic_default = topics[0].replace("#", "").rstrip("/") if topics else ""
 
         added_tags = []
-        if target_sm and selected:
-            prop_map = {p["path"]: p for p in target_sm["properties"]}
-            topics = cfg.get("topics") or []
-            topic_default = topics[0].replace("#", "").rstrip("/") if topics else ""
-            for path in selected:
+        applied_submodels = []
+        for sel in selections:
+            sm_key = sel.get("submodelIdShort") or ""
+            paths = sel.get("propertyPaths") or []
+            sm = sm_index.get(sm_key) if sm_key else (aas_data["submodels"][0] if aas_data["submodels"] else None)
+            if sm is None:
+                continue
+            applied_submodels.append(sm["id_short"])
+            prop_map = {p["path"]: p for p in sm.get("properties", [])}
+            sm_role = sm.get("role") or ""
+            for path in paths:
                 p = prop_map.get(path)
                 if not p:
                     continue
                 exists = db.query(MqttTag).filter_by(
                     connector_id=cid, tag_name=p["id_short"]).first()
                 if exists:
+                    # 이미 있으면 AAS 메타만 갱신 (기존 topic/json_path 는 유지)
+                    exists.submodel_id_short = sm["id_short"]
+                    exists.submodel_role = sm_role
+                    exists.semantic_id = p.get("semantic_id", "") or ""
                     continue
                 tag = MqttTag(
                     connector_id=cid,
@@ -793,6 +884,9 @@ def aasx_apply(cid):
                     tag_name=p["id_short"],
                     data_type=p.get("value_type") or "string",
                     json_path=f"$.{path.replace('/', '.')}",
+                    submodel_id_short=sm["id_short"],
+                    submodel_role=sm_role,
+                    semantic_id=p.get("semantic_id", "") or "",
                     description=(p.get("description") or "")[:500],
                 )
                 inject_tenant(tag)
@@ -801,6 +895,8 @@ def aasx_apply(cid):
                     "tagName": tag.tag_name,
                     "jsonPath": tag.json_path,
                     "dataType": tag.data_type,
+                    "submodelIdShort": sm["id_short"],
+                    "submodelRole": sm_role,
                     "semanticId": p.get("semantic_id", ""),
                 })
 
@@ -812,7 +908,7 @@ def aasx_apply(cid):
             "connector": c.to_dict(),
             "aasxObjectKey": cfg["aasxObjectKey"],
             "addedTags": added_tags,
-            "submodel": (target_sm or {}).get("id_short", ""),
+            "submodels": applied_submodels,
         })
     except Exception as e:
         db.rollback()

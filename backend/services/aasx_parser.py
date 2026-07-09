@@ -32,20 +32,46 @@ def parse_aasx(file_bytes: bytes) -> dict:
             })
         elif isinstance(obj, model.Submodel):
             props = _extract_properties(obj)
+            sem = _semantic_id_str(obj.semantic_id)
+            id_short = obj.id_short or ""
+            role = _submodel_role(id_short, sem)
             sm = {
                 "id": str(obj.id),
-                "id_short": obj.id_short or "",
-                "semantic_id": _semantic_id_str(obj.semantic_id),
+                "id_short": id_short,
+                "semantic_id": sem,
+                "role": role,
                 "properties": props,
             }
             result["submodels"].append(sm)
-            key = (obj.id_short or "").lower()
+            key = id_short.lower()
             if key.startswith("technicaldata"):
                 result["technical_data"] = {p["id_short"]: p.get("value") for p in props}
             elif "nameplate" in key:
                 result["digital_nameplate"] = {p["id_short"]: p.get("value") for p in props}
 
     return result
+
+
+def _submodel_role(id_short: str, semantic_id: str) -> str:
+    """IDTA 표준 semanticId / id_short 로 submodel 역할을 판별.
+
+    - stream : 매 메시지 저장 (TimeSeriesData)
+    - change : 값 변경 시만 저장 (OperationalData 관례)
+    - static : 부팅 후 첫 값만 저장 (TechnicalData / DigitalNameplate / SoftwareNameplate)
+    - ''     : 미분류 (호출자가 기본 처리 = stream 처럼 동작)
+    """
+    sem = (semantic_id or "").lower()
+    idn = (id_short or "").lower()
+    # IDTA semanticId 슬러그 매칭이 가장 신뢰도 높음
+    if "idta/timeseries" in sem or idn.startswith("timeseriesdata") or idn.startswith("timeseries"):
+        return "stream"
+    if ("idta/technicaldata" in sem or idn.startswith("technicaldata")
+            or "idta/nameplate" in sem or "digitalnameplate" in idn
+            or "idta/softwarenameplate" in sem or "softwarenameplate" in idn):
+        return "static"
+    if idn.startswith("operationaldata") or "operational" in idn:
+        return "change"
+    return ""
 
 
 def _asset_id_of(shell):

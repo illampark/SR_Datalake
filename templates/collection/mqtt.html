@@ -506,41 +506,58 @@ function aasxToggleContent(cid) {
     return;
   }
   $box.show().html('<div class="text-muted"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.mqtt.aasx_parsing') + '</div>');
-  $.getJSON(API + '/' + cid + '/aasx-content', function(res) {
-    if (!res.success) {
-      $box.html('<div class="text-danger">' + escHtml(((res.error||{}).message) || __t('page.mqtt.aasx_parse_fail')) + '</div>');
+  $.when(
+    $.getJSON(API + '/' + cid + '/aasx-content'),
+    $.getJSON(API + '/' + cid + '/tags')
+  ).done(function(a, b) {
+    var contentRes = a[0], tagsRes = b[0];
+    if (!contentRes.success) {
+      $box.html('<div class="text-danger">' + escHtml(((contentRes.error||{}).message) || __t('page.mqtt.aasx_parse_fail')) + '</div>');
       return;
     }
-    $box.html(renderAasxContentInline(res.data));
+    var registered = {};
+    ((tagsRes && tagsRes.success ? tagsRes.data : []) || []).forEach(function(t) {
+      registered[(t.submodelIdShort || '') + '::' + (t.tagName || '')] = t;
+    });
+    $box.html(renderAasxContentInline(contentRes.data, registered));
   }).fail(function(xhr) {
     var msg = ((xhr.responseJSON||{}).error||{}).message || xhr.statusText;
     $box.html('<div class="text-danger">' + escHtml(msg) + '</div>');
   });
 }
 
-function renderAasxContentInline(data) {
+function renderAasxContentInline(data, registered) {
+  registered = registered || {};
   var html = '';
   var sms = (data.submodels || []).filter(function(sm) { return (sm.properties || []).length; });
   if (!sms.length) {
     return '<div class="fs-11 text-muted">' + __t('page.mqtt.aasx_no_properties') + '</div>';
   }
   sms.forEach(function(sm) {
-    html += '<div class="fs-11 fw-600 mt-4"><i class="fas fa-cube"></i> ' + escHtml(sm.id_short);
+    var roleBadge = sm.role ? '<span class="badge-sm ' + aasxRoleBadgeClass(sm.role) + '" style="margin-left:6px">' + escHtml(sm.role) + '</span>' : '';
+    html += '<div class="fs-11 fw-600 mt-4"><i class="fas fa-cube"></i> ' + escHtml(sm.id_short) + roleBadge;
     if (sm.semantic_id) html += ' <code class="text-muted">' + escHtml(sm.semantic_id) + '</code>';
     html += '</div>';
     html += '<table class="table table-sm" style="width:100%;margin-bottom:4px"><thead><tr>' +
-      '<th style="width:24%">' + __t('page.mqtt.tags_col_name') + '</th>' +
-      '<th style="width:12%">' + __t('page.mqtt.tags_col_type') + '</th>' +
-      '<th style="width:20%">' + __t('page.mqtt.aasx_col_value') + '</th>' +
-      '<th style="width:12%">' + __t('page.mqtt.aasx_col_unit') + '</th>' +
+      '<th style="width:22%">' + __t('page.mqtt.tags_col_name') + '</th>' +
+      '<th style="width:10%">' + __t('page.mqtt.tags_col_type') + '</th>' +
+      '<th style="width:16%">' + __t('page.mqtt.aasx_col_value') + '</th>' +
+      '<th style="width:10%">' + __t('page.mqtt.aasx_col_unit') + '</th>' +
+      '<th style="width:12%">' + __t('page.mqtt.aasx_col_mapped') + '</th>' +
       '<th>' + __t('page.mqtt.aasx_col_semantic') + '</th>' +
       '</tr></thead><tbody>';
     sm.properties.forEach(function(p) {
+      var mapKey = (sm.id_short || '') + '::' + (p.id_short || '');
+      var reg = registered[mapKey];
+      var mapCell = reg
+        ? '<span class="badge-sm badge-success" title="tag id=' + reg.id + '"><i class="fas fa-check"></i> ' + escHtml(reg.tagName) + '</span>'
+        : '<span class="badge-sm badge-outline text-muted">—</span>';
       html += '<tr>' +
         '<td>' + escHtml(p.path || p.id_short) + '</td>' +
         '<td>' + escHtml(p.value_type || '') + '</td>' +
         '<td>' + escHtml(p.value === null || p.value === undefined ? '' : String(p.value)) + '</td>' +
         '<td>' + escHtml(p.unit || '') + '</td>' +
+        '<td>' + mapCell + '</td>' +
         '<td><code class="fs-11 text-muted">' + escHtml(p.semantic_id || '') + '</code></td>' +
         '</tr>';
     });
@@ -742,7 +759,7 @@ function renderAasxPreview(data) {
     html += '</div>';
   }
 
-  // Submodel selector
+  // 다중 submodel 선택 — 각 submodel 이 접힘/펼침 카드로 표시, 안에서 property 별 체크박스
   var sms = data.submodels || [];
   var withProps = sms.filter(function(sm) { return sm.properties && sm.properties.length; });
   if (!withProps.length) {
@@ -752,16 +769,34 @@ function renderAasxPreview(data) {
   }
 
   html += '<div class="form-group">' +
-    '<label class="form-label">' + __t('page.mqtt.aasx_submodel') + '</label>' +
-    '<select class="form-select" id="aasx-submodel" onchange="renderAasxProps()">';
+    '<label class="form-label">' + __t('page.mqtt.aasx_submodels_label') + '</label>' +
+    '<div class="mb-4"><label class="fs-11"><input type="checkbox" id="aasx-select-all-props" onchange="aasxSelectAllProps(this.checked)" checked> ' + __t('page.mqtt.aasx_select_all') + '</label></div>' +
+    '<div id="aasx-sm-list" style="max-height:340px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:4px;padding:8px">';
   withProps.forEach(function(sm, i) {
-    html += '<option value="' + i + '">' + escHtml(sm.id_short) + ' (' + sm.properties.length + ')</option>';
+    var roleBadge = sm.role ? '<span class="badge-sm ' + aasxRoleBadgeClass(sm.role) + '" style="margin-left:6px">' + escHtml(sm.role) + '</span>' : '';
+    var semBadge = sm.semantic_id ? '<code class="fs-11 text-muted" style="margin-left:6px">' + escHtml(sm.semantic_id) + '</code>' : '';
+    html += '<div class="mb-8">' +
+      '<div class="fw-600 fs-13"><i class="fas fa-cube"></i> ' + escHtml(sm.id_short) + ' (' + sm.properties.length + ')' + roleBadge + semBadge + '</div>' +
+      '<div style="padding-left:16px;margin-top:4px">';
+    sm.properties.forEach(function(p, pi) {
+      var sem = p.semantic_id ? '<code class="fs-11 text-muted">' + escHtml(p.semantic_id) + '</code>' : '';
+      var unit = p.unit ? ' [' + escHtml(p.unit) + ']' : '';
+      html += '<div class="mb-4">' +
+        '<label class="d-flex" style="gap:6px;align-items:flex-start">' +
+        '<input type="checkbox" class="aasx-prop" ' +
+          'data-sm="' + escAttr(sm.id_short) + '" ' +
+          'data-path="' + escAttr(p.path) + '" checked>' +
+        '<div>' +
+        '<span class="fw-600">' + escHtml(p.id_short) + '</span>' +
+        '<span class="fs-11 text-muted"> · ' + escHtml(p.value_type) + unit + '</span>' +
+        (sem ? '<div>' + sem + '</div>' : '') +
+        '</div>' +
+        '</label></div>';
+    });
+    html += '</div></div>';
   });
-  html += '</select></div>';
-  html += '<div class="form-group"><label class="form-label">' + __t('page.mqtt.aasx_properties') + '</label>' +
-    '<div class="mb-4"><label class="fs-11"><input type="checkbox" id="aasx-select-all" onchange="aasxSelectAll(this.checked)" checked> ' + __t('page.mqtt.aasx_select_all') + '</label></div>' +
-    '<div id="aasx-props" style="max-height:260px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:4px;padding:8px"></div>' +
-    '</div>';
+  html += '</div></div>';
+
   html += '<div class="form-row">' +
     '<div class="form-group">' +
     '  <label class="fs-11"><input type="checkbox" id="aasx-auto-asset" checked> ' + __t('page.mqtt.aasx_auto_asset') + '</label>' +
@@ -771,30 +806,18 @@ function renderAasxPreview(data) {
     '</div>' +
     '</div>';
   $('#aasx-preview-area').html(html);
-  renderAasxProps();
 }
 
-function renderAasxProps() {
-  if (!_aasxPreview) return;
-  var withProps = (_aasxPreview.submodels || []).filter(function(sm) { return sm.properties && sm.properties.length; });
-  var idx = parseInt($('#aasx-submodel').val()) || 0;
-  var sm = withProps[idx];
-  if (!sm) return;
-  var html = '';
-  sm.properties.forEach(function(p) {
-    var sem = p.semantic_id ? '<code class="fs-11 text-muted">' + escHtml(p.semantic_id) + '</code>' : '';
-    var unit = p.unit ? ' [' + escHtml(p.unit) + ']' : '';
-    html += '<div class="mb-4">' +
-      '<label class="d-flex" style="gap:6px;align-items:flex-start">' +
-      '<input type="checkbox" class="aasx-prop" data-path="' + escAttr(p.path) + '" checked>' +
-      '<div>' +
-      '<span class="fw-600">' + escHtml(p.id_short) + '</span>' +
-      '<span class="fs-11 text-muted"> · ' + escHtml(p.value_type) + unit + '</span>' +
-      (sem ? '<div>' + sem + '</div>' : '') +
-      '</div>' +
-      '</label></div>';
-  });
-  $('#aasx-props').html(html);
+function aasxSelectAllProps(checked) {
+  $('#aasx-sm-list .aasx-prop').prop('checked', checked);
+}
+
+function aasxRoleBadgeClass(role) {
+  var r = (role || '').toLowerCase();
+  if (r === 'stream') return 'badge-success';
+  if (r === 'change') return 'badge-warning';
+  if (r === 'static') return 'badge-outline';
+  return 'badge-outline';
 }
 
 function aasxSelectAll(checked) {
@@ -807,20 +830,26 @@ function aasxApply() {
     showToast(__t('page.mqtt.aasx_toast_preview_required'), 'error');
     return;
   }
-  var withProps = (_aasxPreview.submodels || []).filter(function(sm) { return sm.properties && sm.properties.length; });
-  var smIdx = parseInt($('#aasx-submodel').val()) || 0;
-  var sm = withProps[smIdx];
-  var selected = [];
-  $('#aasx-props .aasx-prop:checked').each(function() { selected.push($(this).data('path')); });
-  if (!selected.length) {
+  // 다중 submodel selections 조립 — sm.id_short → propertyPaths
+  var bySm = {};
+  $('#aasx-sm-list .aasx-prop:checked').each(function() {
+    var sm = $(this).data('sm');
+    var path = $(this).data('path');
+    if (!bySm[sm]) bySm[sm] = [];
+    bySm[sm].push(path);
+  });
+  var selections = Object.keys(bySm).map(function(sm) {
+    return { submodelIdShort: sm, propertyPaths: bySm[sm] };
+  });
+  var totalSelected = selections.reduce(function(a, s){ return a + s.propertyPaths.length; }, 0);
+  if (!totalSelected) {
     showToast(__t('page.mqtt.aasx_toast_select_property'), 'error');
     return;
   }
 
   var fd = new FormData();
   fd.append('file', input.files[0]);
-  fd.append('selectedPropertyPaths', JSON.stringify(selected));
-  fd.append('submodelIdShort', sm ? sm.id_short : '');
+  fd.append('selections', JSON.stringify(selections));
   fd.append('autoAssetId', $('#aasx-auto-asset').is(':checked') ? 'true' : 'false');
   fd.append('autoTimestamp', $('#aasx-auto-ts').is(':checked') ? 'true' : 'false');
 
@@ -873,8 +902,12 @@ function loadTagsForModal() {
       '<th>' + __t('page.mqtt.tags_col_topic') + '</th>' +
       '<th>' + __t('page.mqtt.tags_col_type') + '</th>' +
       '<th>' + __t('page.mqtt.tags_col_json_path') + '</th>' +
+      '<th>' + __t('page.mqtt.tags_col_submodel') + '</th>' +
+      '<th>' + __t('page.mqtt.tags_col_role') + '</th>' +
+      '<th>' + __t('page.mqtt.tags_col_semantic') + '</th>' +
       '<th style="width:90px"></th>' +
       '</tr></thead><tbody>';
+    var roles = ['', 'stream', 'change', 'static'];
     tags.forEach(function(t) {
       html += '<tr data-tid="' + t.id + '">' +
         '<td><input class="form-control form-control-sm t-name" value="' + escAttr(t.tagName) + '"></td>' +
@@ -885,6 +918,13 @@ function loadTagsForModal() {
           }).join('') +
           '</select></td>' +
         '<td><input class="form-control form-control-sm t-jsonpath" value="' + escAttr(t.jsonPath || '') + '" placeholder="$.field"></td>' +
+        '<td><input class="form-control form-control-sm t-submodel" value="' + escAttr(t.submodelIdShort || '') + '"></td>' +
+        '<td><select class="form-select form-select-sm t-role">' +
+          roles.map(function(r){
+            return '<option value="' + r + '"' + (t.submodelRole===r?' selected':'') + '>' + (r || '—') + '</option>';
+          }).join('') +
+          '</select></td>' +
+        '<td><input class="form-control form-control-sm t-semantic" value="' + escAttr(t.semanticId || '') + '"></td>' +
         '<td style="white-space:nowrap">' +
           '<button class="btn btn-primary btn-sm" onclick="saveTagRow(' + t.id + ')" title="' + __t('common.save') + '"><i class="fas fa-save"></i></button> ' +
           '<button class="btn btn-outline btn-sm" onclick="deleteTagRow(' + t.id + ')" title="' + __t('common.delete') + '"><i class="fas fa-trash text-danger"></i></button>' +
@@ -902,7 +942,10 @@ function saveTagRow(tid) {
     tagName: $tr.find('.t-name').val().trim(),
     topic: $tr.find('.t-topic').val().trim(),
     dataType: $tr.find('.t-dtype').val(),
-    jsonPath: $tr.find('.t-jsonpath').val().trim()
+    jsonPath: $tr.find('.t-jsonpath').val().trim(),
+    submodelIdShort: $tr.find('.t-submodel').val().trim(),
+    submodelRole: $tr.find('.t-role').val(),
+    semanticId: $tr.find('.t-semantic').val().trim()
   };
   $.ajax({
     url: API + '/' + _tagsCid + '/tags/' + tid,

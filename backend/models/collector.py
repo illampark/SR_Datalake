@@ -67,6 +67,11 @@ class MqttTag(Base, TenantScopedMixin):
     tag_name = Column(String(200), nullable=False)
     data_type = Column(String(50), default="string")  # float / int / string / json
     json_path = Column(String(500), nullable=False, server_default="")
+    # AAS 메타 (AASX 연동 시 자동 채움; 수동 등록은 빈 값 유지)
+    submodel_id_short = Column(String(200), nullable=False, server_default="")
+    submodel_role = Column(String(20), nullable=False, server_default="")
+    # 'stream' | 'change' | 'static' | '' (기본 = stream 처럼 동작)
+    semantic_id = Column(String(500), nullable=False, server_default="")
     description = Column(String(500), default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -80,6 +85,9 @@ class MqttTag(Base, TenantScopedMixin):
             "tagName": self.tag_name,
             "dataType": self.data_type,
             "jsonPath": self.json_path or "",
+            "submodelIdShort": self.submodel_id_short or "",
+            "submodelRole": self.submodel_role or "",
+            "semanticId": self.semantic_id or "",
             "description": self.description,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
