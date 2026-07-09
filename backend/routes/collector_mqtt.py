@@ -699,7 +699,8 @@ def aasx_apply(cid):
         except Exception as e:
             return _err(f"MinIO 업로드 실패: {e}", "STORAGE_ERROR", 500)
 
-        cfg = c.config or {}
+        # SQLAlchemy JSON 컬럼은 dict in-place 수정을 감지 못 하므로 새 dict 로 rebuild.
+        cfg = dict(c.config or {})
         cfg["aasxObjectKey"] = f"{bucket}/{object_key}"
         cfg["aasMeta"] = {
             "shells": aas_data["shells"],
