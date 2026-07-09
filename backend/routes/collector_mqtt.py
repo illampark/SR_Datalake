@@ -116,6 +116,8 @@ def create_connector():
             "topics": body.get("topics", []),
             "keepAlive": int(body.get("keepAlive", 60)),
             "cleanSession": bool(body.get("cleanSession", True)),
+            "assetIdJsonPath": (body.get("assetIdJsonPath") or "").strip(),
+            "timestampJsonPath": (body.get("timestampJsonPath") or "").strip(),
         }
 
         c = MqttConnector(
@@ -162,7 +164,7 @@ def update_connector(cid):
 
         # Merge config fields
         cfg = c.config or {}
-        for key in ["clientId", "username", "password", "qos", "tls", "topics", "keepAlive", "cleanSession"]:
+        for key in ["clientId", "username", "password", "qos", "tls", "topics", "keepAlive", "cleanSession", "assetIdJsonPath", "timestampJsonPath"]:
             if key in body:
                 if key == "password" and body[key] == "":
                     continue  # 빈 패스워드는 기존 값 유지
