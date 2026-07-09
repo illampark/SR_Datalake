@@ -749,15 +749,21 @@ def _extract_json_path(data, path):
 
 @mqtt_bp.route("/aasx-preview", methods=["POST"])
 def aasx_preview():
-    """AASX 파일 업로드 → 파싱 결과 반환 (저장 없음)."""
+    """AASX 파일 업로드 → 파싱 결과 반환 (저장 없음).
+
+    body 옵션:
+      exampleTopic — examplePayload 의 topic 문자열 (기본 'sdl/factory/asset/A')
+    """
     f = request.files.get("file")
     if not f:
         return _err("파일이 필요합니다 (form-data 'file').", "VALIDATION")
     try:
-        from backend.services.aasx_parser import parse_aasx
+        from backend.services.aasx_parser import parse_aasx, generate_example_payload
         data = parse_aasx(f.read())
     except Exception as e:
         return _err(f"AASX 파싱 실패: {e}", "PARSE_ERROR", 400)
+    example_topic = (request.form.get("exampleTopic") or "sdl/factory/asset/A").strip()
+    data["examplePayload"] = generate_example_payload(data, topic=example_topic)
     return _ok(data)
 
 
@@ -975,10 +981,18 @@ def aasx_content(cid):
         except Exception as e:
             return _err(f"MinIO 다운로드 실패: {e}", "STORAGE_ERROR", 500)
         try:
-            from backend.services.aasx_parser import parse_aasx
+            from backend.services.aasx_parser import parse_aasx, generate_example_payload
             parsed = parse_aasx(data)
         except Exception as e:
             return _err(f"AASX 파싱 실패: {e}", "PARSE_ERROR", 400)
+        # 커넥터의 실제 subscribe topic 을 예시 topic 으로 사용 (없으면 default)
+        topics = (cfg.get("topics") or [])
+        first_topic = ""
+        if topics:
+            first_topic = topics[0].replace("#", "").rstrip("/") + "/A"
+        parsed["examplePayload"] = generate_example_payload(
+            parsed, topic=first_topic or "sdl/factory/asset/A"
+        )
         return _ok(parsed)
     finally:
         db.close()

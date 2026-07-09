@@ -170,3 +170,87 @@ def _stringify_value(v):
     if isinstance(v, (int, float, bool, str)):
         return v
     return str(v)
+
+
+# ══════════════════════════════════════════════
+# 예상 payload 스키마 생성기 (엣지 게이트웨이 개발 참조용)
+# ══════════════════════════════════════════════
+
+_DEFAULT_VALUES = {
+    "float": 0.0,
+    "int": 0,
+    "bool": False,
+    "string": "",
+}
+
+
+def _sample_value(prop):
+    v = prop.get("value")
+    if v is not None:
+        return v
+    return _DEFAULT_VALUES.get(prop.get("value_type") or "string", "")
+
+
+def _payload_key(id_short):
+    known = {
+        "operationaldata": "operational",
+        "technicaldata": "technical",
+        "timeseriesdata": "timeSeries",
+        "digitalnameplate": "nameplate",
+        "softwarenameplate": "software",
+    }
+    v = known.get((id_short or "").lower())
+    if v:
+        return v
+    s = id_short or "data"
+    return s[:1].lower() + s[1:] if s else "data"
+
+
+def generate_example_payload(aas_data, *, topic="sdl/factory/asset/A"):
+    """AASX 파싱 결과로부터 엣지 게이트웨이가 발행해야 할 예상 JSON payload 를 생성.
+
+    반환:
+      {
+        "topic": ...,
+        "payload": { asset_id, timestamp, <submodel_key>: {prop: value, ...}, ... },
+        "notes": ["OperationalData 는 값 변경 시만 전송 권장", ...],
+      }
+    """
+    shells = aas_data.get("shells") or []
+    asset_id = shells[0].get("asset_id") if shells else ""
+    payload = {
+        "asset_id": asset_id or "PUT_ASSET_ID_HERE",
+        "timestamp": "2026-07-09T00:00:00Z",
+    }
+    notes = []
+    for sm in aas_data.get("submodels") or []:
+        props = sm.get("properties") or []
+        if not props:
+            continue
+        key = _payload_key(sm.get("id_short") or "")
+        section = {}
+        for p in props:
+            path = p.get("path") or p.get("id_short") or ""
+            nested_key = path.replace("/", ".")
+            section[nested_key] = _sample_value(p)
+        payload[key] = section
+
+        role = (sm.get("role") or "").lower()
+        if role == "change":
+            notes.append(
+                f"'{sm.get('id_short')}' (change): 값 변경 시만 publish 권장 — 초기 1회는 반드시 포함."
+            )
+        elif role == "static":
+            notes.append(
+                f"'{sm.get('id_short')}' (static): 세션당 1회만 저장됨 — 부팅 후 첫 발행에 포함하고 이후 생략 가능."
+            )
+        elif role == "stream":
+            notes.append(
+                f"'{sm.get('id_short')}' (stream): 매 샘플 발행 (엣지에서 태그별 샘플링 주기 관리)."
+            )
+
+    return {
+        "topic": topic,
+        "payload": payload,
+        "notes": notes,
+    }

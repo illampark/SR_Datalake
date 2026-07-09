@@ -481,7 +481,11 @@
       "aasx_col_mapped": "매핑",
       "tags_col_submodel": "Submodel",
       "tags_col_role": "Role",
-      "tags_col_semantic": "semanticId"
+      "tags_col_semantic": "semanticId",
+      "aasx_example_title": "엣지 게이트웨이가 발행해야 할 예상 payload",
+      "aasx_example_topic": "Topic",
+      "aasx_example_payload": "Payload (JSON)",
+      "aasx_copied": "클립보드에 복사되었습니다."
     },
     "api_connector": {
       "title": "API 커넥터",

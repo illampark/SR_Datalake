@@ -481,7 +481,11 @@
       "aasx_col_mapped": "Mapped",
       "tags_col_submodel": "Submodel",
       "tags_col_role": "Role",
-      "tags_col_semantic": "semanticId"
+      "tags_col_semantic": "semanticId",
+      "aasx_example_title": "Expected payload for edge gateway",
+      "aasx_example_topic": "Topic",
+      "aasx_example_payload": "Payload (JSON)",
+      "aasx_copied": "Copied to clipboard."
     },
     "api_connector": {
       "title": "API Connector",

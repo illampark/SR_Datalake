@@ -529,9 +529,10 @@ function aasxToggleContent(cid) {
 function renderAasxContentInline(data, registered) {
   registered = registered || {};
   var html = '';
+  if (data.examplePayload) html += renderExamplePayload(data.examplePayload);
   var sms = (data.submodels || []).filter(function(sm) { return (sm.properties || []).length; });
   if (!sms.length) {
-    return '<div class="fs-11 text-muted">' + __t('page.mqtt.aasx_no_properties') + '</div>';
+    return html + '<div class="fs-11 text-muted">' + __t('page.mqtt.aasx_no_properties') + '</div>';
   }
   sms.forEach(function(sm) {
     var roleBadge = sm.role ? '<span class="badge-sm ' + aasxRoleBadgeClass(sm.role) + '" style="margin-left:6px">' + escHtml(sm.role) + '</span>' : '';
@@ -805,6 +806,7 @@ function renderAasxPreview(data) {
     '  <label class="fs-11"><input type="checkbox" id="aasx-auto-ts" checked> ' + __t('page.mqtt.aasx_auto_ts') + '</label>' +
     '</div>' +
     '</div>';
+  if (data.examplePayload) html += renderExamplePayload(data.examplePayload);
   $('#aasx-preview-area').html(html);
 }
 
@@ -818,6 +820,71 @@ function aasxRoleBadgeClass(role) {
   if (r === 'change') return 'badge-warning';
   if (r === 'static') return 'badge-outline';
   return 'badge-outline';
+}
+
+// ── 예상 payload 카드 (엣지 게이트웨이 개발자 참조용) ──
+var _exampleCounter = 0;
+function renderExamplePayload(ex) {
+  _exampleCounter++;
+  var uid = 'ex' + _exampleCounter;
+  var payloadJson = JSON.stringify(ex.payload || {}, null, 2);
+  var pahoSnippet =
+    'import json, paho.mqtt.client as mqtt\n' +
+    'c = mqtt.Client("edge-gateway")\n' +
+    'c.connect("<broker-host>", 1883)\n' +
+    'c.publish(\n' +
+    '    "' + (ex.topic || '') + '",\n' +
+    '    json.dumps(' + payloadJson.replace(/\n/g, '\n        ') + '),\n' +
+    '    qos=1)';
+  var mosqSnippet =
+    'mosquitto_pub -h <broker-host> -t "' + (ex.topic || '') + '" -q 1 -m \'' + payloadJson.replace(/\n/g, ' ') + '\'';
+
+  var html = '<div class="p-8 mt-8" style="background:#0f172a;color:#f1f5f9;border-radius:4px">' +
+    '<div class="d-flex" style="justify-content:space-between;align-items:center;margin-bottom:6px">' +
+    '<div class="fw-600"><i class="fas fa-code"></i> ' + __t('page.mqtt.aasx_example_title') + '</div>' +
+    '<div style="display:flex;gap:6px">' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="copyText(\'' + uid + '-topic\')"><i class="fas fa-copy"></i> Topic</button>' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="copyText(\'' + uid + '-payload\')"><i class="fas fa-copy"></i> Payload</button>' +
+    '</div></div>';
+  html += '<div class="fs-11 mb-4">' + __t('page.mqtt.aasx_example_topic') + ':</div>';
+  html += '<pre id="' + uid + '-topic" class="fs-12" style="background:#1e293b;padding:6px 8px;border-radius:3px;color:#38bdf8;white-space:pre-wrap;word-break:break-all;margin:0 0 8px 0">' + escHtml(ex.topic || '') + '</pre>';
+  html += '<div class="fs-11 mb-4">' + __t('page.mqtt.aasx_example_payload') + ':</div>';
+  html += '<pre id="' + uid + '-payload" class="fs-12" style="background:#1e293b;padding:6px 8px;border-radius:3px;color:#f1f5f9;overflow-x:auto;max-height:240px;overflow-y:auto;margin:0 0 8px 0">' + escHtml(payloadJson) + '</pre>';
+
+  if (ex.notes && ex.notes.length) {
+    html += '<ul class="fs-11" style="color:#fbbf24;margin:4px 0 8px 20px;padding:0">';
+    ex.notes.forEach(function(n) { html += '<li>' + escHtml(n) + '</li>'; });
+    html += '</ul>';
+  }
+
+  html += '<div class="d-flex" style="gap:6px;margin-top:6px">' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="toggleSnippet(\'' + uid + '-paho\')"><i class="fab fa-python"></i> paho-mqtt</button>' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="toggleSnippet(\'' + uid + '-mosq\')"><i class="fas fa-terminal"></i> mosquitto_pub</button>' +
+    '</div>';
+  html += '<pre id="' + uid + '-paho" class="fs-12" style="display:none;background:#1e293b;padding:6px 8px;border-radius:3px;color:#a5f3fc;margin:6px 0 0 0;overflow-x:auto">' + escHtml(pahoSnippet) + '</pre>';
+  html += '<pre id="' + uid + '-mosq" class="fs-12" style="display:none;background:#1e293b;padding:6px 8px;border-radius:3px;color:#a5f3fc;margin:6px 0 0 0;overflow-x:auto;white-space:pre-wrap;word-break:break-all">' + escHtml(mosqSnippet) + '</pre>';
+  html += '</div>';
+  return html;
+}
+
+function toggleSnippet(id) {
+  var $el = $('#' + id);
+  $el.toggle();
+}
+
+function copyText(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var t = el.innerText;
+  var f = function() {
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(t).then(function(){ showToast(__t('page.mqtt.aasx_copied'), 'success'); }, f);
+  } else { f(); showToast(__t('page.mqtt.aasx_copied'), 'success'); }
 }
 
 function aasxSelectAll(checked) {
