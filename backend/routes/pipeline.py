@@ -433,6 +433,13 @@ def start_pipeline(pid):
         if ok:
             p.status = "running"
             db.commit()
+            # 카탈로그가 사용자에 의해 삭제된 상태에서 start 하면 재등록.
+            # sync 는 upsert 이므로 idempotent — 이미 있으면 이름/URL 만 갱신.
+            try:
+                from backend.services.catalog_sync import sync_pipeline_catalogs
+                sync_pipeline_catalogs(db, p.id, p.name, p.steps)
+            except Exception:
+                pass
             return _ok({"message": "파이프라인 시작", "pipelineId": pid})
         else:
             return _err("파이프라인 시작 실패")
