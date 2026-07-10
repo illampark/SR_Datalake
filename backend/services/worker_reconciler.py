@@ -37,6 +37,7 @@ def _reconcile_connectors():
     from backend.services import connector_workers as cw
     with cw._lock:
         local_keys = list(cw._workers.keys())
+        local_versions = dict(cw._worker_versions)
     if not local_keys:
         return
     db = SessionLocal()
@@ -57,6 +58,18 @@ def _reconcile_connectors():
                     "reconciler stopped local worker %s/%d (db_status=%s)",
                     ctype, cid, db_status,
                 )
+                continue
+            # 버전 불일치 → 자동 재로드 (stop → start)
+            db_ver = int(getattr(row, "config_version", 1) or 1)
+            local_ver = int(local_versions.get((ctype, cid), 1))
+            if db_ver != local_ver:
+                cw.stop_worker(ctype, cid)
+                ok, err = cw.start_worker(ctype, cid)
+                logger.info(
+                    "reconciler reloaded worker %s/%d (v%d -> v%d, %s)",
+                    ctype, cid, local_ver, db_ver,
+                    "ok" if ok else f"restart error: {err}",
+                )
     finally:
         db.close()
 
@@ -66,7 +79,6 @@ def _reconcile_pipelines():
     from backend.models.pipeline import Pipeline
     from backend.services import pipeline_engine as pe
     # pipeline_engine 은 별도 lock 이 없으므로 shallow copy 로 snapshot.
-    # 다른 스레드가 dict 를 수정 중이어도 안전하게 iterate.
     try:
         snapshot = dict(pe._running_pipelines)
     except RuntimeError:
@@ -88,6 +100,22 @@ def _reconcile_pipelines():
                     )
                 except Exception as e:
                     logger.exception("stop_pipeline(%d) failed: %s", pid, e)
+                continue
+            # 버전 불일치 → 자동 재로드
+            db_ver = int(getattr(row, "config_version", 1) or 1)
+            local_info = snapshot.get(pid) or {}
+            local_ver = int(local_info.get("config_version", 1))
+            if db_ver != local_ver:
+                try:
+                    pe.stop_pipeline(pid)
+                    ok = pe.start_pipeline(pid)
+                    logger.info(
+                        "reconciler reloaded pipeline %d (v%d -> v%d, %s)",
+                        pid, local_ver, db_ver,
+                        "ok" if ok else "start returned False",
+                    )
+                except Exception as e:
+                    logger.exception("reload pipeline %d failed: %s", pid, e)
     finally:
         db.close()
 

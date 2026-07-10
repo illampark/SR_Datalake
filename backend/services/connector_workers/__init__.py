@@ -21,7 +21,27 @@ _WORKER_CLASSES = {
 }
 
 _workers = {}                 # {(type, id): WorkerThread}
+_worker_versions = {}         # {(type, id): int}  reconciler 가 사용
 _lock = threading.Lock()
+
+
+def _load_config_version(connector_type, connector_id):
+    """DB 에서 커넥터의 config_version 값을 조회 (없으면 1)."""
+    try:
+        from backend.database import SessionLocal
+        from backend.models.collector import OpcuaConnector, ModbusConnector, MqttConnector
+        model = {"opcua": OpcuaConnector, "modbus": ModbusConnector,
+                 "mqtt": MqttConnector}.get(connector_type)
+        if model is None:
+            return 1
+        db = SessionLocal()
+        try:
+            row = db.query(model).get(int(connector_id))
+            return int(getattr(row, "config_version", 1) or 1) if row else 1
+        finally:
+            db.close()
+    except Exception:
+        return 1
 
 
 def start_worker(connector_type, connector_id):
@@ -40,6 +60,7 @@ def start_worker(connector_type, connector_id):
             logger.exception("worker start failed: %s/%s", connector_type, connector_id)
             return False, str(e)
         _workers[key] = w
+        _worker_versions[key] = _load_config_version(connector_type, connector_id)
     return True, ""
 
 
@@ -47,6 +68,7 @@ def stop_worker(connector_type, connector_id, join_timeout=5.0):
     key = (connector_type, int(connector_id))
     with _lock:
         w = _workers.pop(key, None)
+        _worker_versions.pop(key, None)
     if not w:
         return True, "이미 중지됨"
     try:

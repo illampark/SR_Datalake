@@ -25,6 +25,7 @@ class MqttConnector(Base, TenantScopedMixin):
     error_count = Column(Integer, default=0)
     last_message_at = Column(DateTime, nullable=True)
     last_error = Column(Text, default="")
+    config_version = Column(Integer, nullable=False, server_default="1", default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -46,6 +47,7 @@ class MqttConnector(Base, TenantScopedMixin):
             "errorCount": self.error_count,
             "lastMessageAt": self.last_message_at.isoformat() if self.last_message_at else None,
             "lastError": self.last_error,
+            "configVersion": self.config_version or 1,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -311,6 +313,7 @@ class OpcuaConnector(Base, TenantScopedMixin):
     error_count = Column(Integer, default=0)
     last_collected_at = Column(DateTime, nullable=True)
     last_error = Column(Text, default="")
+    config_version = Column(Integer, nullable=False, server_default="1", default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -336,6 +339,7 @@ class OpcuaConnector(Base, TenantScopedMixin):
             "errorCount": self.error_count,
             "lastCollectedAt": self.last_collected_at.isoformat() if self.last_collected_at else None,
             "lastError": self.last_error,
+            "configVersion": self.config_version or 1,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -402,6 +406,7 @@ class ModbusConnector(Base, TenantScopedMixin):
     error_count = Column(Integer, default=0)
     last_collected_at = Column(DateTime, nullable=True)
     last_error = Column(Text, default="")
+    config_version = Column(Integer, nullable=False, server_default="1", default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -432,6 +437,7 @@ class ModbusConnector(Base, TenantScopedMixin):
             "errorCount": self.error_count,
             "lastCollectedAt": self.last_collected_at.isoformat() if self.last_collected_at else None,
             "lastError": self.last_error,
+            "configVersion": self.config_version or 1,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }

@@ -1342,7 +1342,10 @@
       "placeholder_script_code": "# Available variables: message, value\nvalue = message['value'] * 2\nmessage['value'] = value",
       "btn_run_file_source": "Run from files",
       "confirm_run_file_source": "Read all files from the import collectors MinIO output and run the pipeline. Continue?",
-      "msg_file_source_triggered": "File-source run started. Check pipeline processed count for progress."
+      "msg_file_source_triggered": "File-source run started. Check pipeline processed count for progress.",
+      "confirm_restart_on_save": "This running pipeline will auto-restart after save. Continue?",
+      "pipeline_saved_and_restarted": "Pipeline saved and restarted.",
+      "pipeline_saved_restart_failed": "Saved but restart failed"
     },
     "normalize": {
       "title": "Normalization Rules",

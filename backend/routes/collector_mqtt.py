@@ -201,6 +201,8 @@ def update_connector(cid):
                 cfg[key] = body[key]
         c.config = cfg
         c.updated_at = datetime.utcnow()
+        # config 변경 트래킹 — reconciler 가 감지해서 worker 자동 재로드
+        c.config_version = (c.config_version or 1) + 1
 
         # 커넥터 설명 → 카탈로그 동기화
         if "description" in body:
@@ -464,6 +466,7 @@ def create_tag(cid):
         )
         inject_tenant(tag)
         db.add(tag)
+        c.config_version = (c.config_version or 1) + 1
         db.commit()
         db.refresh(tag)
         return _ok(tag.to_dict()), 201
@@ -519,6 +522,7 @@ def update_tag(cid, tid):
         if "description" in body:
             tag.description = (body["description"] or "")[:500]
 
+        c.config_version = (c.config_version or 1) + 1
         db.commit()
         db.refresh(tag)
         return _ok(tag.to_dict())
@@ -543,6 +547,9 @@ def delete_tag(cid, tid):
             return _err("태그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         db.delete(tag)
+        c = db.query(MqttConnector).get(cid)
+        if c:
+            c.config_version = (c.config_version or 1) + 1
         db.commit()
         return _ok({"deleted": tid})
     except Exception as e:

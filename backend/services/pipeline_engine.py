@@ -136,6 +136,7 @@ def start_pipeline(pipeline_id):
             "steps": step_configs,
             "sinks": sink_configs,
             "source_mode": source_mode,
+            "config_version": getattr(p, "config_version", 1) or 1,
             "bindings": [{"type": b.connector_type, "id": b.connector_id, "filter": b.tag_filter} for b in bindings],
             "stats": {
                 "processed": 0,

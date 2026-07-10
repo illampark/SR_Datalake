@@ -262,6 +262,18 @@ def update_pipeline(pid):
             return _err("파이프라인을 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(force=True)
+        restart_flag = bool(body.get("restart", False))
+        was_running = (p.status == "running")
+        # config 변경 요소가 있는지 (steps/bindings/이름/설명/enabled)
+        config_changing = any(k in body for k in
+                              ("steps", "bindings", "name", "description", "enabled"))
+        # running + 편집 요소 있음 + restart 안 함 → 거부
+        if was_running and config_changing and not restart_flag:
+            return _err(
+                "실행 중인 파이프라인은 편집 전 정지가 필요합니다. "
+                "restart=true 로 자동 재시작 옵션을 사용하세요.",
+                "PIPELINE_RUNNING", 409,
+            )
         # steps 가 함께 전달될 때만 검증 (메타 only 업데이트는 통과)
         if "steps" in body:
             err = _require_source_step(body["steps"])
@@ -324,6 +336,10 @@ def update_pipeline(pid):
                 inject_tenant(binding)
                 db.add(binding)
 
+        # config 변경이 있으면 version bump — reconciler 가 감지해 재로드 백업
+        if config_changing:
+            p.config_version = (p.config_version or 1) + 1
+
         db.commit()
         db.refresh(p)
 
@@ -334,9 +350,27 @@ def update_pipeline(pid):
         except Exception:
             pass
 
+        # restart 옵션: was_running 이었으면 즉시 stop → start 사이클
+        restart_error = None
+        if was_running and restart_flag and config_changing:
+            try:
+                from backend.services import pipeline_engine as pe
+                pe.stop_pipeline(pid)
+                ok = pe.start_pipeline(pid)
+                if not ok:
+                    restart_error = "start_pipeline returned False"
+                    p.status = "stopped"
+                else:
+                    p.status = "running"
+                db.commit()
+            except Exception as e:
+                restart_error = str(e)
+
         d = p.to_dict()
         d["steps"] = [s.to_dict() for s in p.steps]
         d["bindings"] = _enrich_bindings(db, p.bindings)
+        if restart_error:
+            d["restartError"] = restart_error
         return _ok(d)
     except Exception as e:
         db.rollback()

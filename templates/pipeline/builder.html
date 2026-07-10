@@ -2113,6 +2113,9 @@ function editPipeline(id) {
 function savePipeline() {
   if (!selectedPipelineId) { showToast(__t('page.builder.save_pipeline_warning'), 'warning'); return; }
 
+  var isRunning = selectedPipelineData && selectedPipelineData.status === 'running';
+  if (isRunning && !confirm(__t('page.builder.confirm_restart_on_save'))) return;
+
   var data = {
     name: selectedPipelineData.name,
     description: selectedPipelineData.description,
@@ -2130,7 +2133,8 @@ function savePipeline() {
         tagFilter: b.tagFilter || '*',
         enabled: b.enabled !== false
       };
-    })
+    }),
+    restart: !!isRunning
   };
 
   $.ajax({
@@ -2140,7 +2144,13 @@ function savePipeline() {
     data: JSON.stringify(data),
     success: function(res) {
       if (res.success) {
-        showToast(__t('page.builder.pipeline_saved'), 'success');
+        if (res.data && res.data.restartError) {
+          showToast(__t('page.builder.pipeline_saved_restart_failed') + ': ' + res.data.restartError, 'error');
+        } else if (isRunning) {
+          showToast(__t('page.builder.pipeline_saved_and_restarted'), 'success');
+        } else {
+          showToast(__t('page.builder.pipeline_saved'), 'success');
+        }
         refreshAll();
       } else {
         showToast(res.error ? res.error.message : __t('common.save_failed'), 'error');

@@ -166,6 +166,8 @@ def update_connector(cid):
             cfg["nodeIds"] = body["nodeIds"]
         c.config = cfg
         c.updated_at = datetime.utcnow()
+        # config 변경 트래킹 — reconciler 가 감지해서 worker 자동 재로드
+        c.config_version = (c.config_version or 1) + 1
 
         # 커넥터 설명 → 카탈로그 동기화
         if "description" in body:
@@ -430,6 +432,7 @@ def create_tag(cid):
             tenant_id=c.tenant_id,
         )
         db.add(tag)
+        c.config_version = (c.config_version or 1) + 1
         db.commit()
         db.refresh(tag)
         return _ok(tag.to_dict()), 201
@@ -454,6 +457,9 @@ def delete_tag(cid, tid):
             return _err("태그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         db.delete(tag)
+        c = db.query(OpcuaConnector).get(cid)
+        if c:
+            c.config_version = (c.config_version or 1) + 1
         db.commit()
         return _ok({"deleted": tid})
     except Exception as e:

@@ -1342,7 +1342,10 @@
       "filter_label": "필터",
       "btn_run_file_source": "파일 소스 실행",
       "confirm_run_file_source": "import 커넥터의 MinIO 파일들을 읽어 파이프라인을 실행합니다. 계속하시겠습니까?",
-      "msg_file_source_triggered": "파일 소스 실행을 시작했습니다. 파이프라인 처리 카운트로 진행을 확인하세요."
+      "msg_file_source_triggered": "파일 소스 실행을 시작했습니다. 파이프라인 처리 카운트로 진행을 확인하세요.",
+      "confirm_restart_on_save": "실행 중인 파이프라인은 저장 후 자동 재시작됩니다. 계속할까요?",
+      "pipeline_saved_and_restarted": "파이프라인 저장 후 재시작되었습니다.",
+      "pipeline_saved_restart_failed": "저장은 완료됐지만 재시작에 실패"
     },
     "normalize": {
       "title": "정규화 규칙",

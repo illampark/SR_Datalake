@@ -31,6 +31,9 @@ class Pipeline(Base, TenantScopedMixin):
     # 파일 소스 run lock: 동시 실행 방지 + crash 시 24h TTL 후 자동 해제
     current_run_id = Column(String(64), default="")
     current_run_at = Column(DateTime, nullable=True)
+    # config 변경 트래킹 — PUT/steps/bindings 갱신 시마다 +1. Reconciler 가 이 값과
+    # runtime 저장 version 을 비교해 자동 reload.
+    config_version = Column(Integer, nullable=False, server_default="1", default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -58,6 +61,7 @@ class Pipeline(Base, TenantScopedMixin):
                 getattr(st, "module_type", "") in ("import_source", "internal_file_source")
                 for st in (self.steps or [])
             ),
+            "configVersion": self.config_version or 1,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
         }
