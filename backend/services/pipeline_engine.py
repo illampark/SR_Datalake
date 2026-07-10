@@ -164,7 +164,9 @@ def start_pipeline(pipeline_id):
                 pipeline_id, p.name, len(step_configs), len(sink_configs),
             )
         else:
-            # 바인딩별 MQTT 토픽 구독
+            # 바인딩별 MQTT 토픽 구독 — handler 를 저장해 stop 시 이 handler 만 제거.
+            # (같은 커넥터를 소스로 하는 다른 파이프라인의 구독이 함께 끊기지 않도록)
+            handler_map = []  # [(topic, handler), ...]
             for b in bindings:
                 topic = f"sdl/raw/{b.connector_type}/{b.connector_id}/#"
                 if b.tag_filter and b.tag_filter != "*":
@@ -175,8 +177,11 @@ def start_pipeline(pipeline_id):
                         _handle_message(pid, t, payload)
                     return handler
 
-                mqtt_manager.subscribe(topic, make_handler(pipeline_id))
+                h = make_handler(pipeline_id)
+                mqtt_manager.subscribe(topic, h)
+                handler_map.append((topic, h))
                 logger.info("파이프라인 %s: 구독 %s", pipeline_id, topic)
+            _running_pipelines[pipeline_id]["_handlers"] = handler_map
 
             logger.info("파이프라인 %s (%s) 시작 — %d 스텝, %d 바인딩",
                          pipeline_id, p.name, len(step_configs), len(bindings))
@@ -204,10 +209,16 @@ def stop_pipeline(pipeline_id):
                        extra={"pipeline_id": pipeline_id,
                               "exc_class": type(e).__name__})
 
-    # 바인딩별 토픽 구독 해제
-    for b in info.get("bindings", []):
-        topic = f"sdl/raw/{b['type']}/{b['id']}/#"
-        mqtt_manager.unsubscribe(topic)
+    # 이 파이프라인이 등록한 handler 만 정확히 제거 (다른 파이프라인 구독 유지)
+    handler_map = info.get("_handlers") or []
+    if handler_map:
+        for topic, h in handler_map:
+            mqtt_manager.unsubscribe(topic, callback=h)
+    else:
+        # legacy path (핸들러 정보가 없으면 topic 전체 제거 — start 이전 스냅샷 호환)
+        for b in info.get("bindings", []):
+            topic = f"sdl/raw/{b['type']}/{b['id']}/#"
+            mqtt_manager.unsubscribe(topic)
 
     logger.info("파이프라인 %s 정지", pipeline_id)
 

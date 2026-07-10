@@ -200,9 +200,27 @@ def subscribe(topic_pattern, callback, qos=1):
     return True
 
 
-def unsubscribe(topic_pattern):
-    """토픽 구독 해제"""
-    _subscriptions.pop(topic_pattern, None)
+def unsubscribe(topic_pattern, callback=None):
+    """토픽 구독 해제.
+
+    callback 이 주어지면 그 handler 만 제거하고, 같은 topic 을 구독 중인 다른
+    handler 는 유지한다 (동일 커넥터를 소스로 하는 여러 파이프라인 격리).
+    callback=None (호환) 이면 topic 전체 제거.
+    """
+    cbs = _subscriptions.get(topic_pattern)
+    if not cbs:
+        return
+    if callback is None:
+        _subscriptions.pop(topic_pattern, None)
+    else:
+        try:
+            cbs.remove(callback)
+        except ValueError:
+            pass
+        if cbs:
+            # 다른 구독자가 남아있으면 실제 broker unsubscribe 는 하지 않는다.
+            return
+        _subscriptions.pop(topic_pattern, None)
     if _client and _connected:
         _client.unsubscribe(topic_pattern)
         logger.info("토픽 구독 해제: %s", topic_pattern)
