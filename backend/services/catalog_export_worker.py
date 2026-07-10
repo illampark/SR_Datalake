@@ -376,26 +376,26 @@ def _select_row_iterator(db, catalog, req):
 
         return _gen, _cols
 
-    # 2) 파이프라인 TSDB 싱크
+    # 2) 파이프라인 TSDB 싱크 (tenant 스키마 대상)
     if catalog.connector_type == "pipeline" and catalog.sink_type == "internal_tsdb_sink":
         cols = ["timestamp", "measurement", "tag_name", "value", "value_str",
                 "data_type", "unit", "quality"]
-        q = catalog_routes._build_pipeline_tsdb_query(db, catalog, date_from, date_to)
+        sel = catalog_routes._build_pipeline_tsdb_query(db, catalog, date_from, date_to)
 
         def _gen():
-            for r in q.yield_per(10_000):
+            for r in sel.iter_rows(db, order="ASC"):
                 yield ("row", catalog_routes._pipe_tsdb_row_to_dict(r))
 
         return _gen, (lambda: cols)
 
-    # 3) 기본: TimeSeriesData (커넥터/태그 단위)
+    # 3) 기본: tenant 스키마의 time_series_data (커넥터/태그 단위)
     if catalog.connector_type != "file" and catalog.connector_type != "recipe":
-        q, cols, is_connector_level = catalog_routes._build_timeseries_query(
+        sel, cols, is_connector_level = catalog_routes._build_timeseries_query(
             db, catalog, date_from, date_to
         )
 
         def _gen():
-            for r in q.yield_per(10_000):
+            for r in sel.iter_rows(db, order="ASC"):
                 yield ("row", catalog_routes._ts_row_to_dict(r, is_connector_level))
 
         return _gen, (lambda: cols)
@@ -412,25 +412,21 @@ def _estimate_rows(db, catalog, req):
     from backend.database import SessionLocal
     db2 = SessionLocal()
     try:
-        from sqlalchemy import func
-        from backend.models.storage import TimeSeriesData
         from backend.routes import catalog as catalog_routes
 
         date_from = req.date_from.isoformat() if req.date_from else ""
         date_to = req.date_to.isoformat() if req.date_to else ""
 
         if catalog.connector_type == "pipeline" and catalog.sink_type == "internal_tsdb_sink":
-            q = catalog_routes._build_pipeline_tsdb_query(db2, catalog, date_from, date_to)
-            return q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+            sel = catalog_routes._build_pipeline_tsdb_query(db2, catalog, date_from, date_to)
+            return int(sel.count(db2))
 
         if catalog.connector_type == "pipeline" and catalog.sink_type == "internal_rdbms_sink":
-            # 외부 DB 카운트는 비용 ↑ — preview 가 미리 했더라도 worker 시점에 다시 부르긴 무거움.
-            # 0 반환 시 producer 가 rows/100k 기반 fallback 진행률 사용
             return 0
 
         if catalog.connector_type not in ("file", "recipe"):
-            q, _, _ = catalog_routes._build_timeseries_query(db2, catalog, date_from, date_to)
-            return q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+            sel, _, _ = catalog_routes._build_timeseries_query(db2, catalog, date_from, date_to)
+            return int(sel.count(db2))
     except Exception as e:
         logger.warning("estimate_rows 실패 [%s]: %s", req.request_id, e)
         try:

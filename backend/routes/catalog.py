@@ -17,6 +17,57 @@ from backend.services.system_settings import get_default_page_size
 from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, inject_tenant
 from backend.services.minio_buckets import bucket_for
 
+# ══════════════════════════════════════════════
+# tenant-schema-aware TSDB 조회 헬퍼
+# ══════════════════════════════════════════════
+# Pipeline TSDB sink 는 tenant_N.time_series_data 에 raw SQL INSERT 하지만
+# 종전 catalog 조회는 ORM(public.time_series_data) 을 사용해 tenant 2+ 데이터가
+# 안 보이던 회귀. 아래 헬퍼로 raw SQL 조회를 통일.
+
+_TS_COLUMNS = (
+    "id", "tsdb_id", "measurement", "tag_name", "connector_type",
+    "connector_id", "pipeline_id", "value", "value_str", "data_type",
+    "unit", "quality", "tags", "timestamp", "created_at", "tenant_id",
+)
+
+
+def _ts_source_fqn():
+    """자기 tenant 의 time_series_data schema-qualified 이름."""
+    from backend.services.tenant_pg import tenant_table
+    return tenant_table("time_series_data")
+
+
+def _ts_row_to_orm_dict(row):
+    """raw SQL row → TimeSeriesData.to_dict() 와 동일 스키마의 dict."""
+    r = dict(zip(_TS_COLUMNS, row))
+    ts = r.get("timestamp")
+    ca = r.get("created_at")
+    return {
+        "id": r["id"],
+        "tsdbId": r["tsdb_id"],
+        "measurement": r["measurement"] or "",
+        "tagName": r["tag_name"] or "",
+        "connectorType": r["connector_type"] or "",
+        "connectorId": r["connector_id"] or 0,
+        "pipelineId": r["pipeline_id"] or 0,
+        "value": r["value"],
+        "valueStr": r["value_str"] or "",
+        "dataType": r["data_type"] or "",
+        "unit": r["unit"] or "",
+        "quality": r["quality"] if r["quality"] is not None else 100,
+        "tags": r["tags"] or {},
+        "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else (ts or ""),
+        "createdAt": ca.isoformat() if hasattr(ca, "isoformat") else (ca or ""),
+    }
+
+
+class _TsRow:
+    """ORM row 인터페이스 흉내 — export 코드가 r.timestamp / r.value 를 그대로 쓸 수 있게."""
+    __slots__ = _TS_COLUMNS
+    def __init__(self, row):
+        for k, v in zip(_TS_COLUMNS, row):
+            setattr(self, k, v)
+
 # 대용량 export — 메모리 적재 없이 chunked HTTP 응답으로 흘려보냄.
 # yield_per / server-side cursor 의 fetch 단위. 너무 작으면 RTT 비용, 너무 크면 메모리 ↑.
 _EXPORT_CHUNK_ROWS = 10_000
@@ -771,16 +822,21 @@ def catalog_tree():
 # ──────────────────────────────────────────────
 
 def _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min):
-    """TSDB 싱크 — TimeSeriesData에서 pipeline_id + measurement 필터로 조회"""
-    q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(
-        TimeSeriesData.pipeline_id == c.pipeline_id,
-    )
-    if c.tag_name:
-        q = q.filter(TimeSeriesData.measurement == c.tag_name)
+    """TSDB 싱크 — tenant 스키마의 time_series_data 에서 pipeline_id + measurement 필터.
 
+    Pipeline TSDB sink 는 tenant_N.time_series_data 에 저장하므로 조회도 동일 스키마.
+    """
+    from sqlalchemy import text as _sql
+    ts_fqn = _ts_source_fqn()
+    where = ["pipeline_id = :pid"]
+    params = {"pid": c.pipeline_id}
+    if c.tag_name:
+        where.append("measurement = :meas")
+        params["meas"] = c.tag_name
     if date_from:
         try:
-            q = q.filter(TimeSeriesData.timestamp >= datetime.fromisoformat(date_from))
+            params["from"] = datetime.fromisoformat(date_from)
+            where.append("timestamp >= :from")
         except ValueError:
             pass
     if date_to:
@@ -788,29 +844,38 @@ def _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min):
             dt_to = datetime.fromisoformat(date_to)
             if dt_to.hour == 0 and dt_to.minute == 0:
                 dt_to += timedelta(days=1)
-            q = q.filter(TimeSeriesData.timestamp < dt_to)
+            params["to"] = dt_to
+            where.append("timestamp < :to")
         except ValueError:
             pass
     if quality_min > 0:
-        q = q.filter(TimeSeriesData.quality >= quality_min)
+        params["qmin"] = quality_min
+        where.append("quality >= :qmin")
+    where_sql = " AND ".join(where)
 
-    total = q.count()
-    rows = q.order_by(TimeSeriesData.timestamp.desc()).offset((page - 1) * size).limit(size).all()
+    total = db.execute(
+        _sql(f"SELECT COUNT(*) FROM {ts_fqn} WHERE {where_sql}"), params
+    ).scalar() or 0
 
-    # 통계 (자기 tenant)
-    stats_q = filter_by_tenant(db.query(
-        func.count(TimeSeriesData.id),
-        func.min(TimeSeriesData.value),
-        func.max(TimeSeriesData.value),
-        func.avg(TimeSeriesData.value),
-        func.min(TimeSeriesData.timestamp),
-        func.max(TimeSeriesData.timestamp),
-    ), TimeSeriesData).filter(
-        TimeSeriesData.pipeline_id == c.pipeline_id,
-    )
-    if c.tag_name:
-        stats_q = stats_q.filter(TimeSeriesData.measurement == c.tag_name)
-    sr = stats_q.first()
+    rows_params = dict(params, limit=size, offset=(page - 1) * size)
+    cols_sql = ", ".join(_TS_COLUMNS)
+    rows = db.execute(
+        _sql(
+            f"SELECT {cols_sql} FROM {ts_fqn} "
+            f"WHERE {where_sql} "
+            f"ORDER BY timestamp DESC LIMIT :limit OFFSET :offset"
+        ),
+        rows_params,
+    ).fetchall()
+
+    sr = db.execute(
+        _sql(
+            f"SELECT COUNT(*), MIN(value), MAX(value), AVG(value), "
+            f"       MIN(timestamp), MAX(timestamp) "
+            f"FROM {ts_fqn} WHERE {where_sql}"
+        ),
+        params,
+    ).first()
 
     return _ok({
         "catalog": {"id": c.id, "name": c.name, "tagName": c.tag_name,
@@ -820,12 +885,12 @@ def _query_pipeline_tsdb(db, c, page, size, date_from, date_to, quality_min):
         # 파이프라인 TSDB sink 는 measurement 단위 묶음 → 여러 tag_name 이 섞여 있으므로
         # 프론트에서 tag 컬럼을 노출해야 한다.
         "showTagColumn": True,
-        "items": [r.to_dict() for r in rows],
-        "total": total,
+        "items": [_ts_row_to_orm_dict(r) for r in rows],
+        "total": int(total),
         "page": page,
         "size": size,
         "stats": {
-            "count": sr[0] if sr else 0,
+            "count": int(sr[0]) if sr else 0,
             "min": round(sr[1], 4) if sr and sr[1] is not None else None,
             "max": round(sr[2], 4) if sr and sr[2] is not None else None,
             "avg": round(sr[3], 4) if sr and sr[3] is not None else None,
@@ -1212,17 +1277,19 @@ def query_catalog_data(cid):
         if c.connector_type == "recipe":
             return _query_recipe_data(db, c, page, size)
 
+        # Connector-level 조회 — tenant 스키마의 time_series_data 를 raw SQL 로 조회.
+        from sqlalchemy import text as _sql
         is_connector_level = not c.tag_name
-        q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(
-            TimeSeriesData.connector_type == c.connector_type,
-            TimeSeriesData.connector_id == c.connector_id,
-        )
+        ts_fqn = _ts_source_fqn()
+        where = ["connector_type = :ctype", "connector_id = :cid"]
+        params = {"ctype": c.connector_type, "cid": c.connector_id}
         if not is_connector_level:
-            q = q.filter(TimeSeriesData.tag_name == c.tag_name)
-
+            where.append("tag_name = :tag")
+            params["tag"] = c.tag_name
         if date_from:
             try:
-                q = q.filter(TimeSeriesData.timestamp >= datetime.fromisoformat(date_from))
+                params["from"] = datetime.fromisoformat(date_from)
+                where.append("timestamp >= :from")
             except ValueError:
                 pass
         if date_to:
@@ -1230,54 +1297,49 @@ def query_catalog_data(cid):
                 dt_to = datetime.fromisoformat(date_to)
                 if dt_to.hour == 0 and dt_to.minute == 0:
                     dt_to += timedelta(days=1)
-                q = q.filter(TimeSeriesData.timestamp < dt_to)
+                params["to"] = dt_to
+                where.append("timestamp < :to")
             except ValueError:
                 pass
         if quality_min > 0:
-            q = q.filter(TimeSeriesData.quality >= quality_min)
+            params["qmin"] = quality_min
+            where.append("quality >= :qmin")
+        where_sql = " AND ".join(where)
 
-        total = q.count()
-        rows = q.order_by(TimeSeriesData.timestamp.desc()).offset((page - 1) * size).limit(size).all()
+        total = db.execute(
+            _sql(f"SELECT COUNT(*) FROM {ts_fqn} WHERE {where_sql}"), params
+        ).scalar() or 0
 
-        # 기간 내 통계 (자기 tenant)
-        stats_q = filter_by_tenant(db.query(
-            func.count(TimeSeriesData.id),
-            func.min(TimeSeriesData.value),
-            func.max(TimeSeriesData.value),
-            func.avg(TimeSeriesData.value),
-            func.min(TimeSeriesData.timestamp),
-            func.max(TimeSeriesData.timestamp),
-        ), TimeSeriesData).filter(
-            TimeSeriesData.connector_type == c.connector_type,
-            TimeSeriesData.connector_id == c.connector_id,
-        )
-        if not is_connector_level:
-            stats_q = stats_q.filter(TimeSeriesData.tag_name == c.tag_name)
-        if date_from:
-            try:
-                stats_q = stats_q.filter(TimeSeriesData.timestamp >= datetime.fromisoformat(date_from))
-            except ValueError:
-                pass
-        if date_to:
-            try:
-                dt_to = datetime.fromisoformat(date_to)
-                if dt_to.hour == 0 and dt_to.minute == 0:
-                    dt_to += timedelta(days=1)
-                stats_q = stats_q.filter(TimeSeriesData.timestamp < dt_to)
-            except ValueError:
-                pass
-        sr = stats_q.first()
+        rows_params = dict(params, limit=size, offset=(page - 1) * size)
+        cols_sql = ", ".join(_TS_COLUMNS)
+        rows = db.execute(
+            _sql(
+                f"SELECT {cols_sql} FROM {ts_fqn} "
+                f"WHERE {where_sql} "
+                f"ORDER BY timestamp DESC LIMIT :limit OFFSET :offset"
+            ),
+            rows_params,
+        ).fetchall()
+
+        sr = db.execute(
+            _sql(
+                f"SELECT COUNT(*), MIN(value), MAX(value), AVG(value), "
+                f"       MIN(timestamp), MAX(timestamp) "
+                f"FROM {ts_fqn} WHERE {where_sql}"
+            ),
+            params,
+        ).first()
 
         return _ok({
             "catalog": {"id": c.id, "name": c.name, "tagName": c.tag_name,
                         "connectorType": c.connector_type, "connectorId": c.connector_id},
             "isConnectorLevel": is_connector_level,
-            "items": [r.to_dict() for r in rows],
-            "total": total,
+            "items": [_ts_row_to_orm_dict(r) for r in rows],
+            "total": int(total),
             "page": page,
             "size": size,
             "stats": {
-                "count": sr[0] if sr else 0,
+                "count": int(sr[0]) if sr else 0,
                 "min": round(sr[1], 4) if sr and sr[1] is not None else None,
                 "max": round(sr[2], 4) if sr and sr[2] is not None else None,
                 "avg": round(sr[3], 4) if sr and sr[3] is not None else None,
@@ -1319,12 +1381,11 @@ def preview_catalog_export(cid):
         if c.connector_type == "pipeline" and c.sink_type == "internal_rdbms_sink":
             return _preview_rdbms(db, c, date_from, date_to, where_clause)
 
-        # 파이프라인 TSDB sink — TimeSeriesData 카운트
+        # 파이프라인 TSDB sink — tenant 스키마 카운트/샘플
         if c.connector_type == "pipeline" and c.sink_type == "internal_tsdb_sink":
-            q = _build_pipeline_tsdb_query(db, c, date_from, date_to)
-            sample = q.limit(100).all()
-            # COUNT(*) + ORDER BY 는 PostgreSQL 에서 GROUP BY 오류 → ORDER BY 제거 후 카운트
-            row_count = q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+            sel = _build_pipeline_tsdb_query(db, c, date_from, date_to)
+            row_count = int(sel.count(db))
+            sample = sel.sample(db, 100)
             cols = ["timestamp", "measurement", "tag_name", "value", "value_str",
                     "data_type", "unit", "quality"]
             sample_dicts = [_pipe_tsdb_row_to_dict(r) for r in sample]
@@ -1346,10 +1407,10 @@ def preview_catalog_export(cid):
                 "note": "recipe data — 실제 다운로드 시 즉시 완료",
             })
 
-        # 기본: TimeSeriesData
-        q, columns, is_connector_level = _build_timeseries_query(db, c, date_from, date_to)
-        sample = q.limit(100).all()
-        row_count = q.order_by(None).with_entities(func.count(TimeSeriesData.id)).scalar() or 0
+        # 기본: tenant 스키마의 time_series_data
+        sel, columns, is_connector_level = _build_timeseries_query(db, c, date_from, date_to)
+        row_count = int(sel.count(db))
+        sample = sel.sample(db, 100)
         sample_dicts = [_ts_row_to_dict(r, is_connector_level) for r in sample]
         avg = _avg_row_bytes(sample_dicts, columns)
         est_bytes = row_count * avg
@@ -1541,18 +1602,56 @@ def export_catalog_data(cid):
         db.close()
 
 
+class _TsdbSelect:
+    """tenant 스키마의 time_series_data 를 raw SQL 로 조회하는 헬퍼.
+
+    ORM builder 를 대체 — count/sample/stream 모두 tenant_N schema 대상.
+    """
+    def __init__(self, where_sql, params):
+        self.ts_fqn = _ts_source_fqn()
+        self.where = where_sql
+        self.params = dict(params)
+
+    def count(self, db):
+        from sqlalchemy import text as _sql
+        return db.execute(
+            _sql(f"SELECT COUNT(*) FROM {self.ts_fqn} WHERE {self.where}"),
+            self.params,
+        ).scalar() or 0
+
+    def iter_rows(self, db, order="ASC", limit=0):
+        from sqlalchemy import text as _sql
+        cols_sql = ", ".join(_TS_COLUMNS)
+        sql = (
+            f"SELECT {cols_sql} FROM {self.ts_fqn} WHERE {self.where} "
+            f"ORDER BY timestamp {order}"
+        )
+        if limit and limit > 0:
+            sql += f" LIMIT {int(limit)}"
+        cur = db.execute(_sql(sql), self.params)
+        while True:
+            chunk = cur.fetchmany(_EXPORT_CHUNK_ROWS)
+            if not chunk:
+                break
+            for row in chunk:
+                yield _TsRow(row)
+
+    def sample(self, db, n=100):
+        return list(self.iter_rows(db, limit=n))
+
+
 def _build_timeseries_query(db, c, date_from, date_to):
-    """TimeSeriesData 카탈로그용 쿼리 + (header_columns, row_serializer) 반환."""
+    """커넥터 카탈로그용 TSDB select + 컬럼/level 반환."""
     is_connector_level = not c.tag_name
-    q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(
-        TimeSeriesData.connector_type == c.connector_type,
-        TimeSeriesData.connector_id == c.connector_id,
-    )
+    where = ["connector_type = :ctype", "connector_id = :cid"]
+    params = {"ctype": c.connector_type, "cid": c.connector_id}
     if not is_connector_level:
-        q = q.filter(TimeSeriesData.tag_name == c.tag_name)
+        where.append("tag_name = :tag")
+        params["tag"] = c.tag_name
     if date_from:
         try:
-            q = q.filter(TimeSeriesData.timestamp >= datetime.fromisoformat(date_from))
+            params["from"] = datetime.fromisoformat(date_from)
+            where.append("timestamp >= :from")
         except ValueError:
             pass
     if date_to:
@@ -1560,17 +1659,17 @@ def _build_timeseries_query(db, c, date_from, date_to):
             dt_to = datetime.fromisoformat(date_to)
             if dt_to.hour == 0 and dt_to.minute == 0:
                 dt_to += timedelta(days=1)
-            q = q.filter(TimeSeriesData.timestamp < dt_to)
+            params["to"] = dt_to
+            where.append("timestamp < :to")
         except ValueError:
             pass
-    q = q.order_by(TimeSeriesData.timestamp.asc())
     if is_connector_level:
         columns = ["timestamp", "tag_name", "value", "value_str",
                    "data_type", "unit", "quality", "measurement"]
     else:
         columns = ["timestamp", "value", "value_str",
                    "data_type", "unit", "quality", "measurement"]
-    return q, columns, is_connector_level
+    return _TsdbSelect(" AND ".join(where), params), columns, is_connector_level
 
 
 def _ts_row_to_dict(r, is_connector_level):
@@ -1589,25 +1688,21 @@ def _ts_row_to_dict(r, is_connector_level):
 
 
 def _stream_timeseries_export(db, c, date_from, date_to, fmt, limit):
-    q, columns, is_connector_level = _build_timeseries_query(db, c, date_from, date_to)
-    if limit and limit > 0:
-        q = q.limit(limit)
-    elif _EXPORT_SAFETY_CAP > 0:
-        q = q.limit(_EXPORT_SAFETY_CAP)
+    sel, columns, is_connector_level = _build_timeseries_query(db, c, date_from, date_to)
+    effective_limit = limit if (limit and limit > 0) else (_EXPORT_SAFETY_CAP or 0)
 
     fname_prefix = c.tag_name or f"{c.connector_type}_{c.connector_id}"
 
     if fmt == "json":
         def _json_gen():
-            for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+            for r in sel.iter_rows(db, order="ASC", limit=effective_limit):
                 yield _ts_row_to_dict(r, is_connector_level)
         return _stream_json_response(_json_gen(), fname_prefix)
 
     def _csv_gen():
-        # BOM + header
         yield _utf8_bom() + ",".join(columns) + "\n"
         batch = []
-        for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+        for r in sel.iter_rows(db, order="ASC", limit=effective_limit):
             batch.append(_ts_row_to_dict(r, is_connector_level))
             if len(batch) >= _EXPORT_CHUNK_ROWS:
                 yield _csv_chunk_writer(batch, columns)
@@ -1622,12 +1717,16 @@ def _stream_timeseries_export(db, c, date_from, date_to, fmt, limit):
 # ──────────────────────────────────────────────
 
 def _build_pipeline_tsdb_query(db, c, date_from, date_to):
-    q = filter_by_tenant(db.query(TimeSeriesData), TimeSeriesData).filter(TimeSeriesData.pipeline_id == c.pipeline_id)
+    """파이프라인 TSDB sink용 select — tenant 스키마 대상."""
+    where = ["pipeline_id = :pid"]
+    params = {"pid": c.pipeline_id}
     if c.tag_name:
-        q = q.filter(TimeSeriesData.measurement == c.tag_name)
+        where.append("measurement = :meas")
+        params["meas"] = c.tag_name
     if date_from:
         try:
-            q = q.filter(TimeSeriesData.timestamp >= datetime.fromisoformat(date_from))
+            params["from"] = datetime.fromisoformat(date_from)
+            where.append("timestamp >= :from")
         except ValueError:
             pass
     if date_to:
@@ -1635,10 +1734,11 @@ def _build_pipeline_tsdb_query(db, c, date_from, date_to):
             dt_to = datetime.fromisoformat(date_to)
             if dt_to.hour == 0 and dt_to.minute == 0:
                 dt_to += timedelta(days=1)
-            q = q.filter(TimeSeriesData.timestamp < dt_to)
+            params["to"] = dt_to
+            where.append("timestamp < :to")
         except ValueError:
             pass
-    return q.order_by(TimeSeriesData.timestamp.asc())
+    return _TsdbSelect(" AND ".join(where), params)
 
 
 def _pipe_tsdb_row_to_dict(r):
@@ -1655,32 +1755,28 @@ def _pipe_tsdb_row_to_dict(r):
 
 
 def _export_pipeline_tsdb(db, c, date_from, date_to, fmt):
-    """TSDB 싱크 데이터 CSV/JSON 내보내기 (스트리밍)."""
+    """TSDB 싱크 데이터 CSV/JSON 내보내기 (스트리밍, tenant 스키마 대상)."""
     try:
         limit = int(request.args.get("limit", "0") or 0)
     except ValueError:
         limit = 0
+    effective_limit = limit if (limit and limit > 0) else (_EXPORT_SAFETY_CAP or 0)
 
-    q = _build_pipeline_tsdb_query(db, c, date_from, date_to)
-    if limit and limit > 0:
-        q = q.limit(limit)
-    elif _EXPORT_SAFETY_CAP > 0:
-        q = q.limit(_EXPORT_SAFETY_CAP)
-
+    sel = _build_pipeline_tsdb_query(db, c, date_from, date_to)
     columns = ["timestamp", "measurement", "tag_name", "value", "value_str",
                "data_type", "unit", "quality"]
     fname_prefix = f"pipeline_{c.pipeline_id}_{c.tag_name or 'all'}"
 
     if fmt == "json":
         def _json_gen():
-            for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+            for r in sel.iter_rows(db, order="ASC", limit=effective_limit):
                 yield _pipe_tsdb_row_to_dict(r)
         return _stream_json_response(_json_gen(), fname_prefix)
 
     def _csv_gen():
         yield _utf8_bom() + ",".join(columns) + "\n"
         batch = []
-        for r in q.yield_per(_EXPORT_CHUNK_ROWS):
+        for r in sel.iter_rows(db, order="ASC", limit=effective_limit):
             batch.append(_pipe_tsdb_row_to_dict(r))
             if len(batch) >= _EXPORT_CHUNK_ROWS:
                 yield _csv_chunk_writer(batch, columns)

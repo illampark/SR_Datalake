@@ -57,10 +57,11 @@ def _worker_loop():
 
 
 def _execute(request_id):
-    """단일 데이터셋 추출 실행"""
+    """단일 데이터셋 추출 실행 — tenant 스키마의 time_series_data 대상."""
     from backend.database import SessionLocal
     from backend.models.dataset import DatasetRequest
-    from backend.models.storage import TimeSeriesData
+    from backend.services.tenant_pg import tenant_table
+    from sqlalchemy import text as _sql
 
     db = SessionLocal()
     try:
@@ -73,41 +74,47 @@ def _execute(request_id):
         req.progress = 0
         db.commit()
 
-        # ── 1. 쿼리 구성 ──
-        q = db.query(TimeSeriesData)
-
-        # 태그 필터
+        # ── 1. 쿼리 구성 (tenant 스키마의 time_series_data) ──
+        ts_fqn = tenant_table("time_series_data", tenant_id=req.tenant_id)
+        where = []
+        params = {}
+        # 태그·커넥터·기간·품질 필터
         tags = req.tags or []
         if tags:
-            q = q.filter(TimeSeriesData.tag_name.in_(tags))
-
-        # 커넥터 타입 필터
+            where.append("tag_name = ANY(:tags)")
+            params["tags"] = list(tags)
         c_types = req.connector_types or []
         if c_types:
-            q = q.filter(TimeSeriesData.connector_type.in_(c_types))
-
-        # 커넥터 ID 필터
+            where.append("connector_type = ANY(:ctypes)")
+            params["ctypes"] = list(c_types)
         c_ids = req.connector_ids or []
         if c_ids:
-            q = q.filter(TimeSeriesData.connector_id.in_(c_ids))
-
-        # 기간 필터
+            where.append("connector_id = ANY(:cids)")
+            params["cids"] = list(c_ids)
         if req.date_from:
-            q = q.filter(TimeSeriesData.timestamp >= req.date_from)
+            where.append("timestamp >= :dfrom")
+            params["dfrom"] = req.date_from
         if req.date_to:
             dt_to = req.date_to
             if dt_to.hour == 0 and dt_to.minute == 0:
                 dt_to += timedelta(days=1)
-            q = q.filter(TimeSeriesData.timestamp < dt_to)
-
-        # 품질 필터
+            where.append("timestamp < :dto")
+            params["dto"] = dt_to
         if req.quality_min and req.quality_min > 0:
-            q = q.filter(TimeSeriesData.quality >= req.quality_min)
+            where.append("quality >= :qmin")
+            params["qmin"] = req.quality_min
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
 
-        q = q.order_by(TimeSeriesData.timestamp.asc())
+        cols_sql = (
+            "id, tsdb_id, measurement, tag_name, connector_type, "
+            "connector_id, pipeline_id, value, value_str, data_type, "
+            "unit, quality, tags, timestamp, created_at, tenant_id"
+        )
 
-        # ── 2. 총 행 수 파악 ──
-        total_count = q.count()
+        # ── 2. 총 행 수 ──
+        total_count = int(db.execute(
+            _sql(f"SELECT COUNT(*) FROM {ts_fqn}{where_sql}"), params
+        ).scalar() or 0)
         req.progress = 5
         db.commit()
 
@@ -142,13 +149,47 @@ def _execute(request_id):
         interval_seconds = _parse_interval(req.sampling_interval) if req.sampling_method == "downsample" else 0
         last_timestamps = {}  # tag_name별 마지막 기록 시각
 
+        # dict-like row wrapper — attribute access 로 기존 로직 재사용
+        class _Row:
+            __slots__ = ("id", "tsdb_id", "measurement", "tag_name", "connector_type",
+                         "connector_id", "pipeline_id", "value", "value_str", "data_type",
+                         "unit", "quality", "tags", "timestamp", "created_at", "tenant_id")
+            def __init__(self, rec):
+                (self.id, self.tsdb_id, self.measurement, self.tag_name,
+                 self.connector_type, self.connector_id, self.pipeline_id,
+                 self.value, self.value_str, self.data_type,
+                 self.unit, self.quality, self.tags,
+                 self.timestamp, self.created_at, self.tenant_id) = rec
+            def to_dict(self):
+                return {
+                    "id": self.id,
+                    "tsdbId": self.tsdb_id,
+                    "measurement": self.measurement or "",
+                    "tagName": self.tag_name or "",
+                    "connectorType": self.connector_type or "",
+                    "connectorId": self.connector_id or 0,
+                    "pipelineId": self.pipeline_id or 0,
+                    "value": self.value,
+                    "valueStr": self.value_str or "",
+                    "dataType": self.data_type or "",
+                    "unit": self.unit or "",
+                    "quality": self.quality if self.quality is not None else 100,
+                    "tags": self.tags or {},
+                    "timestamp": self.timestamp.isoformat() if hasattr(self.timestamp, "isoformat") else (self.timestamp or ""),
+                    "createdAt": self.created_at.isoformat() if hasattr(self.created_at, "isoformat") else (self.created_at or ""),
+                }
+
         while offset < total_count:
-            chunk = q.offset(offset).limit(CHUNK_SIZE).all()
+            page_params = dict(params, chunk=CHUNK_SIZE, off=offset)
+            chunk = db.execute(_sql(
+                f"SELECT {cols_sql} FROM {ts_fqn}{where_sql} "
+                f"ORDER BY timestamp ASC LIMIT :chunk OFFSET :off"
+            ), page_params).fetchall()
             if not chunk:
                 break
 
-            for row in chunk:
-                # 다운샘플링: 간격 이내 데이터 건너뛰기
+            for rec in chunk:
+                row = _Row(rec)
                 if req.sampling_method == "downsample" and interval_seconds > 0:
                     tag_key = row.tag_name
                     if tag_key in last_timestamps:
@@ -157,13 +198,11 @@ def _execute(request_id):
                             continue
                     last_timestamps[tag_key] = row.timestamp
 
-                # 랜덤 샘플링
                 if req.sampling_method == "random":
                     ratio = req.sampling_ratio or 1.0
                     if random.random() > ratio:
                         continue
 
-                # 행 기록
                 if req.format == "csv":
                     csv_writer.writerow([
                         row.timestamp.isoformat() if row.timestamp else "",
@@ -180,7 +219,6 @@ def _execute(request_id):
                 elif req.format == "json":
                     json_rows.append(row.to_dict())
 
-                # 프로파일 수집
                 _update_profile(profile_data, row)
                 written_rows += 1
 
