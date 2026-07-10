@@ -601,7 +601,8 @@ def file_callback():
         collector_id = body.get("collector_id")
 
         if collector_id:
-            c = get_by_id_tenant(db, FileCollector, collector_id)
+            # scanner callback runs without auth on localhost; use direct query like MQTT/API callbacks
+            c = db.query(FileCollector).get(collector_id)
             if c:
                 from backend.services.metadata_tracker import ensure_connector_catalog
                 ensure_connector_catalog("file", collector_id, c.name)
