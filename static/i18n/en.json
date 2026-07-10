@@ -598,7 +598,7 @@
       "form_collect_poll": "Poll (Periodic Polling)",
       "form_polling_interval_sec": "Polling Interval (sec)",
       "form_encoding": "Encoding",
-      "form_post_action": "Post-Processing Action",
+      "form_post_action": "Post-Collection Remote File Action",
       "form_post_keep": "Keep (Preserve original)",
       "form_post_move": "Move (Archive)",
       "form_post_delete": "Delete",

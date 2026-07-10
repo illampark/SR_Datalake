@@ -598,7 +598,7 @@
       "form_collect_poll": "Poll (주기적 폴링)",
       "form_polling_interval_sec": "폴링 주기 (초)",
       "form_encoding": "인코딩",
-      "form_post_action": "처리 후 동작",
+      "form_post_action": "수집 후 원격 파일 처리",
       "form_post_keep": "유지 (원본 보존)",
       "form_post_move": "이동 (아카이브)",
       "form_post_delete": "삭제",
