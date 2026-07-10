@@ -453,6 +453,7 @@ def create_tag(cid):
             register_count=int(body.get("registerCount", 1)),
             data_type=body.get("dataType", "int16"),
             description=body.get("description", ""),
+            tenant_id=c.tenant_id,
         )
         db.add(tag)
         c.config_version = (c.config_version or 1) + 1
