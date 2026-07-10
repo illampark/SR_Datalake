@@ -21,6 +21,15 @@ from backend.services.minio_buckets import bucket_for
 # 파일 소스 step 타입 — start_pipeline 시 MQTT 구독을 건너뛰고 트리거 기반으로 동작
 _FILE_SOURCE_TYPES = {"import_source", "internal_file_source"}
 
+# MQTT 스트림 소스 step 타입 — bindings 기반 자동 구독으로 실제 데이터가 흘러오므로
+# process_message 로 실행할 필요가 없다. 카테고리를 분리해 processing 순회에서
+# 제외하고 소스 카운트만 처리 (미분리 시 process_message 에서 "알 수 없는 모듈 타입"
+# warning 이 매 메시지마다 발생).
+_MQTT_SOURCE_TYPES = {
+    "opcua_source", "modbus_source", "mqtt_source",
+    "api_source", "file_source", "db_source",
+}
+
 # 파일 확장자 → 연결자 import_type 매핑. run_file_source 에서 연결자 설정과
 # 실제 파일 확장자가 다를 때 fail-fast 하기 위한 용도.
 _EXT_TO_IMPORT_TYPE = {
@@ -108,6 +117,7 @@ def start_pipeline(pipeline_id):
 
         # 스텝 정보 캐시 (소스/처리/싱크 분리). step_id 를 함께 보관해서 step 단위 통계 갱신.
         source_steps = []
+        mqtt_source_steps = []
         step_configs = []
         sink_configs = []
         step_stats = {}
@@ -122,6 +132,8 @@ def start_pipeline(pipeline_id):
             step_stats[st.id] = {"processed": 0, "errors": 0, "dropped": 0, "last_at": None}
             if st.module_type in _FILE_SOURCE_TYPES:
                 source_steps.append(entry)
+            elif st.module_type in _MQTT_SOURCE_TYPES:
+                mqtt_source_steps.append(entry)
             elif st.module_type in SINK_REGISTRY:
                 sink_configs.append(entry)
             else:
@@ -132,7 +144,7 @@ def start_pipeline(pipeline_id):
 
         _running_pipelines[pipeline_id] = {
             "name": p.name,
-            "sources": source_steps,
+            "sources": source_steps + mqtt_source_steps,
             "steps": step_configs,
             "sinks": sink_configs,
             "source_mode": source_mode,
