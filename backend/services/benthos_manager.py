@@ -431,17 +431,97 @@ def test_modbus_connection(modbus_type, host=None, port=502, serial_port=None,
 
 # ── API-specific helpers ──────────────────────
 
+def _api_first_endpoint(connector):
+    """Return (path, tagName) of the first enabled endpoint, or (None, None)."""
+    for ep in (connector.endpoints or []):
+        if getattr(ep, "enabled", True):
+            return ep.path or "/", ep.tag_name or ""
+    return None, None
+
+
 def build_api_stream_config(connector, callback_url=None):
-    """
-    Build a Benthos stream config for an API connector.
-    Uses generate input to poll API endpoints at the configured schedule interval.
+    """Build a Benthos stream that periodically GETs an API endpoint.
+
+    Uses generate as a ticker + http processor to make the actual HTTP call.
+    Response is exposed as root._raw_str / root._raw_json so the Flask callback
+    can extract per-endpoint values via response_path (jsonPath).
     """
     cfg = connector.config or {}
-    # Parse cron schedule to approximate interval in seconds
     schedule = connector.schedule or "*/5 * * * *"
     interval_sec = _parse_cron_interval(schedule)
 
-    # Build endpoint list for metadata
+    ep_path, ep_tag = _api_first_endpoint(connector)
+    if not ep_path:
+        # No endpoint yet — degrade to tick-only (no HTTP call)
+        stream_cfg = {
+            "input": {
+                "generate": {
+                    "mapping": 'root = {"noop": true}',
+                    "interval": "%ds" % interval_sec,
+                }
+            },
+            "output": {"drop": {}},
+        }
+        return stream_cfg
+
+    full_url = connector.base_url.rstrip("/") + ep_path
+
+    stream_cfg = {
+        "input": {
+            "generate": {
+                "mapping": 'root = {}',
+                "interval": "%ds" % interval_sec,
+            }
+        },
+        "pipeline": {
+            "processors": [
+                # 1) 실제 HTTP GET — 결과가 message content 로 대체됨
+                {
+                    "http": {
+                        "url": full_url,
+                        "verb": (connector.endpoints[0].method or "GET") if connector.endpoints else "GET",
+                        "timeout": "%ds" % max(1, int(getattr(connector, "timeout", 30) or 30)),
+                        "retries": 3,
+                        "retry_period": "1s",
+                    }
+                },
+                # 2) meta 부착 + raw 노출 (MQTT callback 과 동일 패턴)
+                {
+                    "mapping": (
+                        'root._meta = {\n'
+                        f'  "connector_id": {connector.id},\n'
+                        f'  "connector_name": "{connector.name}",\n'
+                        f'  "endpoint_path": "{ep_path}",\n'
+                        f'  "endpoint_tag": "{ep_tag}",\n'
+                        '  "collected_at": now()\n'
+                        '}\n'
+                        'root._raw_str = content().string()\n'
+                        'root._raw_json = content().parse_json().catch(null)'
+                    )
+                }
+            ]
+        },
+    }
+    if callback_url:
+        stream_cfg["output"] = {
+            "http_client": {
+                "url": callback_url, "verb": "POST",
+                "headers": {"Content-Type": "application/json"},
+                "max_in_flight": 64, "drop_on": [400, 404],
+                "retries": 3, "retry_period": "1s",
+            }
+        }
+    else:
+        stream_cfg["output"] = {"drop": {}}
+    return stream_cfg
+
+
+def _legacy_build_api_stream_config(connector, callback_url=None):
+    """(legacy) tick-only stream — kept for reference."""
+    cfg = connector.config or {}
+    schedule = connector.schedule or "*/5 * * * *"
+    interval_sec = _parse_cron_interval(schedule)
+
     endpoint_paths = []
     if connector.endpoints:
         endpoint_paths = [e.path for e in connector.endpoints if e.enabled]

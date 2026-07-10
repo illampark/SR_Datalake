@@ -487,6 +487,7 @@ def create_endpoint(cid):
             enabled=body.get("enabled", True),
             description=body.get("description", ""),
         )
+        inject_tenant(ep)
         db.add(ep)
         db.commit()
         db.refresh(ep)
@@ -553,50 +554,97 @@ def summary():
 # ──────────────────────────────────────────────
 # API-016: POST /api/connectors/api/callback — Benthos 데이터 콜백
 # ──────────────────────────────────────────────
+def _extract_json_path(data, path):
+    """단순 dot-notation JSONPath. ``$.a.b`` / ``a.b`` / ``a[0].b`` 지원."""
+    if not path:
+        return data
+    p = path.lstrip("$").lstrip(".")
+    cur = data
+    for raw in p.split("."):
+        if not raw:
+            continue
+        key = raw
+        idx = None
+        if "[" in key and key.endswith("]"):
+            key, rest = key.split("[", 1)
+            try:
+                idx = int(rest[:-1])
+            except ValueError:
+                idx = None
+        if key:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(key)
+        if idx is not None:
+            if not isinstance(cur, list) or idx >= len(cur):
+                return None
+            cur = cur[idx]
+        if cur is None:
+            return None
+    return cur
+
+
 @api_bp.route("/callback", methods=["POST"])
 def message_callback():
-    """
-    Benthos 스트림에서 수집된 데이터를 수신하고,
-    커넥터 통계를 업데이트한 후 MQTT raw 토픽으로 발행하여
-    파이프라인에서 사용할 수 있도록 연결한다.
+    """Benthos http processor 로 수집한 payload 를 endpoint 별 tag 로 sdl/raw/api 에 발행.
+
+    body 구조 (build_api_stream_config 참고):
+      { <원본 API 응답 필드>, _meta: {...}, _raw_str, _raw_json }
+    - endpoint.response_path 가 있으면 payload 에서 그 값만 추출해 발행 (값 하나)
+    - 비어있으면 원본 응답 전체 (JSON) 를 발행
     """
     db = _db()
     try:
-        body = request.get_json(force=True)
-        meta = body.get("_meta", {})
+        body = request.get_json(force=True) or {}
+        meta = body.get("_meta") or {}
         connector_id = meta.get("connector_id")
-
         if not connector_id:
             return "", 200
 
-        c = get_by_id_tenant(db, ApiConnector, connector_id)
+        # Benthos callback 은 auth 없이 localhost 로 호출되므로 g.tenant_id 사용 불가.
+        # 직접 조회 (MQTT callback 과 동일 패턴).
+        c = db.query(ApiConnector).get(connector_id)
         if not c:
             return "", 200
 
         from backend.services.metadata_tracker import ensure_connector_catalog
         ensure_connector_catalog("api", connector_id, c.name)
 
-        # 통계 업데이트
+        # 원본 API 응답 재구성 — Benthos processor 가 추가한 _meta/_raw_* 필드 제거
+        raw_json = body.get("_raw_json")
+        if raw_json is None:
+            raw_json = {k: v for k, v in body.items()
+                        if not k.startswith("_")}
+
         c.request_count = (c.request_count or 0) + 1
         c.success_count = (c.success_count or 0) + 1
         c.last_called_at = datetime.utcnow()
         c.last_status_code = 200
 
-        # 각 활성 엔드포인트에 대해 MQTT raw 토픽 발행
-        # 이를 통해 PipelineBinding(connector_type="api")이 자동으로 수신
         for ep in c.endpoints:
             if not ep.enabled:
                 continue
-            value = body  # 전체 응답을 값으로 전달
-            mqtt_manager.publish_raw(
-                "api", connector_id, ep.tag_name, value,
-                data_type=ep.data_type,
-            )
+            rp = (ep.response_path or "").strip()
+            if rp:
+                if raw_json is None:
+                    continue
+                value = _extract_json_path(raw_json, rp)
+                if value is None:
+                    continue
+            else:
+                value = raw_json
+            try:
+                mqtt_manager.publish_raw(
+                    "api", connector_id, ep.tag_name, value,
+                    data_type=ep.data_type or "string",
+                )
+            except Exception:
+                pass
 
         db.commit()
         return "", 200
     except Exception:
-        return "", 200  # Benthos 재시도 방지를 위해 항상 200 반환
+        return "", 200  # Benthos 재시도 방지를 위해 항상 200
     finally:
         db.close()
 
