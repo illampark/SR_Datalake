@@ -541,7 +541,8 @@ def message_callback():
         if not connector_id:
             return "", 200
 
-        c = get_by_id_tenant(db, DbConnector, connector_id)
+        # Benthos callback runs without auth on localhost; use direct query like MQTT/API/File callbacks
+        c = db.query(DbConnector).get(connector_id)
         if not c:
             return "", 200
 
