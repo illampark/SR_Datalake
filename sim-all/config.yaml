@@ -1,0 +1,53 @@
+# sim-all — 6종 커넥터 시뮬레이터 통합 설정
+# 각 sim on/off + 주기·엔드포인트
+
+asset_id: PRESS-01
+tick_interval_sec: 1.0
+
+opcua:
+  enabled: true
+  host: 0.0.0.0
+  port: 4840
+  namespace: "urn:sdl:sim"
+
+modbus:
+  enabled: true
+  host: 0.0.0.0
+  port: 5020
+  # HR addr 100~ 에 temperature/humidity/pressure/mode/cycle
+
+mqtt:
+  enabled: true
+  broker_host: sdl-mosquitto
+  broker_port: 1883
+  topic: sdl/sim/press01/A
+  publish_interval_sec: 2.0
+  include_static: true    # 첫 발행에 static 필드 포함 여부
+
+api:
+  enabled: true
+  host: 0.0.0.0
+  port: 8080
+  history_max_records: 3600
+
+db:
+  enabled: true
+  host: sdl-postgres
+  port: 5432
+  database: sdl
+  user: sdl_user
+  password: sdl_keti_2026
+  schema: sim
+  table: press01_readings
+  write_interval_sec: 10.0
+
+file:
+  enabled: true
+  minio_host: sdl-minio
+  minio_sftp_port: 8022
+  minio_user: sdladmin
+  minio_password: sdl_keti_2026
+  bucket: sim-files
+  path_prefix: press01/
+  write_interval_sec: 30.0
+  format: csv
