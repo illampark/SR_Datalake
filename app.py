@@ -71,6 +71,13 @@ app.register_blueprint(notice_bp)
 with app.app_context():
     init_db()
 
+# Multi-worker reconciler — gunicorn N-worker 프로세스 각각에서 daemon 스레드 하나가
+# DB 를 신뢰 소스로 삼아 로컬 in-memory 상태 (connector_workers._workers,
+# pipeline_engine._running_pipelines) 를 정정. Stop 요청이 다른 worker 로 라우팅되어
+# 로컬 스레드가 종료되지 않던 회귀 해소.
+from backend.services.worker_reconciler import start_once as _start_reconciler
+_start_reconciler()
+
 # Load i18n translations
 from backend.i18n import load_translations, get_translation, get_all_translations, get_current_lang
 load_translations()
