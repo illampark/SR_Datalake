@@ -47,6 +47,14 @@ def _migrate_add_columns():
         # DatasetRequest — Tier 2 단일 카탈로그 비동기 export 연결
         ("dataset_request", "catalog_id", "INTEGER", "NULL"),
         ("dataset_request", "where_clause", "TEXT", "''"),
+        # config_version — multi-worker config 전파 (e6ad44e). 모델에만 추가되고
+        # 마이그레이션이 누락되어, 기존 DB 에 신규 이미지를 올리면
+        # "column pipeline.config_version does not exist" 로 파이프라인/커넥터
+        # 조회가 전부 깨진다 (create_all 은 테이블만 만들고 컬럼은 안 채운다).
+        ("pipeline", "config_version", "INTEGER", "1"),
+        ("opcua_connector", "config_version", "INTEGER", "1"),
+        ("modbus_connector", "config_version", "INTEGER", "1"),
+        ("mqtt_connector", "config_version", "INTEGER", "1"),
     ]
     with engine.begin() as conn:
         for table, col, col_type, default in _additions:
