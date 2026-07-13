@@ -232,7 +232,7 @@ def _get_tsdb_size(db):
         conn = psycopg2.connect(
             host=tsdb.host, port=tsdb.port,
             dbname=tsdb.database_name or "postgres",
-            user="sdl_user", password="sdl_password_2025",
+            user=tsdb.username or "", password=tsdb.password or "",
             connect_timeout=5,
         )
         cur = conn.cursor()
@@ -255,8 +255,8 @@ def _get_rdbms_size(db):
         conn = psycopg2.connect(
             host=rdbms.host, port=rdbms.port,
             dbname=rdbms.database_name or "postgres",
-            user=rdbms.username or "sdl_user",
-            password=rdbms.password or "sdl_password_2025",
+            user=rdbms.username or "",
+            password=rdbms.password or "",
             connect_timeout=5,
         )
         cur = conn.cursor()

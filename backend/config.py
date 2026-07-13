@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlsplit, unquote
 
 # Flask Session
 SECRET_KEY = os.getenv("SECRET_KEY", "sdl-secret-key-2025-change-in-production")
@@ -7,6 +8,25 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+psycopg2://sdl_user:sdl_password_2025@localhost:5432/sdl"
 )
+
+
+def _db_parts(url):
+    """DATABASE_URL → (host, port, database, user, password).
+
+    내부 PostgreSQL 에 psycopg2 로 직접 붙는 경로(TSDB/RDBMS 인스턴스, 보관정책)가
+    자격증명을 각자 하드코딩하지 않고 여기서만 읽도록 하는 단일 출처.
+    """
+    s = urlsplit(url)
+    return (
+        s.hostname or "localhost",
+        s.port or 5432,
+        (s.path or "/").lstrip("/") or "postgres",
+        unquote(s.username or ""),
+        unquote(s.password or ""),
+    )
+
+
+DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD = _db_parts(DATABASE_URL)
 
 # MinIO S3-compatible Object Storage
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")

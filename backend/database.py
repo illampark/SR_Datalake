@@ -161,6 +161,45 @@ def _migrate_sdm_to_sdl():
             ), {"old": old, "new": new, "pattern": f"%{old}%"})
 
 
+def _migrate_fill_internal_storage_credentials():
+    """tenant 1 legacy 내부 스토리지(TsdbConfig/RdbmsConfig)의 빈 자격증명 백필.
+
+    tenant 1 의 default 인스턴스는 과거 password="" 로 시드되었다. INSERT 경로는
+    하드코딩 폴백 덕에 동작했지만, psycopg2 로 직접 붙는 조회 경로(카탈로그 데이터
+    조회·TSDB SQL·export·recipe)는 fe_sendauth 로 실패한다. 폴백을 제거하기 전에
+    DATABASE_URL 의 실제 자격증명으로 채워둔다.
+
+    tenant 1 로 한정 — tenant N(N>1) 은 tenant_pg 가 발급한 t_N_user / tenant_N
+    schema 로 PG 단 격리를 성립시키므로, 여기서 공유 sdl_user 로 덮어쓰면 격리가
+    깨진다. tenant N 의 빈 자격증명은 백필 대상이 아니라 tenant_pg 재발급 대상이다.
+    또한 host/database_name 이 내부 DB 와 같은 행만 — 외부 RDBMS 설정은 안 건드린다.
+    """
+    from backend import config
+
+    if not config.DB_PASSWORD:
+        return
+
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in ("tsdb_config", "rdbms_config"):
+            if not insp.has_table(table):
+                continue
+            cols = [c["name"] for c in insp.get_columns(table)]
+            if "tenant_id" not in cols:
+                continue
+            conn.execute(text(
+                f"UPDATE {table} SET username = :user, password = :pw "
+                f"WHERE tenant_id = 1 "
+                f"AND (password IS NULL OR password = '') "
+                f"AND host = :host AND database_name = :dbname"
+            ), {
+                "user": config.DB_USER,
+                "pw": config.DB_PASSWORD,
+                "host": config.DB_HOST,
+                "dbname": config.DB_NAME,
+            })
+
+
 def init_db():
     import backend.models.storage  # noqa: F401
     import backend.models.collector  # noqa: F401
@@ -188,12 +227,14 @@ def init_db():
                 Base.metadata.create_all(bind=engine)
                 _migrate_add_columns()
                 _migrate_sdm_to_sdl()
+                _migrate_fill_internal_storage_credentials()
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(0x53444C5F494E4954)"))
     else:
         Base.metadata.create_all(bind=engine)
         _migrate_add_columns()
         _migrate_sdm_to_sdl()
+        _migrate_fill_internal_storage_credentials()
 
     # 기존 커넥터에 대한 커넥터 레벨 카탈로그 일괄 생성
     try:

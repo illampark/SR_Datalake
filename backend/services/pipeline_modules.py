@@ -1052,8 +1052,8 @@ def _write_rdbms_rows(entries, pipeline_id=None):
             host = rdbms.host
             port = rdbms.port
             database = rdbms.database_name
-            username = rdbms.username or "sdl_user"
-            password = rdbms.password or "sdl_password_2025"
+            username = rdbms.username or ""
+            password = rdbms.password or ""
             schema = rdbms.schema_name or "public"
         finally:
             db.close()

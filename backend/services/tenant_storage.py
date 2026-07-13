@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from backend import config
 from backend.database import SessionLocal
 from backend.models.storage import TsdbConfig, RdbmsConfig
 from backend.services.tenant_pg import schema_for, pg_user_for
@@ -45,16 +46,19 @@ def ensure_tenant_default_storage(
         if not tsdb:
             if tenant_id == 1:
                 # T1 legacy — sdl_user / public schema 그대로.
+                # 자격증명은 DATABASE_URL 에서 가져온다. 빈 password 로 두면
+                # psycopg2 로 직접 붙는 조회 경로(카탈로그·TSDB SQL·export)가
+                # fe_sendauth 로 실패한다.
                 tsdb = TsdbConfig(
                     tenant_id=tenant_id,
                     name=tsdb_name,
                     db_type="PostgreSQL",
-                    host="postgres",
-                    port=5432,
-                    database_name="sdl",
+                    host=config.DB_HOST,
+                    port=config.DB_PORT,
+                    database_name=config.DB_NAME,
                     schema_name="public",
-                    username="sdl_user",
-                    password="",
+                    username=config.DB_USER,
+                    password=config.DB_PASSWORD,
                     status="connected",
                     retention_days=30,
                     description="SDL legacy TSDB (shared sdl_user / public.time_series_data)",
@@ -103,12 +107,12 @@ def ensure_tenant_default_storage(
                     tenant_id=tenant_id,
                     name=rdbms_name,
                     db_type="PostgreSQL",
-                    host="postgres",
-                    port=5432,
-                    database_name="sdl",
+                    host=config.DB_HOST,
+                    port=config.DB_PORT,
+                    database_name=config.DB_NAME,
                     schema_name="public",
-                    username="sdl_user",
-                    password="",
+                    username=config.DB_USER,
+                    password=config.DB_PASSWORD,
                     status="connected",
                     description="SDL legacy PostgreSQL (shared sdl_user / public)",
                 )

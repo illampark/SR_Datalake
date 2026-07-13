@@ -104,7 +104,7 @@ def _build_rdbms_url(cfg):
         driver = "mysql+pymysql"
     else:
         driver = "postgresql+psycopg2"
-    user = cfg.username or "sdl_user"
+    user = cfg.username or ""
     pw = cfg.password or ""
     host = cfg.host or "localhost"
     port = cfg.port or 5432

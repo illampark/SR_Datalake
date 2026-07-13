@@ -64,8 +64,8 @@ def _pg_connect(config):
         host=config.host,
         port=config.port,
         dbname=config.database_name or "postgres",
-        user=config.username or "sdl_user",
-        password=config.password or "sdl_password_2025",
+        user=config.username or "",
+        password=config.password or "",
         connect_timeout=config.connection_timeout or 5,
     )
 

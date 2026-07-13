@@ -274,8 +274,8 @@ def _get_tsdb_connection(tsdb_config):
             host=tsdb_config.host,
             port=tsdb_config.port,
             dbname=tsdb_config.database_name or "postgres",
-            user="sdl_user",
-            password="sdl_password_2025",
+            user=tsdb_config.username or "",
+            password=tsdb_config.password or "",
             connect_timeout=5,
         )
     except Exception as e:

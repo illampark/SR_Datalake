@@ -33,7 +33,7 @@ def _pg_connect(config):
         host=config.host,
         port=config.port,
         dbname=config.database_name or "postgres",
-        user=config.username or "sdl_user",
+        user=config.username or "",
         password=config.password or "",
         connect_timeout=5,
     )
