@@ -12,6 +12,22 @@ from backend.services.tenant_filter import filter_by_tenant, get_by_id_tenant, i
 from backend.services.minio_buckets import bucket_for
 
 file_watch_bp = Blueprint("collector_file_watch", __name__, url_prefix="/api/connectors/file")
+def _validate_target_bucket(bucket):
+    """target_bucket 이 현재 tenant 소유인지 검증. 위반 시 (msg, code) 반환."""
+    if not bucket:
+        return None
+    from backend.services.minio_buckets import parse_tenant_from_bucket
+    from backend.services.tenant_filter import _current_tenant_id
+    from flask import g as _g
+    is_super = bool(getattr(_g, "is_super", False))
+    if is_super:
+        return None
+    bt = parse_tenant_from_bucket(bucket)
+    if bt is not None and bt != _current_tenant_id():
+        return (f"target bucket 이 tenant 소유가 아닙니다: {bucket}", "INVALID_TARGET")
+    return None
+
+
 
 
 def _ok(data=None, meta=None):
@@ -151,9 +167,12 @@ def create_collector():
             archive_path=body.get("archivePath", ""),
             parser_type=body.get("parserType", "line"),
             storage_mode=body.get("storageMode", "parse"),
-            target_bucket=body.get("targetBucket", bucket_for("files")),
+            target_bucket=body.get("targetBucket") or bucket_for("files"),
             target_path_prefix=body.get("targetPathPrefix", "raw/{collector_id}/{date}/"),
         )
+        _err_bkt = _validate_target_bucket(c.target_bucket)
+        if _err_bkt:
+            return _err(_err_bkt[0], _err_bkt[1], 400)
         inject_tenant(c)
         db.add(c)
         db.commit()
@@ -224,6 +243,9 @@ def update_collector(cid):
         if "storageMode" in body:
             c.storage_mode = body["storageMode"]
         if "targetBucket" in body:
+            _err_bkt = _validate_target_bucket(body["targetBucket"])
+            if _err_bkt:
+                return _err(_err_bkt[0], _err_bkt[1], 400)
             c.target_bucket = body["targetBucket"]
         if "targetPathPrefix" in body:
             c.target_path_prefix = body["targetPathPrefix"]

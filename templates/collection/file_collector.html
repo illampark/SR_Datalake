@@ -447,9 +447,7 @@ function openAddModal() {
     '    <div class="form-group">' +
     '      <label class="form-label">' + __t('page.file_collector.form_target_bucket') + '</label>' +
     '      <select class="form-select" id="f-target-bucket">' +
-    '        <option value="sdl-files" selected>sdl-files</option>' +
-    '        <option value="sdl-archive">sdl-archive</option>' +
-    '        <option value="sdl-backup">sdl-backup</option>' +
+    '        <option value="">' + __t('page.file_collector.form_loading') + '</option>' +
     '      </select>' +
     '    </div>' +
     '    <div class="form-group">' +
@@ -491,7 +489,7 @@ function _collectForm() {
     archivePath: $('#f-archive').val() ? $('#f-archive').val().trim() : '',
     parserType: $('#f-parser').val(),
     storageMode: $('#f-storage-mode').val() || 'parse',
-    targetBucket: $('#f-target-bucket').val() || 'sdl-files',
+    targetBucket: $('#f-target-bucket').val() || '',
     targetPathPrefix: ($('#f-target-prefix').val() || '').trim() || 'raw/{collector_id}/{date}/',
   };
 }
@@ -541,7 +539,8 @@ function openEditModal(id) {
       togglePostAction();
       $('#f-archive').val(c.archivePath);
       $('#f-storage-mode').val(c.storageMode || 'parse');
-      $('#f-target-bucket').val(c.targetBucket || 'sdl-files');
+      $('#f-target-bucket').val(c.targetBucket || '');
+      _loadFileCollectorBuckets(c.targetBucket || '');
       $('#f-target-prefix').val(c.targetPathPrefix || 'raw/{collector_id}/{date}/');
       toggleStorageMode();
 
@@ -674,5 +673,32 @@ function loadPatterns() {
 }
 
 $(document).ready(function() { refreshAll(); });
+
+// tenant 별 target bucket 목록 로드 (openAdd/openEdit 후 호출)
+function _loadFileCollectorBuckets(currentBucket) {
+  var $sel = $('#f-target-bucket');
+  var cur = currentBucket || '';
+  $.getJSON('/api/storage/file/available-buckets', function(r) {
+    $sel.empty();
+    if (r && r.success && r.data && r.data.buckets && r.data.buckets.length) {
+      var found = false;
+      r.data.buckets.forEach(function(b) {
+        var sel = (b.bucket === cur) ? ' selected' : '';
+        if (b.bucket === cur) found = true;
+        $sel.append('<option value="' + escAttr(b.bucket) + '"' + sel + '>' +
+          escHtml(b.bucket) + '</option>');
+      });
+      if (cur && !found) {
+        $sel.prepend('<option value="' + escAttr(cur) + '" selected disabled>' +
+          escHtml(cur) + ' (권한 없음 — 재선택 필요)</option>');
+      }
+      // 신규 추가 시 selected 없으면 첫 옵션 선택
+      if (!cur && r.data.buckets.length > 0) {
+        $sel.val(r.data.buckets[0].bucket);
+      }
+    }
+  });
+}
+
 </script>
 {% endblock %}

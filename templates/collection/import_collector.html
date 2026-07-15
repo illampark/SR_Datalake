@@ -153,8 +153,7 @@
         <div class="form-group" id="grp-bucket" style="display:none">
           <label>{{ t('page.import_collector.lbl_target_bucket') }}</label>
           <select class="form-select" id="f-targetBucket">
-            <option value="sdl-files">sdl-files</option>
-            <option value="sdl-archive">sdl-archive</option>
+            <option value="">Loading...</option>
           </select>
         </div>
         <div class="form-group">
@@ -730,6 +729,7 @@ function onTargetTypeChange(){
     (_targets.rdbms||[]).forEach(function(r){$sel.append('<option value="'+r.id+'">'+escHtml(r.name)+' ('+r.dbType+')</option>');});
   } else {
     $('#grp-bucket').show();
+    _loadImportBuckets($('#f-targetBucket').data('current') || '');
   }
   // target=file은 MinIO에 저장되어 파이프라인이 직접 읽을 수 있으므로 MQTT 발행 불필요
   if(tt==='file'){
@@ -785,6 +785,7 @@ function openEditModal(id){
     $('#f-measurement').val(c.targetMeasurement);
     $('#f-targetTable').val(c.targetTable);
     $('#f-targetBucket').val(c.targetBucket);
+    _loadImportBuckets(c.targetBucket);
     $('#f-publishMqtt').prop('checked', c.publishMqtt);
     $('#f-sheetName').val(c.sheetName||'');
     $('#f-headerRow').val(c.headerRow||1);
@@ -1349,5 +1350,32 @@ $(function(){
   loadList();
   loadLegacyBanner();
 });
+
+// tenant 별 target bucket 목록 로드
+function _loadImportBuckets(currentBucket) {
+  var $sel = $('#f-targetBucket');
+  var cur = currentBucket || $sel.val() || '';
+  $sel.data('current', cur);
+  $.getJSON('/api/storage/file/available-buckets', function(r) {
+    $sel.empty();
+    if (r && r.success && r.data && r.data.buckets && r.data.buckets.length) {
+      var found = false;
+      r.data.buckets.forEach(function(b) {
+        var sel = (b.bucket === cur) ? ' selected' : '';
+        if (b.bucket === cur) found = true;
+        $sel.append('<option value="' + escAttr(b.bucket) + '"' + sel + '>' +
+          escHtml(b.bucket) + '</option>');
+      });
+      if (cur && !found) {
+        $sel.prepend('<option value="' + escAttr(cur) + '" selected disabled>' +
+          escHtml(cur) + ' (권한 없음 — 재선택 필요)</option>');
+      }
+      if (!cur && r.data.buckets.length > 0) {
+        $sel.val(r.data.buckets[0].bucket);
+      }
+    }
+  });
+}
+
 </script>
 {% endblock %}

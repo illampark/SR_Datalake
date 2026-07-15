@@ -25,6 +25,29 @@ import json as _json   # cleanup 진행 파일(_cleanup_progress_*) 직렬화용
 file_bp = Blueprint("storage_file", __name__, url_prefix="/api/storage/file")
 
 
+@file_bp.route("/available-buckets", methods=["GET"])
+def list_available_buckets():
+    """현재 tenant 가 target 으로 쓸 수 있는 bucket 목록 (ROLES 5종).
+
+    파일 수집기 target_bucket / 데이터 가져오기 targetBucket /
+    파이프라인 internal_file_sink bucket 이 공통 사용.
+    """
+    from backend.services.minio_buckets import all_buckets_for, ROLES
+    from backend.services.tenant_filter import _current_tenant_id
+    tid = _current_tenant_id()
+    names = all_buckets_for(tid)
+    return jsonify({
+        "success": True,
+        "data": {
+            "buckets": [
+                {"bucket": name, "role": role, "label": name}
+                for role, name in zip(ROLES, names)
+            ]
+        },
+        "error": None,
+    })
+
+
 def _ok(data=None, meta=None):
     resp = {"success": True, "data": data, "error": None}
     if meta:
