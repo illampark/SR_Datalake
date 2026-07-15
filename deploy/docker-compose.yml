@@ -127,23 +127,40 @@ services:
     networks:
       - sdl-net
 
-  # ── Modbus TCP simulator (데모/검증용 — 실 디바이스 없이 폴링 테스트) ──
-  # 내부 네트워크 전용 (host port 매핑 없음). sdl-app 에서 modbus-sim:5020 으로 접속.
-  modbus-sim:
-    image: sdl-app:latest
-    container_name: modbus-sim
+  # ── sim-all: 6종 커넥터 통합 시뮬레이터 (OPC-UA/Modbus/MQTT/DB/File/API) ──
+  # 구 modbus-sim / opcua-sim 을 대체. 공유 SimState 로 인터페이스 간 데이터 일관성 확보.
+  # 내부 네트워크 전용. sdl-app 에서:
+  #   OPC-UA  opc.tcp://sim-all:4840   Modbus  sim-all:5020   API  http://sim-all:8080
+  #   MQTT    sdl-mosquitto 토픽 sdl/sim/press01/A
+  # DGX 로컬 배포 (git 미커밋) — 자격증명은 DGX 값으로 env override.
+  sim-all:
+    image: sim-all:latest
+    container_name: sim-all
     restart: unless-stopped
-    entrypoint: ["python3", "-u", "/app/tools/simulators/modbus_sim.py"]
-    networks:
-      - sdl-net
-
-  # ── OPC-UA simulator (데모/검증용) ──
-  # sdl-app 에서 opc.tcp://opcua-sim:4840/sdl/server/ 로 접속.
-  opcua-sim:
-    image: sdl-app:latest
-    container_name: opcua-sim
-    restart: unless-stopped
-    entrypoint: ["python3", "-u", "/app/tools/simulators/opcua_sim.py"]
+    environment:
+      MQTT_HOST: sdl-mosquitto
+      MQTT_PORT: "1883"
+      DB_HOST: sdl-postgres
+      DB_PORT: "5432"
+      DB_NAME: sdl
+      DB_USER: sdl_user
+      DB_PASS: sdl_password_2025
+      DB_SCHEMA: sim
+      MINIO_HOST: sdl-minio
+      MINIO_SFTP_PORT: "8022"
+      MINIO_USER: sdladmin
+      MINIO_PASS: sdladmin1234
+      MINIO_BUCKET: sim-files
+    depends_on:
+      - postgres
+      - minio
+      - mosquitto
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - sdl-net
 
