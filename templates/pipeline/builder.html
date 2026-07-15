@@ -1598,10 +1598,8 @@ function _sinkFormHtml(moduleType, cfg) {
     case 'internal_file_sink':
       return '<div class="form-group">' +
         '<label class="form-label">' + __t('page.builder.sink_bucket') + ' <span class="text-danger">*</span></label>' +
-        '<select class="form-select" id="f-sink-bucket">' +
-        '<option value="sdl-files"' + ((c.bucket || 'sdl-files') === 'sdl-files' ? ' selected' : '') + '>sdl-files</option>' +
-        '<option value="sdl-archive"' + (c.bucket === 'sdl-archive' ? ' selected' : '') + '>sdl-archive</option>' +
-        '<option value="sdl-backup"' + (c.bucket === 'sdl-backup' ? ' selected' : '') + '>sdl-backup</option>' +
+        '<select class="form-select" id="f-sink-bucket" data-current="' + escAttr(c.bucket || '') + '">' +
+        '<option value="">' + __t('page.builder.connector_loading') + '</option>' +
         '</select>' +
         '<div class="form-hint">' + __t('page.builder.sink_bucket_hint') + '</div>' +
         '</div>' +
@@ -1768,12 +1766,35 @@ function _loadRdbmsInstances(selectedId) {
 }
 
 function _initFileSinkForm() {
-  // 파일 싱크는 정적 폼이므로 추가 로딩 없음 — 기본값 확인만
   setTimeout(function() {
     if (!$('#f-sink-pathPrefix').val()) {
       $('#f-sink-pathPrefix').val('pipeline/');
     }
   }, 50);
+  // tenant 별 bucket 목록을 API 로 동적 로드
+  var $sel = $('#f-sink-bucket');
+  var current = $sel.data('current') || '';
+  $.getJSON('/api/pipeline/available-buckets', function(r) {
+    $sel.empty();
+    if (r && r.success && r.data && r.data.buckets && r.data.buckets.length) {
+      var found = false;
+      r.data.buckets.forEach(function(b) {
+        var sel = (b.bucket === current) ? ' selected' : '';
+        if (b.bucket === current) found = true;
+        $sel.append('<option value="' + escAttr(b.bucket) + '"' + sel + '>' +
+          escHtml(b.bucket) + '</option>');
+      });
+      // 편집 모드에서 기존 bucket 이 목록에 없으면 (다른 tenant 잔재) 경고 옵션 추가
+      if (current && !found) {
+        $sel.prepend('<option value="' + escAttr(current) + '" selected disabled>' +
+          escHtml(current) + ' (권한 없음 — 재선택 필요)</option>');
+      }
+    } else {
+      $sel.html('<option value="">' + __t('page.builder.no_connectors_option') + '</option>');
+    }
+  }).fail(function() {
+    $sel.html('<option value="">' + __t('page.builder.connector_load_fail') + '</option>');
+  });
 }
 
 function _collectSinkConfig(moduleType) {
@@ -1820,7 +1841,7 @@ function _collectSinkConfig(moduleType) {
       };
     case 'internal_file_sink':
       return {
-        bucket: $('#f-sink-bucket').val() || 'sdl-files',
+        bucket: $('#f-sink-bucket').val() || '',
         pathPrefix: $('#f-sink-pathPrefix').val().trim() || 'pipeline/',
         fileFormat: $('#f-sink-fileFormat').val() || 'jsonl',
         fileNamePattern: $('#f-sink-fileNamePattern').val().trim() || 'pipeline_{pipeline_id}_{date}',

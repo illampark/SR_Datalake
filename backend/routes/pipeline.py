@@ -101,6 +101,25 @@ def _enrich_bindings(db, bindings):
 # ══════════════════════════════════════════════
 
 # PIP-001: GET /api/pipeline — 목록
+@pipeline_bp.route("/available-buckets", methods=["GET"])
+def list_available_buckets():
+    """internal_file_sink 대상 bucket 목록 — 현재 tenant 소유만.
+
+    ROLES 5종 (files/archive/backup/exports/imports) 을 tenant 별 이름으로 반환.
+    builder UI 의 sink bucket select 를 채우기 위한 endpoint.
+    """
+    from backend.services.minio_buckets import all_buckets_for, ROLES
+    from backend.services.tenant_filter import _current_tenant_id
+    tid = _current_tenant_id()
+    names = all_buckets_for(tid)
+    return _ok({
+        "buckets": [
+            {"bucket": name, "role": role, "label": name}
+            for role, name in zip(ROLES, names)
+        ],
+    })
+
+
 @pipeline_bp.route("", methods=["GET"])
 def list_pipelines():
     db = _db()
