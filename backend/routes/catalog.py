@@ -970,13 +970,23 @@ def _query_pipeline_rdbms(db, c, page, size, date_from, date_to, filters=None, w
     except Exception as e:
         # PostgreSQL statement_timeout → SQLSTATE 57014 (psycopg2 QueryCanceledError)
         msg = str(e)
-        if "57014" in msg or "canceling statement" in msg.lower() or "statement timeout" in msg.lower():
+        low = msg.lower()
+        if "57014" in msg or "canceling statement" in low or "statement timeout" in low:
             return _err(
                 "조회가 30초 안에 완료되지 못했습니다. 기간/조건 필터(WHERE)로 범위를 좁혀주세요.",
                 "QUERY_TIMEOUT", 504,
             )
+        # 테이블 미존재: PG SQLSTATE 42P01 / MySQL 1146 / undefinedtable / does not exist
+        # sink 파이프라인이 아직 첫 write 를 안 했으면 테이블이 없다.
+        if ("42p01" in low or "1146" in msg or "undefinedtable" in low
+                or "doesn\'t exist" in low or "does not exist" in low):
+            return _err(
+                f'싱크 대상 테이블 "{table_name}" 이 아직 생성되지 않았습니다. '
+                '파이프라인이 첫 데이터를 write 하면 자동으로 생성됩니다.',
+                "TABLE_NOT_YET_CREATED", 404,
+            )
         _log.error("RDBMS 싱크 조회 실패 (rdbms=%d, table=%s): %s", rdbms_id, table_name, e)
-        return _err("외부 DB 연결/조회에 실패했습니다.", "RDBMS_ERROR")
+        return _err(f"외부 DB 연결/조회에 실패했습니다: {msg[:200]}", "RDBMS_ERROR")
 
     return _ok({
         "catalog": {"id": c.id, "name": c.name, "tagName": c.tag_name,
