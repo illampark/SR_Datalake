@@ -48,6 +48,13 @@ def _validate_step_config_xref(db, steps):
             bt = parse_tenant_from_bucket(cfg["bucket"])
             if bt is not None and bt != cur_tid and not is_super:
                 return f"bucket {cfg['bucket']} 권한 없음", "FORBIDDEN", 403
+        elif mt in ("external_tsdb_sink", "external_rdbms_sink",
+                    "external_kafka_sink", "external_messaging_sink",
+                    "external_file_sink") and cfg.get("connection_id"):
+            from backend.models.integration import ExternalConnection
+            if not get_by_id_tenant(db, ExternalConnection, cfg["connection_id"]):
+                return (f"external connection {cfg['connection_id']} 없거나 권한 없음",
+                        "FORBIDDEN", 403)
     return None
 
 
