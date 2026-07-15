@@ -29,6 +29,34 @@ from backend.services.minio_buckets import bucket_for
 logger = logging.getLogger(__name__)
 import_bp = Blueprint("collector_import", __name__, url_prefix="/api/connectors/import")
 
+def _validate_target_ownership(db, target_type, target_id, target_bucket):
+    """target_id/bucket 이 현재 tenant 소유인지 검증.
+
+    - target_type=tsdb: target_id 가 tenant filter 로 조회 가능해야 함
+    - target_type=rdbms: target_id 가 tenant filter 로 조회 가능해야 함
+    - target_type=file: target_bucket 이 현재 tenant bucket 이어야 함
+    위반 시 (msg, code) 반환, 정상이면 None.
+    """
+    from backend.services.minio_buckets import parse_tenant_from_bucket
+    from backend.services.tenant_filter import _current_tenant_id, filter_by_tenant
+    from backend.models.storage import TsdbConfig, RdbmsConfig
+
+    if target_type == "tsdb" and target_id:
+        exists = filter_by_tenant(db.query(TsdbConfig), TsdbConfig).filter_by(id=target_id).first()
+        if not exists:
+            return (f"target tsdb id={target_id} 이 tenant 소유가 아닙니다.", "INVALID_TARGET")
+    elif target_type == "rdbms" and target_id:
+        exists = filter_by_tenant(db.query(RdbmsConfig), RdbmsConfig).filter_by(id=target_id).first()
+        if not exists:
+            return (f"target rdbms id={target_id} 이 tenant 소유가 아닙니다.", "INVALID_TARGET")
+    elif target_type == "file" and target_bucket:
+        bt = parse_tenant_from_bucket(target_bucket)
+        if bt is not None and bt != _current_tenant_id():
+            return (f"target file bucket 이 tenant 소유가 아닙니다: {target_bucket}", "INVALID_TARGET")
+    return None
+
+
+
 # 업로드 임시 저장: 디스크 기반 (gunicorn 멀티 워커 간 공유)
 # 인메모리 dict는 워커별로 분리되어 /upload → /preview /execute 시 데이터 유실됨
 import json
@@ -236,6 +264,16 @@ def create_import():
             if body.get("sourceMode") == "minio_bucket" and not sb:
                 return _err("sourceBucket 은 minio_bucket 모드에서 필수입니다.", "VALIDATION")
 
+        # target_id/bucket cross-tenant 저장 차단 (다른 tenant 저장소로 sink 방지)
+        _err_tgt = _validate_target_ownership(
+            db,
+            body.get("targetType", "tsdb"),
+            body.get("targetId"),
+            body.get("targetBucket"),
+        )
+        if _err_tgt:
+            return _err(_err_tgt[0], _err_tgt[1], 400)
+
         c = ImportCollector(
             name=name,
             description=body.get("description", ""),
@@ -359,6 +397,15 @@ def update_import(cid):
         for api_key, db_key in field_map.items():
             if api_key in body:
                 setattr(c, db_key, body[api_key])
+
+        # target_id/bucket 변경 시 cross-tenant 저장 차단 (최종 상태 기준 검증)
+        if any(k in body for k in ("targetType", "targetId", "targetBucket")):
+            _err_tgt = _validate_target_ownership(
+                db, c.target_type, c.target_id, c.target_bucket,
+            )
+            if _err_tgt:
+                db.rollback()
+                return _err(_err_tgt[0], _err_tgt[1], 400)
 
         # target=file은 MinIO 저장만 사용 — MQTT 재발행 강제 비활성화
         if c.target_type == "file":
@@ -1022,8 +1069,9 @@ def list_targets():
     db = _db()
     try:
         from backend.models.storage import TsdbConfig, RdbmsConfig
-        tsdbs = db.query(TsdbConfig).all()
-        rdbmss = db.query(RdbmsConfig).all()
+        # 다른 tenant 소유 저장소 노출 차단
+        tsdbs = filter_by_tenant(db.query(TsdbConfig), TsdbConfig).all()
+        rdbmss = filter_by_tenant(db.query(RdbmsConfig), RdbmsConfig).all()
 
         return _ok({
             "tsdb": [{"id": t.id, "name": t.name, "dbType": t.db_type} for t in tsdbs],
