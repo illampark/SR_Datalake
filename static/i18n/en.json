@@ -627,7 +627,8 @@
       "toast_path_test_fail": "Path test failed",
       "placeholder_name_example": "e.g. FILE-LOG-001",
       "btn_cross_search": "Cross-Tag Search",
-      "stat_running": "Running"
+      "stat_running": "Running",
+      "form_loading": "Loading..."
     },
     "import_collector": {
       "title": "Data Import",

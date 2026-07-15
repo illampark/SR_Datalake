@@ -311,6 +311,10 @@ function toggleAuthType() {
 function toggleStorageMode() {
   var mode = $('#f-storage-mode').val();
   $('#direct-mode-group').toggle(mode === 'direct');
+  // direct 로 전환되면 tenant 별 bucket 목록 로드 (placeholder 대체)
+  if (mode === 'direct' && typeof _loadFileCollectorBuckets === 'function') {
+    _loadFileCollectorBuckets($('#f-target-bucket').val() || '');
+  }
 }
 
 function openAddModal() {
