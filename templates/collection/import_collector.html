@@ -505,6 +505,7 @@ var _targets = {tsdb:[], rdbms:[], file:[]};
 var _pollTimer = null;
 
 function escHtml(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function escAttr(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function fmt(n){return n!=null?Number(n).toLocaleString():'-';}
 function fmtSize(b){if(!b)return'-';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';if(b<1073741824)return(b/1048576).toFixed(1)+'MB';return(b/1073741824).toFixed(2)+'GB';}
 var UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2GB — 서버 한도와 일치
