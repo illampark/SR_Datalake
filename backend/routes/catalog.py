@@ -3509,8 +3509,16 @@ def download_export_file(request_id):
                 except Exception:
                     pass
 
+        # Content-Disposition 은 ASCII 헤더 — 한글/특수문자 파일명은 잘못된 HTTP
+        # 헤더가 되어 gunicorn 이 거부(400/502)한다. RFC 6266: ASCII fallback +
+        # filename*=UTF-8'' 퍼센트 인코딩 병행.
+        from urllib.parse import quote as _urlquote
+        ascii_name = "".join(ch if (ch.isalnum() or ch in "-_.") else "_" for ch in download_name) or "download"
+        utf8_name = _urlquote(download_name)
         headers = {
-            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "Content-Disposition": (
+                f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
+            ),
             "X-Accel-Buffering": "no",
             "Cache-Control": "no-cache",
         }
