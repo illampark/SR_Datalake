@@ -206,6 +206,6 @@ def get_pg_info(tenant_id: int) -> dict:
         "host": "postgres",
         "port": 5432,
         "databaseRdbms": "sdl",
-        "databaseTsdb": "sdl_tsdb",
+        "databaseTsdb": "sdl",  # 단일 DB(sdl) + schema 격리. 폐기된 별도 DB(sdl_tsdb) 아님
         "isLegacy": False,
     }

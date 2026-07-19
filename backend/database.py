@@ -170,17 +170,26 @@ def _migrate_sdm_to_sdl():
 
 
 def _migrate_fill_internal_storage_credentials():
-    """tenant 1 legacy 내부 스토리지(TsdbConfig/RdbmsConfig)의 빈 자격증명 백필.
+    """tenant 1 legacy 내부 스토리지(TsdbConfig/RdbmsConfig) 설정 정합화.
 
-    tenant 1 의 default 인스턴스는 과거 password="" 로 시드되었다. INSERT 경로는
-    하드코딩 폴백 덕에 동작했지만, psycopg2 로 직접 붙는 조회 경로(카탈로그 데이터
-    조회·TSDB SQL·export·recipe)는 fe_sendauth 로 실패한다. 폴백을 제거하기 전에
-    DATABASE_URL 의 실제 자격증명으로 채워둔다.
+    tenant 1 의 default 인스턴스는 과거 잘못 시드되어 두 종류의 드리프트가 있다.
+
+    (A) database_name 오설정: 초기 Phase 8 설계가 TSDB 를 별도 DB `sdl_tsdb` 로
+        분리하려다 폐기되고 "sdl DB 내 schema 격리"로 바뀌었으나, 기존 tenant 1
+        TsdbConfig 행이 database_name='sdl_tsdb'(빈 DB) 로 남았다. psycopg2 로
+        이 값에 직접 붙는 조회 경로(storage_tsdb query·retention)가
+        `relation "time_series_data" does not exist` 로 실패한다.
+        → 실데이터가 있는 config.DB_NAME(=sdl) 으로 교정. schema 격리는 유지.
+
+    (B) 빈 자격증명: password="" 로 시드된 행. INSERT 경로는 (구)하드코딩 폴백으로
+        동작했지만 직접 조회 경로는 fe_sendauth 로 실패한다. 폴백 제거 후를 위해
+        DATABASE_URL 자격증명으로 채운다.
 
     tenant 1 로 한정 — tenant N(N>1) 은 tenant_pg 가 발급한 t_N_user / tenant_N
     schema 로 PG 단 격리를 성립시키므로, 여기서 공유 sdl_user 로 덮어쓰면 격리가
     깨진다. tenant N 의 빈 자격증명은 백필 대상이 아니라 tenant_pg 재발급 대상이다.
-    또한 host/database_name 이 내부 DB 와 같은 행만 — 외부 RDBMS 설정은 안 건드린다.
+    host 가 내부 DB 와 같은 행만 — 외부 RDBMS 설정은 안 건드린다.
+    (A) 를 먼저 해야 (B) 의 database_name 매칭이 성립한다.
     """
     from backend import config
 
@@ -195,6 +204,15 @@ def _migrate_fill_internal_storage_credentials():
             cols = [c["name"] for c in insp.get_columns(table)]
             if "tenant_id" not in cols:
                 continue
+            # (A) database_name 교정: 내부 DB 를 가리키는 tenant 1 행의
+            #     database_name 이 비었거나 폐기된 'sdl_tsdb' 면 config.DB_NAME 으로.
+            conn.execute(text(
+                f"UPDATE {table} SET database_name = :dbname "
+                f"WHERE tenant_id = 1 AND host = :host "
+                f"AND (database_name IS NULL OR database_name = '' "
+                f"     OR database_name = 'sdl_tsdb')"
+            ), {"dbname": config.DB_NAME, "host": config.DB_HOST})
+            # (B) 빈 자격증명 백필 (database_name 교정 후 매칭).
             conn.execute(text(
                 f"UPDATE {table} SET username = :user, password = :pw "
                 f"WHERE tenant_id = 1 "
