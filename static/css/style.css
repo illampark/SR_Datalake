@@ -35,6 +35,26 @@
   --radius: 8px;
   --shadow: 0 1px 3px rgba(0,0,0,.08);
   --shadow-md: 0 4px 12px rgba(0,0,0,.1);
+
+  /* ── 별칭(Alias) ── 일부 템플릿이 접두사 없는/다른 이름의 변수를 사용해 왔다.
+     미정의 var 는 background/color 가 무효가 되어 요소가 "보이지 않지만 클릭됨"으로
+     렌더된다(예: 카탈로그 내보내기 버튼). 정본 변수로 매핑해 전역 일괄 교정. */
+  --primary: var(--c-primary);
+  --color-primary: var(--c-primary);
+  --info: var(--c-info);
+  --success: var(--c-success);
+  --color-success: var(--c-success);
+  --green: var(--c-success);
+  --danger: var(--c-danger);
+  --color-danger: var(--c-danger);
+  --red: var(--c-danger);
+  --warning: var(--c-warning);
+  --yellow: var(--c-warning);
+  --bg-secondary: var(--body-bg);
+  --bg-main: var(--body-bg);
+  --bg-subtle: var(--body-bg);
+  --bg-card: var(--card-bg);
+  --c-border: var(--border);
 }
 
 /* ── Reset ── */
