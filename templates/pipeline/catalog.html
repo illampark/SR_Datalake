@@ -1860,6 +1860,10 @@ function exportData(format) {
   if (from) qp.push('from=' + from);
   if (to) qp.push('to=' + to);
   if (whereClause) qp.push('where=' + encodeURIComponent(whereClause));
+  // 조회 화면의 컬럼 필터도 다운로드/견적에 포함 (조회 결과와 일치)
+  if (_dataSinkType === 'internal_rdbms_sink' && _rdbmsFilters && _rdbmsFilters.length) {
+    qp.push('filters=' + encodeURIComponent(JSON.stringify(_rdbmsFilters)));
+  }
   var qs = qp.join('&');
   var previewQs = qp.filter(function (p) { return !p.startsWith('format='); }).join('&');
 
@@ -1945,6 +1949,9 @@ function _doExportAsync(format) {
   if (from) payload.dateFrom = from + 'T00:00:00';
   if (to) payload.dateTo = to + 'T23:59:59';
   if (whereClause) payload.where = whereClause;
+  if (_dataSinkType === 'internal_rdbms_sink' && _rdbmsFilters && _rdbmsFilters.length) {
+    payload.filters = _rdbmsFilters;
+  }
 
   $('#ep-async-btn,#ep-download-btn').prop('disabled', true);
   $.ajax({

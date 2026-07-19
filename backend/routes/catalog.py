@@ -1146,6 +1146,39 @@ class _OffsetTooLargeError(Exception):
     """OFFSET cap 초과 — _query_pipeline_rdbms 에서 친화적 에러로 변환."""
 
 
+_ALLOWED_RDBMS_OPS = {"=", "!=", ">", "<", ">=", "<=", "LIKE", "IN"}
+
+
+def _build_rdbms_filter_conditions(filters, valid_cols):
+    """RDBMS 컬럼 필터(list of {col,op,val}) → (conditions, params) (PostgreSQL).
+
+    조회(_rdbms_read_pg)와 내보내기(_rdbms_stream_pg)가 **동일 로직**을 쓰도록 공유.
+    col 은 valid_cols 화이트리스트로 검증(SQL injection 방지), 값은 %s 파라미터화.
+    """
+    conditions, params = [], []
+    if not (filters and isinstance(filters, list)):
+        return conditions, params
+    for f in filters:
+        col = f.get("col", "")
+        op = f.get("op", "=")
+        val = f.get("val", "")
+        if col not in valid_cols or op not in _ALLOWED_RDBMS_OPS or not val:
+            continue
+        if op == "IN":
+            in_vals = [v.strip() for v in val.split(",") if v.strip()]
+            if in_vals:
+                placeholders = ", ".join(["%s"] * len(in_vals))
+                conditions.append(f'"{col}"::text IN ({placeholders})')
+                params.extend(in_vals)
+        elif op == "LIKE":
+            conditions.append(f'"{col}"::text LIKE %s')
+            params.append(f"%{val}%")
+        else:
+            conditions.append(f'"{col}"::text {op} %s')
+            params.append(val)
+    return conditions, params
+
+
 def _rdbms_read_pg(host, port, database, username, password,
                     schema, table_name, page, size, date_from, date_to, filters=None,
                     where_clause=""):
@@ -1200,35 +1233,16 @@ def _rdbms_read_pg(host, port, database, username, password,
                     conditions.append(f'"{date_col}" < %s')
                     params.append(dt_to)
 
-        # 컬럼 필터 (RDBMS 고급 필터)
-        _ALLOWED_OPS = {"=", "!=", ">", "<", ">=", "<=", "LIKE", "IN"}
+        # 컬럼 필터 (RDBMS 고급 필터) — 내보내기와 공유 헬퍼 사용
         if filters and isinstance(filters, list):
-            # 테이블 컬럼 목록 조회 (SQL injection 방지)
             cur.execute("""
                 SELECT column_name FROM information_schema.columns
                 WHERE table_schema = %s AND table_name = %s
             """, [schema or "public", table_name])
             valid_cols = {r["column_name"] for r in cur.fetchall()}
-
-            for f in filters:
-                col = f.get("col", "")
-                op = f.get("op", "=")
-                val = f.get("val", "")
-                if col not in valid_cols or op not in _ALLOWED_OPS or not val:
-                    continue
-                if op == "IN":
-                    # IN (val1, val2, ...) 처리
-                    in_vals = [v.strip() for v in val.split(",") if v.strip()]
-                    if in_vals:
-                        placeholders = ", ".join(["%s"] * len(in_vals))
-                        conditions.append(f'"{col}"::text IN ({placeholders})')
-                        params.extend(in_vals)
-                elif op == "LIKE":
-                    conditions.append(f'"{col}"::text LIKE %s')
-                    params.append(f"%{val}%")
-                else:
-                    conditions.append(f'"{col}"::text {op} %s')
-                    params.append(val)
+            f_conds, f_params = _build_rdbms_filter_conditions(filters, valid_cols)
+            conditions.extend(f_conds)
+            params.extend(f_params)
 
         if where_clause:
             conditions.append(f"({where_clause})")
@@ -1439,7 +1453,14 @@ def preview_catalog_export(cid):
 
         # 파이프라인 RDBMS sink — 외부 DB 카운트 + 샘플
         if c.connector_type == "pipeline" and c.sink_type == "internal_rdbms_sink":
-            return _preview_rdbms(db, c, date_from, date_to, where_clause)
+            filters = None
+            filters_raw = request.args.get("filters", "")
+            if filters_raw:
+                try:
+                    filters = json.loads(filters_raw)
+                except (ValueError, TypeError):
+                    filters = None
+            return _preview_rdbms(db, c, date_from, date_to, where_clause, filters)
 
         # 파이프라인 TSDB sink — tenant 스키마 카운트/샘플
         if c.connector_type == "pipeline" and c.sink_type == "internal_tsdb_sink":
@@ -1534,6 +1555,11 @@ def queue_catalog_export_async(cid):
             if not ok:
                 return _err(msg, "INVALID_WHERE")
 
+        # 조회 화면의 컬럼 필터 — 다운로드에도 동일 적용
+        column_filters = body.get("filters")
+        if not isinstance(column_filters, list):
+            column_filters = []
+
         # request_id 생성: ds-YYYYMMDD-NNN
         today_str = datetime.utcnow().strftime("%Y%m%d")
         prefix = f"ds-{today_str}-"
@@ -1561,6 +1587,7 @@ def queue_catalog_export_async(cid):
             requested_by=session.get("username", "anonymous"),
             catalog_id=cid,
             where_clause=where_clause,
+            column_filters=column_filters,
             date_from=date_from,
             date_to=date_to,
             format=fmt,
@@ -1583,8 +1610,8 @@ def queue_catalog_export_async(cid):
         db.close()
 
 
-def _preview_rdbms(db, c, date_from, date_to, where_clause=""):
-    """외부 RDBMS sink 견적 — count + sample."""
+def _preview_rdbms(db, c, date_from, date_to, where_clause="", filters=None):
+    """외부 RDBMS sink 견적 — count + sample. (다운로드와 동일 조건: filters 포함)"""
     from backend.models.storage import RdbmsConfig
     cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_rdbms_sink")
     rdbms_id = cfg.get("rdbmsId", 0)
@@ -1607,7 +1634,7 @@ def _preview_rdbms(db, c, date_from, date_to, where_clause=""):
                 rdbms.host, rdbms.port, rdbms.database_name,
                 rdbms.username or "", rdbms.password or "",
                 rdbms.schema_name or "public",
-                table_name, 1, 100, date_from, date_to, None, where_clause)
+                table_name, 1, 100, date_from, date_to, filters, where_clause)
     except Exception as e:
         return _err(f"외부 DB 견적 실패: {e}", "RDBMS_ERROR")
 
@@ -1847,11 +1874,13 @@ def _export_pipeline_tsdb(db, c, date_from, date_to, fmt):
 
 
 def _rdbms_stream_pg(host, port, database, username, password, schema,
-                      table_name, date_from, date_to, limit=0, where_clause=""):
+                      table_name, date_from, date_to, limit=0, where_clause="",
+                      filters=None):
     """PostgreSQL named server-side cursor 로 row 스트리밍.
 
     yield (columns: list[str], None) 처음 1회 → 이후 yield (None, row_dict) 반복.
     where_clause: 검증된 raw WHERE 본문(앞 'WHERE' 제외). 날짜 조건과 AND 로 결합.
+    filters: 조회 화면의 컬럼 필터([{col,op,val}]) — 조회와 동일하게 적용.
     """
     import psycopg2
     import psycopg2.extras
@@ -1895,6 +1924,20 @@ def _rdbms_stream_pg(host, port, database, username, password, schema,
                 params.append(dt.isoformat())
             except ValueError:
                 pass
+        # 컬럼 필터 (조회와 동일 로직) — valid_cols 검증 후 적용
+        if filters and isinstance(filters, list):
+            vc_cur = conn.cursor()
+            try:
+                vc_cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                """, (schema or "public", table_name))
+                valid_cols = {r[0] for r in vc_cur.fetchall()}
+            finally:
+                vc_cur.close()
+            f_conds, f_params = _build_rdbms_filter_conditions(filters, valid_cols)
+            conditions.extend(f_conds)
+            params.extend(f_params)
         if where_clause:
             conditions.append(f"({where_clause})")
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
@@ -2024,6 +2067,15 @@ def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
         if not ok:
             return _err(msg, "INVALID_WHERE")
 
+    # 조회 화면의 컬럼 필터를 다운로드에도 동일하게 적용 (조회 결과와 일치 보장)
+    filters = None
+    filters_raw = request.args.get("filters", "")
+    if filters_raw:
+        try:
+            filters = json.loads(filters_raw)
+        except (ValueError, TypeError):
+            filters = None
+
     db_type = (rdbms.db_type or "").lower()
     fname_prefix = f"pipeline_{c.pipeline_id}_{table_name}"
 
@@ -2040,6 +2092,7 @@ def _export_pipeline_rdbms(db, c, date_from, date_to, fmt):
                 rdbms.username or "", rdbms.password or "",
                 rdbms.schema_name or "public",
                 table_name, date_from, date_to, limit, where_clause,
+                filters=filters,
             )
 
     if fmt == "json":

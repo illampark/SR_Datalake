@@ -347,6 +347,7 @@ def _select_row_iterator(db, catalog, req):
             return None, None
         db_type = (rdbms.db_type or "").lower()
         where_clause = (req.where_clause or "").strip()
+        column_filters = req.column_filters or []
 
         cols_holder = {"cols": None}
 
@@ -363,6 +364,7 @@ def _select_row_iterator(db, catalog, req):
                     rdbms.username or "", rdbms.password or "",
                     rdbms.schema_name or "public",
                     table_name, date_from, date_to, 0, where_clause,
+                    filters=column_filters,
                 )
             for cols_or_none, row in stream:
                 if cols_or_none is not None:
