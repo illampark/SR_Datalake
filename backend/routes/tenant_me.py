@@ -416,7 +416,10 @@ def get_sftp_credentials():
     info["sftpPort"] = int(os.getenv("SFTP_PUBLIC_PORT", "8022"))
     info["sftpNote"] = os.getenv(
         "SFTP_PUBLIC_NOTE",
-        "SSH 터널 경유: ssh -L 8022:127.0.0.1:8022 <server>"
+        "접속 방식은 서버에 따라 다릅니다. ① 기본(프로덕션·스테이징): SSH 터널 경유 — "
+        "`ssh -L 8022:127.0.0.1:8022 <서버계정>@<서버>` 로 터널을 연 뒤 위 Host 를 "
+        "localhost 로 접속. ② 8022 가 직접 열린 서버(사내 테스트기 등): 위 Host 를 "
+        "해당 서버 IP 로 바꿔 바로 접속. 비밀번호를 모르면 아래 '재발급' 을 사용하세요."
     )
     return _ok(info)
 
