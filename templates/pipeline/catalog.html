@@ -108,16 +108,17 @@
           </label>
         </div>
       </div>
+      <div id="conn-filter-chip" class="hidden" style="padding:8px 16px;border-bottom:1px solid var(--border);"></div>
       <div class="card-body p-0">
         <div class="table-wrapper">
           <table id="catalog-table">
             <thead>
               <tr>
-                <th>{{ t('page.catalog.th_name') }}</th>
-                <th>{{ t('page.catalog.th_connector_type') }}</th>
+                <th style="cursor:pointer;" onclick="sortBy('name')">{{ t('page.catalog.th_name') }} <span class="sort-ind" data-col="name"></span></th>
+                <th style="cursor:pointer;" onclick="sortBy('connector_type')">{{ t('page.catalog.th_connector_type') }} <span class="sort-ind" data-col="connector_type"></span></th>
                 <th>{{ t('page.catalog.th_type') }}</th>
-                <th>{{ t('page.catalog.th_category') }}</th>
-                <th>{{ t('page.catalog.th_data_level') }}</th>
+                <th style="cursor:pointer;" onclick="sortBy('category')">{{ t('page.catalog.th_category') }} <span class="sort-ind" data-col="category"></span></th>
+                <th style="cursor:pointer;" onclick="sortBy('data_level')">{{ t('page.catalog.th_data_level') }} <span class="sort-ind" data-col="data_level"></span></th>
                 <th>{{ t('page.catalog.th_published') }}</th>
                 <th>{{ t('common.actions') }}</th>
               </tr>
@@ -129,7 +130,14 @@
         </div>
         <!-- Pagination -->
         <div class="d-flex align-center" style="justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);">
-          <span class="fs-12 text-muted" id="pagination-info">-</span>
+          <div class="d-flex align-center gap-8">
+            <span class="fs-12 text-muted" id="pagination-info">-</span>
+            <select id="page-size-select" class="form-select" style="width:auto;padding:3px 8px;font-size:12px;" onchange="changePageSize(this.value)">
+              <option value="15">15 / {{ t('page.catalog.per_page') }}</option>
+              <option value="50">50 / {{ t('page.catalog.per_page') }}</option>
+              <option value="100">100 / {{ t('page.catalog.per_page') }}</option>
+            </select>
+          </div>
           <div class="d-flex gap-8" id="pagination-controls"></div>
         </div>
       </div>
@@ -316,6 +324,9 @@ var API = '/api/catalog';
 var currentPage = 1;
 var pageSize = 15;
 var searchTimer = null;
+var currentSort = '';          // '' = 최신(id desc)
+var currentOrder = 'desc';
+var listConnFilter = null;     // 트리 연동 커넥터 필터 {connectorType, connectorId, label}
 
 function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function escAttr(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
@@ -383,6 +394,66 @@ function sinkTypeLabel(sinkType, connectorType) {
   return '';  // 커넥터 원천(sink 없음) → 유형 배지 생략
 }
 
+// 검색어 하이라이트 (원본 기준, 대소문자 무시)
+function hlText(text, term) {
+  text = text || '';
+  var esc = escHtml(text);
+  if (!term) return esc;
+  var lc = text.toLowerCase(), t = term.toLowerCase();
+  var idx = lc.indexOf(t);
+  if (idx < 0) return esc;
+  return escHtml(text.substring(0, idx)) +
+    '<mark>' + escHtml(text.substring(idx, idx + t.length)) + '</mark>' +
+    hlText(text.substring(idx + t.length), term);
+}
+
+// 정렬: 같은 컬럼 재클릭 시 asc/desc 토글, 다른 컬럼이면 새로 정렬(asc)
+function sortBy(col) {
+  if (currentSort === col) {
+    currentOrder = (currentOrder === 'asc') ? 'desc' : 'asc';
+  } else {
+    currentSort = col;
+    currentOrder = 'asc';
+  }
+  loadCatalogs(1);
+}
+
+function updateSortIndicators() {
+  $('.sort-ind').html('');
+  if (!currentSort) return;
+  var arrow = currentOrder === 'asc' ? '▲' : '▼';  // ▲ / ▼
+  $('.sort-ind[data-col="' + currentSort + '"]').html('<span class="text-primary fs-11">' + arrow + '</span>');
+}
+
+function changePageSize(v) {
+  pageSize = parseInt(v, 10) || 15;
+  loadCatalogs(1);
+}
+
+// 트리 연동: 커넥터 노드 클릭 → 목록을 해당 커넥터로 필터
+function setListConnectorFilter(connectorType, connectorId, label) {
+  listConnFilter = {connectorType: connectorType, connectorId: connectorId, label: label};
+  $('#filter-connector-type').val(connectorType || '');
+  renderConnFilterChip();
+  loadCatalogs(1);
+}
+
+function clearListConnectorFilter() {
+  listConnFilter = null;
+  renderConnFilterChip();
+  loadCatalogs(1);
+}
+
+function renderConnFilterChip() {
+  var $c = $('#conn-filter-chip');
+  if (!listConnFilter) { $c.addClass('hidden').html(''); return; }
+  $c.removeClass('hidden').html(
+    '<span class="badge-sm badge-primary" style="display:inline-flex;align-items:center;gap:6px;">' +
+    '<i class="fas fa-filter" style="font-size:10px;"></i>' + escHtml(listConnFilter.label || '') +
+    ' <i class="fas fa-times" style="cursor:pointer;" onclick="clearListConnectorFilter()"></i></span>'
+  );
+}
+
 /* ── Load Catalogs ── */
 function loadCatalogs(page) {
   currentPage = page || 1;
@@ -390,6 +461,12 @@ function loadCatalogs(page) {
 
   var connType = $('#filter-connector-type').val();
   if (connType) params.connector_type = connType;
+
+  // 드롭다운을 트리 필터와 다른 타입으로 바꾸면 트리 커넥터 필터(칩) 자동 해제
+  if (listConnFilter && connType !== listConnFilter.connectorType) {
+    listConnFilter = null;
+    renderConnFilterChip();
+  }
 
   var category = $('#filter-category').val();
   if (category) params.category = category;
@@ -404,6 +481,11 @@ function loadCatalogs(page) {
   if (dataLevel) params.data_level = dataLevel;
 
   if ($('#filter-published').is(':checked')) params.published = 'true';
+
+  if (currentSort) { params.sort = currentSort; params.order = currentOrder; }
+  if (listConnFilter && listConnFilter.connectorId != null) params.connector_id = listConnFilter.connectorId;
+
+  updateSortIndicators();
 
   $.getJSON(API, params, function(r) {
     if (!r.success) return;
@@ -459,9 +541,9 @@ function loadCatalogs(page) {
       $tb.append(
         '<tr>' +
         '<td>' +
-          '<div class="fw-600" style="cursor:pointer;color:var(--c-primary);" onclick="showDetail(' + item.id + ')">' + escHtml(item.name) + '</div>' +
-          '<div class="fs-11 text-muted">' + escHtml(item.description || '') + '</div>' +
-          (item.connectorDescription ? '<div class="fs-11 text-muted" style="margin-top:2px;"><i class="fas fa-plug" style="font-size:9px;opacity:.5;margin-right:3px;"></i>' + escHtml(item.connectorDescription) + '</div>' : '') +
+          '<div class="fw-600" style="cursor:pointer;color:var(--c-primary);" onclick="showDetail(' + item.id + ')">' + hlText(item.name, search) + '</div>' +
+          '<div class="fs-11 text-muted">' + hlText(item.description || '', search) + '</div>' +
+          (item.connectorDescription ? '<div class="fs-11 text-muted" style="margin-top:2px;"><i class="fas fa-plug" style="font-size:9px;opacity:.5;margin-right:3px;"></i>' + hlText(item.connectorDescription, search) + '</div>' : '') +
         '</td>' +
         '<td><i class="fas ' + icon + ' text-muted"></i> ' + escHtml(label) + '</td>' +
         '<td>' + typeCell + '</td>' +
@@ -581,6 +663,8 @@ function renderTree(rawTerm) {
         e.stopPropagation();
         $(this).find('.tree-toggle').toggleClass('open');
         $connChildren.slideToggle(150);
+        // 트리→목록 연동: 이 커넥터로 목록 필터
+        setListConnectorFilter(connType, parseInt(connId, 10), label + ' / ' + connName);
       });
 
       showItems.forEach(function(item) {

@@ -2177,7 +2177,8 @@
       "preview_truncated": "큰 파일은 앞 {n}만 표시 (전체는 다운로드 필요)",
       "preview_table_truncated": "앞 {n}행만 표시 (전체는 다운로드 필요)",
       "preview_unsupported": "미리보기를 지원하지 않는 형식입니다.",
-      "preview_open_raw": "새 탭에서 원본 열기"
+      "preview_open_raw": "새 탭에서 원본 열기",
+      "per_page": "페이지"
     },
     "tsdb": {
       "title": "시계열 DB 관리",

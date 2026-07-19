@@ -255,15 +255,20 @@ def list_catalogs():
         page = request.args.get("page", 1, type=int)
         size = request.args.get("size", get_default_page_size(), type=int)
         connector_type = request.args.get("connector_type", "")
+        connector_id = request.args.get("connector_id", type=int)
         category = request.args.get("category", "")
         search = request.args.get("search", "")
         published_only = request.args.get("published", "").lower() == "true"
         tag_scope = request.args.get("tag_scope", "")
         data_level = request.args.get("data_level", "")
+        sort = request.args.get("sort", "")
+        order = request.args.get("order", "desc").lower()
 
         q = filter_by_tenant(db.query(DataCatalog), DataCatalog)
         if connector_type:
             q = q.filter(DataCatalog.connector_type == connector_type)
+        if connector_id is not None:
+            q = q.filter(DataCatalog.connector_id == connector_id)
         if category:
             q = q.filter(DataCatalog.category == category)
         if published_only:
@@ -275,14 +280,36 @@ def list_catalogs():
         if data_level:
             q = q.filter(DataCatalog.data_level == data_level)
         if search:
+            like = f"%{search}%"
+            # 이름/설명/커넥터설명/담당자 + 사용자 검색태그(CatalogSearchTag)까지 매칭.
+            tag_ids = db.query(CatalogSearchTag.catalog_id).filter(
+                CatalogSearchTag.tag.ilike(like)
+            )
             q = q.filter(
-                (DataCatalog.name.ilike(f"%{search}%")) |
-                (DataCatalog.description.ilike(f"%{search}%")) |
-                (DataCatalog.connector_description.ilike(f"%{search}%"))
+                (DataCatalog.name.ilike(like)) |
+                (DataCatalog.description.ilike(like)) |
+                (DataCatalog.connector_description.ilike(like)) |
+                (DataCatalog.owner.ilike(like)) |
+                (DataCatalog.id.in_(tag_ids))
             )
 
         total = q.count()
-        rows = q.order_by(DataCatalog.id.desc()).offset((page - 1) * size).limit(size).all()
+
+        # 정렬: 허용 컬럼만. 기본은 최신(id desc).
+        _sort_cols = {
+            "name": DataCatalog.name,
+            "connector_type": DataCatalog.connector_type,
+            "category": DataCatalog.category,
+            "data_level": DataCatalog.data_level,
+            "updated_at": DataCatalog.updated_at,
+            "created_at": DataCatalog.created_at,
+        }
+        sort_col = _sort_cols.get(sort)
+        if sort_col is not None:
+            q = q.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+        else:
+            q = q.order_by(DataCatalog.id.desc())
+        rows = q.offset((page - 1) * size).limit(size).all()
 
         # 집계 통계 (stat 카드용) - Phase 8: 자기 tenant 만
         published_count = filter_by_tenant(

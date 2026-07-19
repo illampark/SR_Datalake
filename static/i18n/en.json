@@ -2177,7 +2177,8 @@
       "preview_truncated": "Large file — only first {n} shown (download for full content)",
       "preview_table_truncated": "Showing first {n} rows only (download for full content)",
       "preview_unsupported": "Preview not supported for this file type.",
-      "preview_open_raw": "Open raw in new tab"
+      "preview_open_raw": "Open raw in new tab",
+      "per_page": "page"
     },
     "tsdb": {
       "title": "Time-Series DB Management",
