@@ -54,7 +54,7 @@
       <div class="card-header">
         <h3><i class="fas fa-sitemap"></i> {{ t('page.catalog.tree_title') }}</h3>
       </div>
-      <div style="padding:8px 12px;border-bottom:1px solid var(--c-border);">
+      <div style="padding:8px 12px;border-bottom:1px solid var(--border);">
         <div style="position:relative;">
           <i class="fas fa-search text-muted" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:11px;"></i>
           <input type="text" id="tree-search" class="form-control" style="padding-left:28px;font-size:12px;"
@@ -162,7 +162,7 @@
     <div class="d-flex gap-8">
       <button class="btn btn-outline btn-sm" id="btn-export-csv" style="display:none;" onclick="exportData('csv')"><i class="fas fa-file-csv"></i> CSV</button>
       <button class="btn btn-outline btn-sm" id="btn-export-json" style="display:none;" onclick="exportData('json')"><i class="fas fa-file-code"></i> JSON</button>
-      <button class="btn btn-sm" id="btn-show-api" style="display:none;background:var(--info);color:#fff;" onclick="toggleDataApiInfo()"><i class="fas fa-code"></i> API</button>
+      <button class="btn btn-sm" id="btn-show-api" style="display:none;background:var(--c-info);color:#fff;" onclick="toggleDataApiInfo()"><i class="fas fa-code"></i> API</button>
       <button class="btn btn-outline btn-sm" onclick="$('#data-panel').hide();$('#data-api-box').hide()"><i class="fas fa-times"></i> {{ t('common.close') }}</button>
     </div>
   </div>
@@ -240,9 +240,9 @@
       <div class="d-flex gap-8" id="data-pagination-controls"></div>
     </div>
     <!-- Inline API Access Info -->
-    <div id="data-api-box" style="display:none;margin-top:0;padding:16px;border-top:1px solid var(--border);background:var(--bg-secondary);">
+    <div id="data-api-box" style="display:none;margin-top:0;padding:16px;border-top:1px solid var(--border);background:var(--body-bg);">
       <div class="d-flex align-center" style="justify-content:space-between;margin-bottom:12px;">
-        <h4 style="margin:0;font-size:14px;"><i class="fas fa-code" style="color:var(--info);margin-right:6px;"></i> {{ t('page.catalog.api_info_title') }}</h4>
+        <h4 style="margin:0;font-size:14px;"><i class="fas fa-code" style="color:var(--c-info);margin-right:6px;"></i> {{ t('page.catalog.api_info_title') }}</h4>
         <button class="btn btn-outline btn-sm" onclick="$('#data-api-box').hide()"><i class="fas fa-times"></i></button>
       </div>
       <p class="text-muted fs-12" style="margin-bottom:12px;">{{ t('page.catalog.api_info_subtitle') }}</p>
@@ -531,7 +531,7 @@ function loadCatalogs(page) {
       // 소비자 우선 액션: 데이터 조회 · 다운로드(내보내기). 관리(수정/삭제)는 관리자만.
       var actions = '<div class="d-flex gap-8">' +
         '<button class="btn btn-primary btn-sm btn-icon" title="' + __t('page.catalog.btn_data_query') + '" onclick="openDataPanel(' + item.id + ',\'' + ct + '\',\'' + st + '\')"><i class="fas fa-database"></i></button>' +
-        '<button class="btn btn-sm btn-icon" style="background:var(--info);color:#fff;" title="' + __t('page.catalog.export_title') + '" onclick="openExportPanel(' + item.id + ',\'' + tn + '\',\'' + ct + '\',' + cid + ')"><i class="fas fa-file-export"></i></button>' +
+        '<button class="btn btn-sm btn-icon" style="background:var(--c-info);color:#fff;" title="' + __t('page.catalog.export_title') + '" onclick="openExportPanel(' + item.id + ',\'' + tn + '\',\'' + ct + '\',' + cid + ')"><i class="fas fa-file-export"></i></button>' +
         {% if is_admin %}
         '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + item.id + ')"><i class="fas fa-edit"></i></button>' +
         '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteCatalog(' + item.id + ',\'' + escAttr(item.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
@@ -784,18 +784,18 @@ function showDetail(id) {
           '</table>' +
         '</div>' +
         '<div class="col-4">' +
-          '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;">' +
+          '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px;">' +
             '<h5 style="margin-bottom:12px;"><i class="fas fa-tags"></i> ' + __t('page.catalog.detail_search_tags') + '</h5>' +
             '<div>' + (tags || '<span class="text-muted fs-12">' + __t('page.catalog.detail_no_tags') + '</span>') + '</div>' +
           '</div>' +
           (item.schemaInfo ? (
-            '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
+            '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
               '<h5 style="margin-bottom:12px;"><i class="fas fa-code"></i> ' + __t('page.catalog.detail_schema_info') + '</h5>' +
               '<pre style="font-size:11px;background:#f1f5f9;padding:8px;border-radius:4px;overflow-x:auto;max-height:200px;margin:0;">' + escHtml(item.schemaInfo) + '</pre>' +
             '</div>'
           ) : '') +
           (item.liveStats ? (
-            '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
+            '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
               '<h5 style="margin-bottom:12px;"><i class="fas fa-chart-line" style="color:#3b82f6;"></i> ' + __t('page.catalog.detail_live_stats_title') + '</h5>' +
               '<table style="width:100%;font-size:12px;">' +
                 '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('common.status') + '</td><td>' + (item.liveStats.isActive ? '<span class="badge-sm badge-success">' + __t('common.active') + '</span>' : '<span class="badge-sm badge-warning">' + __t('common.inactive') + '</span>') + '</td></tr>' +
@@ -812,7 +812,7 @@ function showDetail(id) {
             '</div>'
           ) : '') +
           (item.connectorStats ? (
-            '<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
+            '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:12px;">' +
               '<h5 style="margin-bottom:12px;"><i class="fas fa-plug" style="color:#3b82f6;"></i> ' + __t('page.catalog.connector_stats_title') + '</h5>' +
               '<table style="width:100%;font-size:12px;">' +
                 '<tr><td class="fw-600 text-muted" style="padding:4px 8px 4px 0;">' + __t('page.catalog.connector_stats_tag_count') + '</td><td class="mono fw-600">' + item.connectorStats.tagCount + '</td></tr>' +
@@ -826,7 +826,7 @@ function showDetail(id) {
           '<div id="detail-pipelines" style="margin-top:12px;"></div>' +
           '<div style="margin-top:12px;">' +
             '<button class="btn btn-primary btn-sm" onclick="openDataPanel(' + item.id + ',\'' + escAttr(item.connectorType || '') + '\',\'' + escAttr(item.sinkType || '') + '\')"><i class="fas fa-database"></i> ' + __t('page.catalog.btn_data_query') + '</button> ' +
-            '<button class="btn btn-sm" style="background:var(--info);color:#fff;" onclick="openExportPanel(' + item.id + ',\'' + escAttr(item.tagName || '') + '\',\'' + escAttr(item.connectorType || '') + '\',' + (item.connectorId || 0) + ')"><i class="fas fa-file-export"></i> ' + __t('page.catalog.export_title') + '</button> ' +
+            '<button class="btn btn-sm" style="background:var(--c-info);color:#fff;" onclick="openExportPanel(' + item.id + ',\'' + escAttr(item.tagName || '') + '\',\'' + escAttr(item.connectorType || '') + '\',' + (item.connectorId || 0) + ')"><i class="fas fa-file-export"></i> ' + __t('page.catalog.export_title') + '</button> ' +
             '<button class="btn btn-outline btn-sm" onclick="showApiInfo(' + item.id + ')"><i class="fas fa-code"></i> API</button> ' +
             '<a href="/collection/connectors/' + (item.connectorType || 'opcua') + '" class="btn btn-outline btn-sm"><i class="fas fa-plug"></i> ' + __t('page.catalog.btn_connector_settings') + '</a> ' +
             {% if is_admin %}
@@ -884,11 +884,11 @@ function loadDetailPipelines(tagName, connectorType, connectorId) {
     if (!r.success || !r.data) { $el.empty(); return; }
     var pipes = r.data.pipelines || [];
     if (!pipes.length) {
-      $el.html('<div style="padding:8px 12px;background:var(--bg-secondary);border-radius:6px;border-left:3px solid var(--warning);">' +
+      $el.html('<div style="padding:8px 12px;background:var(--body-bg);border-radius:6px;border-left:3px solid var(--c-warning);">' +
         '<span class="fs-12"><i class="fas fa-exclamation-triangle text-warning"></i> ' + __t('page.catalog.no_pipeline_linked') + '</span></div>');
       return;
     }
-    var html = '<div style="padding:8px 12px;background:var(--bg-secondary);border-radius:6px;border-left:3px solid var(--primary);">' +
+    var html = '<div style="padding:8px 12px;background:var(--body-bg);border-radius:6px;border-left:3px solid var(--c-primary);">' +
       '<div class="fw-600 fs-12" style="margin-bottom:6px;"><i class="fas fa-diagram-project"></i> ' + __t('page.catalog.linked_pipelines') + ' (' + pipes.length + __t('page.catalog.linked_pipelines_count') + ')</div>';
     pipes.forEach(function(p) {
       var statusCls = p.pipelineStatus === 'running' ? 'badge-running' : 'badge-stopped';
@@ -1554,9 +1554,9 @@ function loadCatalogFiles(page) {
     var bcHtml = '';
     bc.forEach(function(b, i) {
       if (i === bc.length - 1 && i > 0) {
-        bcHtml += '<span class="fw-600 fs-12"><i class="fas fa-folder-open" style="margin-right:4px;color:var(--warning);"></i>' + escHtml(b.name) + '</span>';
+        bcHtml += '<span class="fw-600 fs-12"><i class="fas fa-folder-open" style="margin-right:4px;color:var(--c-warning);"></i>' + escHtml(b.name) + '</span>';
       } else {
-        bcHtml += '<a href="javascript:browseFilePath(\'' + escAttr(b.path) + '\')" class="fs-12" style="color:var(--primary);">' +
+        bcHtml += '<a href="javascript:browseFilePath(\'' + escAttr(b.path) + '\')" class="fs-12" style="color:var(--c-primary);">' +
           (i === 0 ? '<i class="fas fa-home"></i>' : escHtml(b.name)) + '</a>';
       }
       if (i < bc.length - 1) bcHtml += '<span class="text-muted" style="margin:0 4px;">/</span>';
@@ -1583,10 +1583,10 @@ function loadCatalogFiles(page) {
     // 디렉토리 행
     dirs.forEach(function(d) {
       $tb.append(
-        '<tr style="background:var(--bg-secondary);">' +
+        '<tr style="background:var(--body-bg);">' +
           '<td></td>' +
           '<td colspan="4" style="cursor:pointer;" onclick="browseFilePath(\'' + escAttr(d.path) + '\')">' +
-            '<i class="fas fa-folder" style="color:var(--warning);margin-right:8px;"></i>' +
+            '<i class="fas fa-folder" style="color:var(--c-warning);margin-right:8px;"></i>' +
             '<span class="fw-600">' + escHtml(d.name) + '</span>' +
           '</td>' +
           '<td><button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.catalog.file_download_folder') + '" onclick="event.stopPropagation();downloadFolderZip(\'' + escAttr(d.path) + '\')"><i class="fas fa-file-zipper"></i></button></td>' +
@@ -2365,7 +2365,7 @@ function loadExportRequests(page) {
 
       var progressHtml = '';
       if (item.status === 'processing') {
-        progressHtml = '<div style="width:80px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;"><div style="height:100%;background:var(--primary);width:' + item.progress + '%;transition:width .3s;"></div></div><span class="fs-10 mono">' + item.progress + '%</span>';
+        progressHtml = '<div style="width:80px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;"><div style="height:100%;background:var(--c-primary);width:' + item.progress + '%;transition:width .3s;"></div></div><span class="fs-10 mono">' + item.progress + '%</span>';
       } else if (item.status === 'ready') {
         progressHtml = '<span class="text-success fs-11">100%</span>';
       } else {
@@ -2631,7 +2631,7 @@ function showApiInfo(catalogId) {
       var ep = endpoints[key];
       if (!ep) return;
 
-      html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;">';
+      html += '<div style="background:var(--body-bg);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;">';
       html += '<div class="d-flex align-center gap-8" style="margin-bottom:8px;">';
       html += '<span class="badge-sm ' + (ep.method === 'POST' ? 'badge-warning' : 'badge-success') + '">' + ep.method + '</span>';
       html += '<code class="mono fs-12" style="word-break:break-all;">' + escHtml(ep.url) + '</code>';
@@ -2722,15 +2722,15 @@ function openRecipeWizard() {
       var css = document.createElement('style');
       css.id = 'recipe-wizard-css';
       css.textContent =
-        '.recipe-step{padding:8px 16px;border-radius:20px;font-size:13px;color:var(--text-muted);background:var(--bg-secondary);cursor:default;}' +
-        '.recipe-step.active{background:var(--primary);color:#fff;font-weight:600;}' +
+        '.recipe-step{padding:8px 16px;border-radius:20px;font-size:13px;color:var(--text-muted);background:var(--body-bg);cursor:default;}' +
+        '.recipe-step.active{background:var(--c-primary);color:#fff;font-weight:600;}' +
         '.recipe-step.done{background:#d1fae5;color:#065f46;}' +
         '.recipe-step-num{display:inline-flex;width:22px;height:22px;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,255,255,.2);font-size:11px;font-weight:700;margin-right:4px;}' +
         '.recipe-step-arrow{display:flex;align-items:center;color:var(--text-muted);font-size:11px;}' +
         '.recipe-tab{display:inline-block;padding:8px 16px;cursor:pointer;border-bottom:2px solid transparent;font-size:13px;font-weight:500;color:var(--text-muted);}' +
-        '.recipe-tab.active{color:var(--primary);border-bottom-color:var(--primary);}' +
+        '.recipe-tab.active{color:var(--c-primary);border-bottom-color:var(--c-primary);}' +
         '.recipe-table-check{cursor:pointer;padding:6px 12px;border-bottom:1px solid var(--border);}' +
-        '.recipe-table-check:hover{background:var(--bg-secondary);}' +
+        '.recipe-table-check:hover{background:var(--body-bg);}' +
         '.recipe-table-check input{margin-right:8px;}';
       document.head.appendChild(css);
     }
@@ -2797,7 +2797,7 @@ function _recipeLoadStep1() {
     var html = '<div class="form-group">' +
       '<label class="form-label fw-600">' + __t('page.catalog.recipe_source_type') + '</label>' +
       '<div class="d-flex gap-8">' +
-        '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 16px;border:2px solid var(--primary);border-radius:8px;background:var(--bg-secondary);" id="recipe-radio-rdbms">' +
+        '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 16px;border:2px solid var(--c-primary);border-radius:8px;background:var(--body-bg);" id="recipe-radio-rdbms">' +
           '<input type="radio" name="recipe-source-type" value="rdbms" checked onchange="recipeChangeSourceType(\'rdbms\')"> ' +
           '<i class="fas fa-database"></i> ' + __t('page.catalog.recipe_source_rdbms') +
         '</label>' +
@@ -2829,8 +2829,8 @@ function recipeChangeSourceType(type) {
   _recipeSelectedTables = [];
   _recipeTableColumns = {};
   _recipeSelectedTags = {};
-  $('#recipe-radio-rdbms').css('border-color', type === 'rdbms' ? 'var(--primary)' : 'var(--border)');
-  $('#recipe-radio-tsdb').css('border-color', type === 'tsdb' ? 'var(--primary)' : 'var(--border)');
+  $('#recipe-radio-rdbms').css('border-color', type === 'rdbms' ? 'var(--c-primary)' : 'var(--border)');
+  $('#recipe-radio-tsdb').css('border-color', type === 'tsdb' ? 'var(--c-primary)' : 'var(--border)');
   _recipePopulateInstances();
   $('#recipe-tables-area').empty();
 }
@@ -2912,7 +2912,7 @@ function _recipeLoadTags(measurement) {
   if ($('#recipe-tags-' + safeId).length) return;
 
   var $area = $('#recipe-tables-area');
-  var $tagBox = $('<div id="recipe-tags-' + safeId + '" style="margin:0 0 8px 28px;padding:8px 12px;background:var(--bg-secondary);border-radius:6px;font-size:12px;">' +
+  var $tagBox = $('<div id="recipe-tags-' + safeId + '" style="margin:0 0 8px 28px;padding:8px 12px;background:var(--body-bg);border-radius:6px;font-size:12px;">' +
     '<div class="text-muted" style="margin-bottom:4px;"><i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.recipe_tags_loading', 'Loading tags...') + '</div>' +
   '</div>');
   // Insert right after the measurement checkbox
@@ -2992,7 +2992,7 @@ function _recipeLoadStep2() {
         '<textarea class="form-control mono" id="recipe-sql-editor" rows="10" placeholder="' + __t('page.catalog.recipe_sql_placeholder') + '" style="font-size:13px;tab-size:2;">' + escHtml(_recipeSql || _recipeGenerateDefaultSql()) + '</textarea>' +
         '<p class="fs-11 text-muted" style="margin-top:4px;"><i class="fas fa-info-circle"></i> ' + __t('page.catalog.recipe_sql_hint') + '</p>' +
       '</div>' +
-      '<button class="btn btn-sm" style="background:var(--info);color:#fff;" onclick="recipePreviewSql()"><i class="fas fa-eye"></i> ' + __t('page.catalog.recipe_btn_preview') + '</button>' +
+      '<button class="btn btn-sm" style="background:var(--c-info);color:#fff;" onclick="recipePreviewSql()"><i class="fas fa-eye"></i> ' + __t('page.catalog.recipe_btn_preview') + '</button>' +
       '<div id="recipe-preview-area" style="margin-top:12px;"></div>' +
     '</div>';
 
@@ -3326,7 +3326,7 @@ function recipePreviewSql() {
       '</div>';
       html += '<div class="table-wrapper" style="max-height:300px;overflow:auto;">';
       html += '<table style="font-size:12px;"><thead><tr>';
-      cols.forEach(function(c) { html += '<th style="position:sticky;top:0;background:var(--bg-card);z-index:1;">' + escHtml(c) + '</th>'; });
+      cols.forEach(function(c) { html += '<th style="position:sticky;top:0;background:var(--card-bg);z-index:1;">' + escHtml(c) + '</th>'; });
       html += '</tr></thead><tbody>';
       data.rows.forEach(function(row) {
         html += '<tr>';
@@ -3421,7 +3421,7 @@ function _recipeStep3Preview() {
       var cols = data.columns || Object.keys(data.rows[0]);
       var html = '<div style="font-size:11px;margin-bottom:6px;color:var(--text-muted);">' + data.rowCount + ' ' + __t('page.catalog.recipe_preview_rows') + ' · ' + data.elapsedMs + __t('page.catalog.recipe_preview_ms') + '</div>';
       html += '<table style="font-size:11px;width:100%;"><thead><tr>';
-      cols.forEach(function(c) { html += '<th style="font-size:10px;padding:4px 6px;position:sticky;top:0;background:var(--bg-card);">' + escHtml(c) + '</th>'; });
+      cols.forEach(function(c) { html += '<th style="font-size:10px;padding:4px 6px;position:sticky;top:0;background:var(--card-bg);">' + escHtml(c) + '</th>'; });
       html += '</tr></thead><tbody>';
       data.rows.slice(0, 20).forEach(function(row) {
         html += '<tr>';
