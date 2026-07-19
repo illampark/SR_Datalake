@@ -2182,10 +2182,6 @@ def _export_recipe_data(db, c, fmt):
     )
 
 
-# ──────────────────────────────────────────────
-# CAT-011: GET /api/catalog/<id>/files — 비정형 파일 목록 (MinIO)
-# ──────────────────────────────────────────────
-@catalog_bp.route("/<int:cid>/files", methods=["GET"])
 def _catalog_file_base(db, c):
     """카탈로그의 MinIO (bucket, base_prefix) 결정 — 파일 브라우저·폴더 ZIP 공유.
 
@@ -2220,6 +2216,10 @@ def _catalog_file_base(db, c):
     return bucket, base_prefix
 
 
+# ──────────────────────────────────────────────
+# CAT-011: GET /api/catalog/<id>/files — 비정형 파일 목록 (MinIO)
+# ──────────────────────────────────────────────
+@catalog_bp.route("/<int:cid>/files", methods=["GET"])
 def list_catalog_files(cid):
     """파일 브라우저 — 디렉토리 구조 탐색 지원
 
