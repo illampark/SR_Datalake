@@ -39,15 +39,21 @@ def get_connector_description(db, connector_type, connector_id):
 def get_connector_name(db, connector_type, connector_id):
     """connector_type/id 로 해당 커넥터의 표시 이름을 조회한다.
 
-    실 커넥터 6종(opcua/modbus/mqtt/db/api/file)만 연결 테이블에 name 이 있다.
-    import/pipeline/recipe 등 pseudo type 은 여기서 빈 문자열을 반환하며,
-    호출부가 카탈로그 기반 폴백(connector_description → group name)을 쓴다.
+    실 커넥터 6종(opcua/modbus/mqtt/db/api/file)은 연결 테이블 name.
+    pipeline 은 Pipeline.name (pipeline 카탈로그의 connector_id = pipeline_id).
+    import/recipe 등 나머지 pseudo type 은 빈 문자열을 반환하며, 호출부가
+    카탈로그 기반 폴백(connector_description → group name)을 쓴다.
     """
     model = _MODEL_MAP.get(connector_type)
     if model and connector_id:
         c = db.query(model).get(connector_id)
         if c:
             return getattr(c, "name", "") or ""
+    if connector_type == "pipeline" and connector_id:
+        from backend.models.pipeline import Pipeline
+        p = db.query(Pipeline).get(connector_id)
+        if p:
+            return p.name or ""
     return ""
 
 
