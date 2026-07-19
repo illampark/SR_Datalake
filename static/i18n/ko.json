@@ -2181,7 +2181,16 @@
       "preview_table_truncated": "앞 {n}행만 표시 (전체는 다운로드 필요)",
       "preview_unsupported": "미리보기를 지원하지 않는 형식입니다.",
       "preview_open_raw": "새 탭에서 원본 열기",
-      "per_page": "페이지"
+      "per_page": "페이지",
+      "sftp_title": "SFTP 로 다운로드",
+      "sftp_download": "SFTP",
+      "sftp_web_download": "웹 다운로드",
+      "sftp_path": "파일 경로",
+      "sftp_command": "접속·다운로드 명령",
+      "sftp_rotate": "SFTP 비밀번호 재발급",
+      "sftp_rotate_hint": "현재 비밀번호를 모르면 재발급하세요 (1회만 표시).",
+      "sftp_no_creds": "SFTP 자격증명은 테넌트 관리자에게 요청하세요.",
+      "sftp_new_pw": "새 비밀번호(1회만 표시):"
     },
     "tsdb": {
       "title": "시계열 DB 관리",

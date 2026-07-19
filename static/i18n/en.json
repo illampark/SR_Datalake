@@ -2181,7 +2181,16 @@
       "preview_table_truncated": "Showing first {n} rows only (download for full content)",
       "preview_unsupported": "Preview not supported for this file type.",
       "preview_open_raw": "Open raw in new tab",
-      "per_page": "page"
+      "per_page": "page",
+      "sftp_title": "Download via SFTP",
+      "sftp_download": "SFTP",
+      "sftp_web_download": "Web download",
+      "sftp_path": "File path",
+      "sftp_command": "Connect & download command",
+      "sftp_rotate": "Rotate SFTP password",
+      "sftp_rotate_hint": "If you don't know the current password, rotate it (shown once).",
+      "sftp_no_creds": "Ask your tenant admin for SFTP credentials.",
+      "sftp_new_pw": "New password (shown once):"
     },
     "tsdb": {
       "title": "Time-Series DB Management",

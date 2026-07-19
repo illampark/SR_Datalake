@@ -2023,6 +2023,7 @@ function _openExportStatusModal(requestId) {
     '</div>';
   var footer =
     '<button class="btn btn-outline" onclick="_stopExportStatusPolling();closeModal()">' + __t('common.close') + '</button>' +
+    '<button class="btn btn-outline" id="exp-sftp-btn" style="display:none;"><i class="fas fa-terminal"></i> ' + __t('page.catalog.sftp_download') + '</button>' +
     '<button class="btn btn-primary" id="exp-dl-btn" disabled onclick="_downloadExportRequest(\'' + requestId + '\')">' +
       '<i class="fas fa-download"></i> ' + __t('page.catalog.export_download_when_ready') + '</button>';
   openModal(__t('page.catalog.export_async_title'), body, footer);
@@ -2056,6 +2057,11 @@ function _pollExportStatus(requestId) {
       $('#exp-status-area').html(html);
       if (d.status === 'ready') {
         $('#exp-dl-btn').prop('disabled', false);
+        if (d.storageBucket && d.fileName) {
+          $('#exp-sftp-btn').show().off('click').on('click', function () {
+            showSftpDownloadInfo(d.storageBucket, d.fileName);
+          });
+        }
         _stopExportStatusPolling();
       } else if (d.status === 'failed' || d.status === 'expired') {
         $('#exp-dl-btn').prop('disabled', true);
@@ -2076,6 +2082,66 @@ function _stopExportStatusPolling() {
 
 function _downloadExportRequest(requestId) {
   window.location.href = '/api/catalog/export/' + encodeURIComponent(requestId) + '/download';
+}
+
+// async export 결과물을 MinIO SFTP 로 받는 안내 (경로 + 접속정보 + 명령)
+var _sftpPathCache = '';
+function showSftpDownloadInfo(bucket, fileName) {
+  _sftpPathCache = '/' + bucket + '/' + fileName;
+  var body = '<div id="sftp-info-area" class="text-muted" style="padding:16px;"><i class="fas fa-spinner fa-spin"></i> ' + __t('common.loading') + '</div>';
+  openModal(__t('page.catalog.sftp_title'), body, '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.close') + '</button>');
+  $.getJSON('/api/tenant/me/sftp-credentials', function (r) {
+    _renderSftpInfo((r && r.success) ? r.data : null);
+  }).fail(function () { _renderSftpInfo(null); });
+}
+
+function _renderSftpInfo(creds) {
+  var path = _sftpPathCache;
+  var host = creds ? (creds.sftpHost || '<host>') : '<host>';
+  var port = creds ? (creds.sftpPort || 8022) : 8022;
+  var user = (creds && creds.username) ? creds.username : '<sftp-user>';
+  var note = creds ? (creds.sftpNote || '') : '';
+  var cmd = 'sftp -P ' + port + ' ' + user + '@' + host + '\n' + 'get "' + path + '"';
+  var rows =
+    '<table class="table-key-value" style="width:100%;font-size:13px;">' +
+    '  <tr><th style="width:28%;text-align:left;padding:6px 8px;">Host</th><td class="mono">' + escHtml(String(host)) + '</td></tr>' +
+    '  <tr><th style="text-align:left;padding:6px 8px;">Port</th><td class="mono">' + escHtml(String(port)) + '</td></tr>' +
+    '  <tr><th style="text-align:left;padding:6px 8px;">User</th><td class="mono">' + escHtml(user) + '</td></tr>' +
+    '  <tr><th style="text-align:left;padding:6px 8px;">' + __t('page.catalog.sftp_path') + '</th><td class="mono" style="word-break:break-all;">' + escHtml(path) + '</td></tr>' +
+    '</table>' +
+    '<div class="fs-12 fw-600" style="margin:10px 0 4px;">' + __t('page.catalog.sftp_command') + '</div>' +
+    '<pre style="background:#f5f5f5;padding:10px;border-radius:4px;font-size:12px;white-space:pre-wrap;word-break:break-all;">' + escHtml(cmd) + '</pre>';
+  if (note) {
+    rows += '<div class="fs-12 text-muted" style="margin-top:8px;"><i class="fas fa-info-circle"></i> ' + escHtml(note) + '</div>';
+  }
+  if (creds && creds.exists) {
+    rows += '<div style="margin-top:12px;"><button class="btn btn-outline btn-sm" onclick="_rotateSftpPw()"><i class="fas fa-key"></i> ' + __t('page.catalog.sftp_rotate') + '</button> ' +
+            '<span class="fs-11 text-muted">' + __t('page.catalog.sftp_rotate_hint') + '</span></div>' +
+            '<div id="sftp-newpw" style="margin-top:8px;"></div>';
+  } else {
+    rows += '<div class="fs-12 text-muted" style="margin-top:10px;"><i class="fas fa-lock"></i> ' + __t('page.catalog.sftp_no_creds') + '</div>';
+  }
+  $('#sftp-info-area').html(rows);
+}
+
+function _rotateSftpPw() {
+  $('#sftp-newpw').html('<i class="fas fa-spinner fa-spin"></i>');
+  $.ajax({
+    url: '/api/tenant/me/sftp-credentials/rotate', method: 'POST', contentType: 'application/json',
+    success: function (r) {
+      if (r && r.success && r.data && r.data.password) {
+        $('#sftp-newpw').html('<div style="padding:8px 10px;background:#fff8e1;border-left:3px solid #f0ad4e;font-size:12px;">' +
+          __t('page.catalog.sftp_new_pw') + ' <span class="mono fw-600" style="word-break:break-all;">' + escHtml(r.data.password) + '</span></div>');
+      } else {
+        $('#sftp-newpw').html('<span class="text-danger fs-12">' + ((r.error && r.error.message) || __t('common.error')) + '</span>');
+      }
+    },
+    error: function (xhr) {
+      var msg = __t('common.error');
+      try { var b = JSON.parse(xhr.responseText); if (b.error) msg = b.error.message; } catch (e) {}
+      $('#sftp-newpw').html('<span class="text-danger fs-12">' + escHtml(msg) + '</span>');
+    }
+  });
 }
 
 function openExportHistory() {
@@ -2110,7 +2176,10 @@ function openExportHistory() {
       if (statusLabel === statusKey) statusLabel = it.status;
       var actions = '';
       if (it.status === 'ready') {
-        actions += '<button class="btn btn-sm btn-outline" onclick="_downloadExportRequest(\'' + it.requestId + '\')"><i class="fas fa-download"></i></button> ';
+        actions += '<button class="btn btn-sm btn-outline" title="' + __t('page.catalog.sftp_web_download') + '" onclick="_downloadExportRequest(\'' + it.requestId + '\')"><i class="fas fa-download"></i></button> ';
+        if (it.storageBucket && it.fileName) {
+          actions += '<button class="btn btn-sm btn-outline" title="' + __t('page.catalog.sftp_download') + '" onclick="showSftpDownloadInfo(\'' + escAttr(it.storageBucket) + '\',\'' + escAttr(it.fileName) + '\')"><i class="fas fa-terminal"></i></button> ';
+        }
       }
       if (it.status === 'queued' || it.status === 'processing') {
         actions += '<button class="btn btn-sm btn-outline" onclick="closeModal();_openExportStatusModal(\'' + it.requestId + '\')"><i class="fas fa-eye"></i></button>';

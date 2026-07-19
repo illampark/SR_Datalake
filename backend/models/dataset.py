@@ -88,6 +88,7 @@ class DatasetRequest(Base, TenantScopedMixin):
             "fileSizeBytes": self.file_size_bytes,
             "fileSizeDisplay": _fmt_bytes(self.file_size_bytes),
             "fileName": self.file_name,
+            "storageBucket": self.storage_bucket or "",
             "errorMessage": self.error_message,
             "profile": self.profile or {},
             "startedAt": self.started_at.isoformat() if self.started_at else None,
