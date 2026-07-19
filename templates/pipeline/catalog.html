@@ -1804,8 +1804,10 @@ function downloadFolderZip(folderPath) {
       a.download = fn ? fn[1] : 'folder.zip';
       a.click();
       URL.revokeObjectURL(a.href);
+    } else if (xhr.status === 413) {
+      // 너무 큼 → async 백그라운드 압축 제안
+      _offerFolderAsync(folderPath);
     } else {
-      // 413(너무 큼) 등 서버 메시지 표출
       var msg = __t('page.catalog.file_zip_fail');
       try {
         var reader = new FileReader();
@@ -1820,6 +1822,41 @@ function downloadFolderZip(folderPath) {
   };
   xhr.onerror = function() { showToast(__t('page.catalog.file_zip_fail'), 'error'); $btn.prop('disabled', false).html(orig); };
   xhr.send(JSON.stringify({ folder: folderPath || '' }));
+}
+
+// 폴더가 커서 동기 ZIP 이 거부된 경우 — 백그라운드(async) 압축 제안 모달
+function _offerFolderAsync(folderPath) {
+  var body = '<div style="padding:4px 2px;font-size:13px;">' +
+    '<p>' + __t('page.catalog.folder_too_large_async') + '</p>' +
+    '</div>';
+  var footer =
+    '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button class="btn btn-primary" id="folder-async-btn"><i class="fas fa-cloud-arrow-up"></i> ' + __t('page.catalog.folder_async_start') + '</button>';
+  openModal(__t('page.catalog.file_download_folder'), body, footer);
+  $('#folder-async-btn').off('click').on('click', function() {
+    $(this).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i>');
+    $.ajax({
+      url: API + '/' + _dataCatalogId + '/files/download-zip-async',
+      method: 'POST', contentType: 'application/json',
+      data: JSON.stringify({ folder: folderPath || '' }),
+      success: function(r) {
+        if (r && r.success && r.data) {
+          closeModal();
+          showToast(__t('page.catalog.folder_async_queued'), 'success');
+          _openExportStatusModal(r.data.requestId);   // 진행상태 → 완료 시 웹/SFTP 다운로드
+        } else {
+          showToast((r.error && r.error.message) || __t('common.error'), 'error');
+          $('#folder-async-btn').prop('disabled', false).html('<i class="fas fa-cloud-arrow-up"></i> ' + __t('page.catalog.folder_async_start'));
+        }
+      },
+      error: function(xhr) {
+        var msg = __t('common.error');
+        try { var b = JSON.parse(xhr.responseText); if (b.error) msg = b.error.message; } catch(e) {}
+        showToast(msg, 'error');
+        $('#folder-async-btn').prop('disabled', false).html('<i class="fas fa-cloud-arrow-up"></i> ' + __t('page.catalog.folder_async_start'));
+      }
+    });
+  });
 }
 
 function renderDataPagination(total, page) {

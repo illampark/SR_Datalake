@@ -2515,6 +2515,71 @@ def download_catalog_files_zip(cid):
         db.close()
 
 
+# ──────────────────────────────────────────────
+# POST /api/catalog/<id>/files/download-zip-async — 폴더 ZIP 비동기 (대용량)
+# ──────────────────────────────────────────────
+@catalog_bp.route("/<int:cid>/files/download-zip-async", methods=["POST"])
+def download_catalog_folder_zip_async(cid):
+    """대용량 폴더를 백그라운드에서 ZIP 압축해 MinIO 에 적재. 완료 후 웹/SFTP 로 수령.
+
+    동기 download-zip 이 1GB 가드로 413 일 때의 대체 경로. DatasetRequest(file_prefix)
+    를 큐잉하고 catalog_export_worker 가 스트리밍 ZIP 으로 처리.
+    """
+    from backend.models.dataset import DatasetRequest
+    from backend.services import catalog_export_worker
+    db = _db()
+    try:
+        c = get_by_id_tenant(db, DataCatalog, cid)
+        if not c:
+            return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        # 파일 브라우저 대상만 (file / import / internal_file_sink)
+        is_file = (c.connector_type in ("file", "import")
+                   or (c.connector_type == "pipeline" and c.sink_type == "internal_file_sink"))
+        if not is_file:
+            return _err("파일 폴더 카탈로그만 지원합니다.", "NOT_FILE_CATALOG")
+
+        body = request.get_json(silent=True) or {}
+        folder = body.get("folder", "") or ""
+
+        today_str = datetime.utcnow().strftime("%Y%m%d")
+        prefix_id = f"ds-{today_str}-"
+        last = (
+            filter_by_tenant(db.query(DatasetRequest), DatasetRequest)
+            .filter(DatasetRequest.request_id.like(f"{prefix_id}%"))
+            .order_by(DatasetRequest.id.desc())
+            .first()
+        )
+        try:
+            seq = int(last.request_id.split("-")[-1]) + 1 if last else 1
+        except (ValueError, IndexError):
+            seq = 1
+        request_id = f"{prefix_id}{seq:03d}"
+
+        folder_label = folder.rstrip("/").split("/")[-1] if folder else (c.name or f"catalog_{c.id}")
+        ds = DatasetRequest(
+            request_id=request_id,
+            name=f"{folder_label} (folder, {datetime.utcnow().strftime('%Y-%m-%d %H:%M')})"[:200],
+            requested_by=session.get("username", "anonymous"),
+            catalog_id=cid,
+            file_prefix=folder,          # "" = 카탈로그 전체
+            format="zip",
+            compression="none",          # zip 자체가 압축
+            status="queued",
+            progress=0,
+            storage_bucket=catalog_export_worker.EXPORT_BUCKET,
+        )
+        db.add(inject_tenant(ds))
+        db.commit()
+        db.refresh(ds)
+        catalog_export_worker.enqueue(request_id)
+        return _ok(ds.to_dict()), 201
+    except Exception as e:
+        db.rollback()
+        return _err(str(e), "SERVER_ERROR", 500)
+    finally:
+        db.close()
+
+
 # ── 유틸리티 ──
 _FILE_TYPE_MAP = {
     ".log": "log", ".csv": "csv", ".tsv": "csv", ".jsonl": "data",

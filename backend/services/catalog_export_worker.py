@@ -88,6 +88,11 @@ def _execute(request_id):
             _set_failed(db, req, "대상 카탈로그를 찾을 수 없습니다.")
             return
 
+        # 파일 폴더 ZIP 잡 (file_prefix 세팅) — row export 와 별개 경로
+        if req.file_prefix is not None:
+            _execute_folder_zip(db, req, catalog)
+            return
+
         req.status = "processing"
         req.started_at = datetime.utcnow()
         req.progress = 1
@@ -264,6 +269,164 @@ def _execute(request_id):
         )
     finally:
         db.close()
+
+
+def _execute_folder_zip(db, req, catalog):
+    """파일 폴더(하위 포함) → 스트리밍 ZIP → MinIO exports 버킷.
+
+    row export 와 동일 인프라(pipe→multipart→진행커밋→ready/web+SFTP)를 쓰되,
+    gzip 행 스트림 대신 zipfile 로 소스 객체들을 구조 보존해 담는다. zipfile 은
+    비-seekable 스트림에 data descriptor 방식으로 기록하므로 pipe 로 스트리밍 가능.
+    """
+    import zipfile
+    import shutil
+    from backend.routes import catalog as catalog_routes
+    from backend.services.minio_client import get_minio_client
+
+    request_id = req.request_id
+    req.status = "processing"
+    req.started_at = datetime.utcnow()
+    req.progress = 1
+    db.commit()
+
+    client = get_minio_client(db)
+    ensure_export_bucket(client)
+
+    # 소스 버킷/prefix (파일 브라우저와 동일 규칙)
+    src_bucket, base_prefix = catalog_routes._catalog_file_base(db, catalog)
+    prefix = base_prefix + (req.file_prefix or "")
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+
+    # 대상 객체 목록 (이름만 수집 — 진행률용 + 상대경로 arcname)
+    objects = []
+    for obj in client.list_objects(src_bucket, prefix=prefix, recursive=True):
+        if obj.object_name.endswith("/"):
+            continue
+        objects.append(obj.object_name)
+    if not objects:
+        _set_failed(db, req, "폴더에 다운로드할 파일이 없습니다.")
+        return
+    total_files = len(objects)
+
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    safe_name = _sanitize(req.name)[:60] or f"catalog_{catalog.id}"
+    object_name = f"catalog_{catalog.id}/{ts}_{safe_name}_{request_id}.zip"
+
+    state = {"files_done": 0, "stop": False}
+    producer_err = {"err": None}
+    r_fd, w_fd = os.pipe()
+
+    def _producer():
+        wf = os.fdopen(w_fd, "wb")
+        # allowZip64: 대용량/다수 파일 대비. wf 는 pipe(비-seekable) → data descriptor 모드.
+        zf = zipfile.ZipFile(wf, "w", zipfile.ZIP_DEFLATED, allowZip64=True)
+        try:
+            for obj_name in objects:
+                arc = obj_name[len(base_prefix):] if obj_name.startswith(base_prefix) else os.path.basename(obj_name)
+                resp = None
+                try:
+                    resp = client.get_object(src_bucket, obj_name)
+                    with zf.open(arc, "w") as dest:
+                        shutil.copyfileobj(resp, dest, length=1024 * 1024)
+                except Exception as e:
+                    logger.warning("folder-zip skip %s: %s", obj_name, e)
+                finally:
+                    if resp is not None:
+                        try:
+                            resp.close(); resp.release_conn()
+                        except Exception:
+                            pass
+                state["files_done"] += 1
+            zf.close()
+        except Exception as e:
+            producer_err["err"] = e
+            logger.error("folder-zip producer 실패 [%s]: %s", request_id, e, exc_info=True)
+        finally:
+            try:
+                zf.close()
+            except Exception:
+                pass
+            try:
+                wf.close()
+            except Exception:
+                pass
+
+    prod_thread = threading.Thread(target=_producer, daemon=True, name=f"folderzip-producer-{request_id}")
+    prod_thread.start()
+
+    def _progress_committer():
+        from backend.database import SessionLocal as _S
+        db2 = _S()
+        try:
+            while not state["stop"]:
+                time.sleep(2.0)
+                if state["stop"]:
+                    break
+                done = state["files_done"]
+                try:
+                    r2 = db2.query(req.__class__).filter_by(request_id=request_id).first()
+                    if not r2:
+                        return
+                    r2.total_rows = done
+                    r2.progress = min(80, int((done / total_files) * 80)) if total_files else 1
+                    db2.commit()
+                except Exception:
+                    db2.rollback()
+        finally:
+            db2.close()
+
+    prog_thread = threading.Thread(target=_progress_committer, daemon=True, name=f"folderzip-progress-{request_id}")
+    prog_thread.start()
+
+    try:
+        rf = os.fdopen(r_fd, "rb")
+        client.put_object(
+            EXPORT_BUCKET, object_name, rf,
+            length=-1, part_size=_PART_SIZE,
+            content_type="application/zip",
+        )
+    except Exception as e:
+        state["stop"] = True
+        try:
+            rf.close()
+        except Exception:
+            pass
+        prod_thread.join(timeout=60)
+        prog_thread.join(timeout=10)
+        _cleanup_object(client, object_name)
+        _set_failed(db, req, f"ZIP 업로드 실패: {e}")
+        return
+
+    state["stop"] = True
+    prod_thread.join(timeout=60)
+    prog_thread.join(timeout=10)
+
+    if producer_err["err"] is not None:
+        _cleanup_object(client, object_name)
+        _set_failed(db, req, f"ZIP 생성 실패: {producer_err['err']}")
+        return
+
+    try:
+        stat = client.stat_object(EXPORT_BUCKET, object_name)
+        file_size = stat.size or 0
+    except Exception:
+        file_size = 0
+
+    req.status = "ready"
+    req.progress = 100
+    req.total_rows = state["files_done"]
+    req.file_size_bytes = file_size
+    req.file_name = object_name
+    req.storage_bucket = EXPORT_BUCKET
+    req.completed_at = datetime.utcnow()
+    req.expires_at = datetime.utcnow() + timedelta(days=_RETENTION_DAYS)
+    req.error_message = ""
+    db.commit()
+    logger.info(
+        "folder-zip ready [%s] files=%d size=%d object=%s",
+        request_id, state["files_done"], file_size, object_name,
+    )
 
 
 # ──────────────────────────────────────────────

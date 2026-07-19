@@ -2190,7 +2190,10 @@
       "sftp_rotate": "SFTP 비밀번호 재발급",
       "sftp_rotate_hint": "현재 비밀번호를 모르면 재발급하세요 (1회만 표시).",
       "sftp_no_creds": "SFTP 자격증명은 테넌트 관리자에게 요청하세요.",
-      "sftp_new_pw": "새 비밀번호(1회만 표시):"
+      "sftp_new_pw": "새 비밀번호(1회만 표시):",
+      "folder_too_large_async": "폴더가 커서 즉시 다운로드 한도(1GB)를 넘었습니다. 백그라운드에서 압축한 뒤 완료되면 웹 또는 SFTP 로 받으시겠습니까?",
+      "folder_async_start": "백그라운드 압축 시작",
+      "folder_async_queued": "백그라운드 압축을 시작했습니다. 완료되면 웹/SFTP 로 받을 수 있습니다."
     },
     "tsdb": {
       "title": "시계열 DB 관리",

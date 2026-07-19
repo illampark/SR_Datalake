@@ -23,6 +23,7 @@ class DatasetRequest(Base, TenantScopedMixin):
     # RDBMS sink 용 raw WHERE 본문 (검증 후 저장). 다른 카탈로그 유형에선 미사용.
     where_clause = Column(Text, default="")
     column_filters = Column(JSON, default=list)   # RDBMS 컬럼 필터 [{col,op,val}] — 조회와 동일 조건 적용
+    file_prefix = Column(Text, nullable=True)     # 세팅되면 파일 폴더 ZIP 비동기 잡 (base_prefix 상대 경로)
 
     # 조회 조건
     tags = Column(JSON, default=[])                                 # ["tag1", "tag2", ...]
@@ -89,6 +90,7 @@ class DatasetRequest(Base, TenantScopedMixin):
             "fileSizeDisplay": _fmt_bytes(self.file_size_bytes),
             "fileName": self.file_name,
             "storageBucket": self.storage_bucket or "",
+            "filePrefix": self.file_prefix,
             "errorMessage": self.error_message,
             "profile": self.profile or {},
             "startedAt": self.started_at.isoformat() if self.started_at else None,

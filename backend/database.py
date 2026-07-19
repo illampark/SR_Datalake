@@ -48,6 +48,7 @@ def _migrate_add_columns():
         ("dataset_request", "catalog_id", "INTEGER", "NULL"),
         ("dataset_request", "where_clause", "TEXT", "''"),
         ("dataset_request", "column_filters", "JSON", "'[]'"),
+        ("dataset_request", "file_prefix", "TEXT", "NULL"),
         # config_version — multi-worker config 전파 (e6ad44e). 모델에만 추가되고
         # 마이그레이션이 누락되어, 기존 DB 에 신규 이미지를 올리면
         # "column pipeline.config_version does not exist" 로 파이프라인/커넥터

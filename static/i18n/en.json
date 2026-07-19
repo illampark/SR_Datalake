@@ -2190,7 +2190,10 @@
       "sftp_rotate": "Rotate SFTP password",
       "sftp_rotate_hint": "If you don't know the current password, rotate it (shown once).",
       "sftp_no_creds": "Ask your tenant admin for SFTP credentials.",
-      "sftp_new_pw": "New password (shown once):"
+      "sftp_new_pw": "New password (shown once):",
+      "folder_too_large_async": "The folder exceeds the instant-download limit (1GB). Compress it in the background and download via web or SFTP when ready?",
+      "folder_async_start": "Start background compression",
+      "folder_async_queued": "Background compression started. You can download via web/SFTP when it finishes."
     },
     "tsdb": {
       "title": "Time-Series DB Management",
