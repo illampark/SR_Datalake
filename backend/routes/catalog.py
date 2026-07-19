@@ -3513,7 +3513,12 @@ def download_export_file(request_id):
         # 헤더가 되어 gunicorn 이 거부(400/502)한다. RFC 6266: ASCII fallback +
         # filename*=UTF-8'' 퍼센트 인코딩 병행.
         from urllib.parse import quote as _urlquote
-        ascii_name = "".join(ch if (ch.isalnum() or ch in "-_.") else "_" for ch in download_name) or "download"
+        # 주의: str.isalnum() 은 한글도 True → ASCII fallback 에 남아 헤더가 깨진다.
+        # 고정 ASCII 허용셋으로만 남기고 나머지는 '_' 치환.
+        _ASCII_OK = set(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+        )
+        ascii_name = "".join(ch if ch in _ASCII_OK else "_" for ch in download_name) or "download"
         utf8_name = _urlquote(download_name)
         headers = {
             "Content-Disposition": (
