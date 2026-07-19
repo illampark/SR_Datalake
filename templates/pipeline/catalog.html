@@ -103,6 +103,9 @@
             <option value="tag">{{ t('page.catalog.filter_tag_scope_tag') }}</option>
             <option value="connector">{{ t('page.catalog.filter_tag_scope_connector') }}</option>
           </select>
+          <label class="d-flex align-center fs-12 text-muted" style="gap:5px;white-space:nowrap;cursor:pointer;">
+            <input type="checkbox" id="filter-published" onchange="loadCatalogs(1)"> {{ t('page.catalog.filter_published_only') }}
+          </label>
         </div>
       </div>
       <div class="card-body p-0">
@@ -112,9 +115,9 @@
               <tr>
                 <th>{{ t('page.catalog.th_name') }}</th>
                 <th>{{ t('page.catalog.th_connector_type') }}</th>
+                <th>{{ t('page.catalog.th_type') }}</th>
                 <th>{{ t('page.catalog.th_category') }}</th>
                 <th>{{ t('page.catalog.th_data_level') }}</th>
-                <th>{{ t('page.catalog.th_sensitivity') }}</th>
                 <th>{{ t('page.catalog.th_published') }}</th>
                 <th>{{ t('common.actions') }}</th>
               </tr>
@@ -368,6 +371,18 @@ var sensitivityBadge = {
   restricted: '<span class="badge-sm badge-danger">' + __t('page.catalog.sensitivity_restricted') + '</span>'
 };
 
+// sink 타입 → 짧은 저장소 라벨 (소비자가 데이터 형태·다운로드 방식을 바로 파악)
+function sinkTypeLabel(sinkType, connectorType) {
+  var st = (sinkType || '').toLowerCase();
+  if (st.indexOf('tsdb') >= 0) return 'TSDB';
+  if (st.indexOf('rdbms') >= 0) return 'RDBMS';
+  if (st.indexOf('file') >= 0) return 'File';
+  if (st.indexOf('kafka') >= 0 || st.indexOf('mqtt') >= 0 || st.indexOf('messaging') >= 0) return 'Messaging';
+  if (connectorType === 'recipe') return 'Recipe';
+  if (connectorType === 'import') return 'Import';
+  return '';  // 커넥터 원천(sink 없음) → 유형 배지 생략
+}
+
 /* ── Load Catalogs ── */
 function loadCatalogs(page) {
   currentPage = page || 1;
@@ -387,6 +402,8 @@ function loadCatalogs(page) {
 
   var dataLevel = $('#filter-data-level').val();
   if (dataLevel) params.data_level = dataLevel;
+
+  if ($('#filter-published').is(':checked')) params.published = 'true';
 
   $.getJSON(API, params, function(r) {
     if (!r.success) return;
@@ -413,10 +430,31 @@ function loadCatalogs(page) {
       var icon = connectorIcons[item.connectorType] || 'fa-plug';
       var label = connectorLabels[item.connectorType] || item.connectorType;
       var lvl = levelBadge[item.dataLevel] || escHtml(item.dataLevel || '-');
-      var sens = sensitivityBadge[item.sensitivity] || escHtml(item.sensitivity || '-');
       var published = item.isPublished
         ? '<span class="badge-sm badge-success"><i class="fas fa-check"></i> ' + __t('page.catalog.published_yes') + '</span>'
         : '<span class="badge-sm" style="background:#e2e8f0;color:#64748b;">' + __t('page.catalog.published_no') + '</span>';
+
+      // 유형: sink 타입 배지 + 태그/그룹 스코프 아이콘 (소비자가 데이터 형태를 바로 파악)
+      var scopeIcon = item.tagName
+        ? '<i class="fas fa-tag text-muted" title="' + __t('page.catalog.scope_tag') + '" style="font-size:10px;margin-right:4px;"></i>'
+        : '<i class="fas fa-layer-group text-muted" title="' + __t('page.catalog.scope_group') + '" style="font-size:10px;margin-right:4px;"></i>';
+      var stl = sinkTypeLabel(item.sinkType, item.connectorType);
+      var typeCell = scopeIcon + (stl ? '<span class="badge-sm badge-primary">' + escHtml(stl) + '</span>' : '<span class="text-muted">-</span>');
+
+      var ct = escAttr(item.connectorType || '');
+      var st = escAttr(item.sinkType || '');
+      var tn = escAttr(item.tagName || '');
+      var cid = item.connectorId || 0;
+
+      // 소비자 우선 액션: 데이터 조회 · 다운로드(내보내기). 관리(수정/삭제)는 관리자만.
+      var actions = '<div class="d-flex gap-8">' +
+        '<button class="btn btn-primary btn-sm btn-icon" title="' + __t('page.catalog.btn_data_query') + '" onclick="openDataPanel(' + item.id + ',\'' + ct + '\',\'' + st + '\')"><i class="fas fa-database"></i></button>' +
+        '<button class="btn btn-sm btn-icon" style="background:var(--info);color:#fff;" title="' + __t('page.catalog.export_title') + '" onclick="openExportPanel(' + item.id + ',\'' + tn + '\',\'' + ct + '\',' + cid + ')"><i class="fas fa-file-export"></i></button>' +
+        {% if is_admin %}
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + item.id + ')"><i class="fas fa-edit"></i></button>' +
+        '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteCatalog(' + item.id + ',\'' + escAttr(item.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
+        {% endif %}
+        '</div>';
 
       $tb.append(
         '<tr>' +
@@ -426,16 +464,11 @@ function loadCatalogs(page) {
           (item.connectorDescription ? '<div class="fs-11 text-muted" style="margin-top:2px;"><i class="fas fa-plug" style="font-size:9px;opacity:.5;margin-right:3px;"></i>' + escHtml(item.connectorDescription) + '</div>' : '') +
         '</td>' +
         '<td><i class="fas ' + icon + ' text-muted"></i> ' + escHtml(label) + '</td>' +
+        '<td>' + typeCell + '</td>' +
         '<td>' + escHtml(item.category || '-') + '</td>' +
         '<td>' + lvl + '</td>' +
-        '<td>' + sens + '</td>' +
         '<td>' + published + '</td>' +
-        '<td>' +
-          '<div class="d-flex gap-8">' +
-            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.edit') + '" onclick="openEditModal(' + item.id + ')"><i class="fas fa-edit"></i></button>' +
-            '<button class="btn btn-outline btn-sm btn-icon" title="' + __t('common.delete') + '" onclick="deleteCatalog(' + item.id + ',\'' + escAttr(item.name) + '\')"><i class="fas fa-trash text-danger"></i></button>' +
-          '</div>' +
-        '</td>' +
+        '<td>' + actions + '</td>' +
         '</tr>'
       );
     });
@@ -712,8 +745,11 @@ function showDetail(id) {
             '<button class="btn btn-sm" style="background:var(--info);color:#fff;" onclick="openExportPanel(' + item.id + ',\'' + escAttr(item.tagName || '') + '\',\'' + escAttr(item.connectorType || '') + '\',' + (item.connectorId || 0) + ')"><i class="fas fa-file-export"></i> ' + __t('page.catalog.export_title') + '</button> ' +
             '<button class="btn btn-outline btn-sm" onclick="showApiInfo(' + item.id + ')"><i class="fas fa-code"></i> API</button> ' +
             '<a href="/collection/connectors/' + (item.connectorType || 'opcua') + '" class="btn btn-outline btn-sm"><i class="fas fa-plug"></i> ' + __t('page.catalog.btn_connector_settings') + '</a> ' +
+            {% if is_admin %}
             '<button class="btn btn-outline btn-sm" onclick="openEditModal(' + item.id + ')"><i class="fas fa-edit"></i> ' + __t('common.edit') + '</button> ' +
             '<button class="btn btn-outline btn-sm" onclick="deleteCatalog(' + item.id + ',\'' + escAttr(item.name) + '\')"><i class="fas fa-trash text-danger"></i> ' + __t('common.delete') + '</button>' +
+            {% endif %}
+            '' +
           '</div>' +
         '</div>' +
       '</div>';
