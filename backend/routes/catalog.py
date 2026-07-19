@@ -245,6 +245,42 @@ def _db():
     return SessionLocal()
 
 
+def _create_dataset_request(db, ds):
+    """DatasetRequest 에 전역 유니크 request_id 부여 + tenant_id 주입 후 커밋.
+
+    request_id(ds-YYYYMMDD-NNN)는 **전역 유니크** 제약이다. 테넌트 스코프
+    (filter_by_tenant)로 시퀀스를 계산하면 다른 테넌트가 같은 번호를 재생성해
+    UniqueViolation 이 난다(프로덕션 대용량 압축 에러 원인). 전역 max 로 산출하고
+    동시성 충돌 시 재시도한다. ds 는 request_id 없이 넘겨받는다.
+    """
+    from sqlalchemy.exc import IntegrityError
+    from backend.models.dataset import DatasetRequest
+    inject_tenant(ds)
+    prefix = f"ds-{datetime.utcnow().strftime('%Y%m%d')}-"
+    last_err = None
+    for _attempt in range(25):
+        last = (
+            db.query(DatasetRequest)
+            .filter(DatasetRequest.request_id.like(f"{prefix}%"))
+            .order_by(DatasetRequest.id.desc())
+            .first()
+        )
+        try:
+            base = int(last.request_id.split("-")[-1]) if last else 0
+        except (ValueError, IndexError):
+            base = 0
+        ds.request_id = f"{prefix}{base + 1:03d}"
+        db.add(ds)
+        try:
+            db.commit()
+            db.refresh(ds)
+            return ds
+        except IntegrityError as e:
+            last_err = e
+            db.rollback()
+    raise RuntimeError(f"request_id 생성 실패(동시성 충돌 지속): {last_err}")
+
+
 # ──────────────────────────────────────────────
 # CAT-001: GET /api/catalog — 카탈로그 목록
 # ──────────────────────────────────────────────
@@ -1560,28 +1596,12 @@ def queue_catalog_export_async(cid):
         if not isinstance(column_filters, list):
             column_filters = []
 
-        # request_id 생성: ds-YYYYMMDD-NNN
-        today_str = datetime.utcnow().strftime("%Y%m%d")
-        prefix = f"ds-{today_str}-"
-        last = (
-            filter_by_tenant(db.query(DatasetRequest), DatasetRequest)
-            .filter(DatasetRequest.request_id.like(f"{prefix}%"))
-            .order_by(DatasetRequest.id.desc())
-            .first()
-        )
-        try:
-            seq = int(last.request_id.split("-")[-1]) + 1 if last else 1
-        except (ValueError, IndexError):
-            seq = 1
-        request_id = f"{prefix}{seq:03d}"
-
         default_name = (
             body.get("name")
             or f"{c.name or f'catalog_{c.id}'} ({datetime.utcnow().strftime('%Y-%m-%d %H:%M')})"
         )
 
         ds = DatasetRequest(
-            request_id=request_id,
             name=default_name[:200],
             description=body.get("description", ""),
             requested_by=session.get("username", "anonymous"),
@@ -1597,11 +1617,9 @@ def queue_catalog_export_async(cid):
             progress=0,
             storage_bucket=catalog_export_worker.EXPORT_BUCKET,
         )
-        db.add(ds)
-        db.commit()
-        db.refresh(ds)
+        _create_dataset_request(db, ds)   # 전역 유니크 request_id 부여 + 커밋
 
-        catalog_export_worker.enqueue(request_id)
+        catalog_export_worker.enqueue(ds.request_id)
         return _ok(ds.to_dict()), 201
     except Exception as e:
         db.rollback()
@@ -2541,23 +2559,8 @@ def download_catalog_folder_zip_async(cid):
         body = request.get_json(silent=True) or {}
         folder = body.get("folder", "") or ""
 
-        today_str = datetime.utcnow().strftime("%Y%m%d")
-        prefix_id = f"ds-{today_str}-"
-        last = (
-            filter_by_tenant(db.query(DatasetRequest), DatasetRequest)
-            .filter(DatasetRequest.request_id.like(f"{prefix_id}%"))
-            .order_by(DatasetRequest.id.desc())
-            .first()
-        )
-        try:
-            seq = int(last.request_id.split("-")[-1]) + 1 if last else 1
-        except (ValueError, IndexError):
-            seq = 1
-        request_id = f"{prefix_id}{seq:03d}"
-
         folder_label = folder.rstrip("/").split("/")[-1] if folder else (c.name or f"catalog_{c.id}")
         ds = DatasetRequest(
-            request_id=request_id,
             name=f"{folder_label} (folder, {datetime.utcnow().strftime('%Y-%m-%d %H:%M')})"[:200],
             requested_by=session.get("username", "anonymous"),
             catalog_id=cid,
@@ -2568,10 +2571,8 @@ def download_catalog_folder_zip_async(cid):
             progress=0,
             storage_bucket=catalog_export_worker.EXPORT_BUCKET,
         )
-        db.add(inject_tenant(ds))
-        db.commit()
-        db.refresh(ds)
-        catalog_export_worker.enqueue(request_id)
+        _create_dataset_request(db, ds)   # 전역 유니크 request_id 부여 + 커밋
+        catalog_export_worker.enqueue(ds.request_id)
         return _ok(ds.to_dict()), 201
     except Exception as e:
         db.rollback()
@@ -3299,24 +3300,6 @@ def create_export_request():
         if not name:
             return _err("name은 필수 항목입니다.", "VALIDATION")
 
-        # request_id 생성: ds-YYYYMMDD-NNN
-        today_str = datetime.utcnow().strftime("%Y%m%d")
-        prefix = f"ds-{today_str}-"
-        last = (
-            filter_by_tenant(db.query(DatasetRequest), DatasetRequest)
-            .filter(DatasetRequest.request_id.like(f"{prefix}%"))
-            .order_by(DatasetRequest.id.desc())
-            .first()
-        )
-        if last:
-            try:
-                seq = int(last.request_id.split("-")[-1]) + 1
-            except (ValueError, IndexError):
-                seq = 1
-        else:
-            seq = 1
-        request_id = f"{prefix}{seq:03d}"
-
         # 날짜 파싱
         date_from = None
         date_to = None
@@ -3340,7 +3323,6 @@ def create_export_request():
             return _err("compression은 none 또는 gzip만 지원합니다.", "VALIDATION")
 
         ds = DatasetRequest(
-            request_id=request_id,
             name=name,
             description=body.get("description", ""),
             requested_by=session.get("username", "anonymous"),
@@ -3359,12 +3341,10 @@ def create_export_request():
             status="queued",
             progress=0,
         )
-        db.add(ds)
-        db.commit()
-        db.refresh(ds)
+        _create_dataset_request(db, ds)   # 전역 유니크 request_id 부여 + 커밋
 
         # 비동기 실행 큐에 추가
-        dataset_executor.enqueue(request_id)
+        dataset_executor.enqueue(ds.request_id)
 
         return _ok(ds.to_dict()), 201
     except Exception as e:
