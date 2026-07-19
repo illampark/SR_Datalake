@@ -1524,6 +1524,9 @@ function loadCatalogFiles(page) {
         '<div id="file-breadcrumb" style="flex:1;"></div>' +
         '<span class="fs-12" id="file-total-size" title="' + __t('page.catalog.file_total_size_tip') + '"><i class="fas fa-database" style="margin-right:4px;color:var(--text-secondary);"></i><span class="mono">-</span></span>' +
         '<span class="fs-12" id="file-select-count">0 ' + __t('page.catalog.file_selected') + '</span>' +
+        '<button class="btn btn-outline btn-sm" id="btn-download-folder" onclick="downloadFolderZip(_fileBrowsePath)" title="' + __t('page.catalog.file_download_folder_all_hint') + '">' +
+          '<i class="fas fa-folder-tree"></i> ' + __t('page.catalog.file_download_folder_all') +
+        '</button>' +
         '<button class="btn btn-primary btn-sm" id="btn-download-zip" onclick="downloadSelectedZip()" disabled>' +
           '<i class="fas fa-file-zipper"></i> ' + __t('page.catalog.file_download_zip') +
         '</button>' +
@@ -1586,7 +1589,7 @@ function loadCatalogFiles(page) {
             '<i class="fas fa-folder" style="color:var(--warning);margin-right:8px;"></i>' +
             '<span class="fw-600">' + escHtml(d.name) + '</span>' +
           '</td>' +
-          '<td></td>' +
+          '<td><button class="btn btn-outline btn-sm btn-icon" title="' + __t('page.catalog.file_download_folder') + '" onclick="event.stopPropagation();downloadFolderZip(\'' + escAttr(d.path) + '\')"><i class="fas fa-file-zipper"></i></button></td>' +
         '</tr>'
       );
     });
@@ -1781,6 +1784,42 @@ function downloadSelectedZip() {
     $('#btn-download-zip').prop('disabled', false).html('<i class="fas fa-file-zipper"></i> ' + __t('page.catalog.file_download_zip'));
   };
   xhr.send(JSON.stringify({ files: selected }));
+}
+
+// 폴더(하위 포함) 전체 ZIP 다운로드 — folderPath 는 base_prefix 상대 경로("" = 현재 전체)
+function downloadFolderZip(folderPath) {
+  var $btn = $('#btn-download-folder');
+  var orig = $btn.html();
+  $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.catalog.file_zipping'));
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', API + '/' + _dataCatalogId + '/files/download-zip', true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.responseType = 'blob';
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      var cd = xhr.getResponseHeader('Content-Disposition') || '';
+      var fn = cd.match(/filename="?([^"]+)"?/);
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(xhr.response);
+      a.download = fn ? fn[1] : 'folder.zip';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } else {
+      // 413(너무 큼) 등 서버 메시지 표출
+      var msg = __t('page.catalog.file_zip_fail');
+      try {
+        var reader = new FileReader();
+        reader.onload = function() {
+          try { var b = JSON.parse(reader.result); if (b.error && b.error.message) msg = b.error.message; } catch(e) {}
+          showToast(msg, 'error');
+        };
+        reader.readAsText(xhr.response);
+      } catch(e) { showToast(msg, 'error'); }
+    }
+    $btn.prop('disabled', false).html(orig);
+  };
+  xhr.onerror = function() { showToast(__t('page.catalog.file_zip_fail'), 'error'); $btn.prop('disabled', false).html(orig); };
+  xhr.send(JSON.stringify({ folder: folderPath || '' }));
 }
 
 function renderDataPagination(total, page) {

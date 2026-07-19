@@ -2186,6 +2186,40 @@ def _export_recipe_data(db, c, fmt):
 # CAT-011: GET /api/catalog/<id>/files — 비정형 파일 목록 (MinIO)
 # ──────────────────────────────────────────────
 @catalog_bp.route("/<int:cid>/files", methods=["GET"])
+def _catalog_file_base(db, c):
+    """카탈로그의 MinIO (bucket, base_prefix) 결정 — 파일 브라우저·폴더 ZIP 공유.
+
+    base_prefix 는 항상 '/' 로 끝난다. import 의 inbox(local_path) 는 별개 경로라
+    여기서는 다루지 않는다(정본 MinIO 기준).
+    """
+    from backend.config import MINIO_BUCKETS
+    if c.connector_type == "pipeline" and c.sink_type == "internal_file_sink":
+        sink_cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_file_sink")
+        bucket = sink_cfg.get("bucket", bucket_for("files"))
+        base_prefix = sink_cfg.get("pathPrefix", f"pipeline/{c.pipeline_id}/")
+    elif c.connector_type == "import":
+        bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
+        base_prefix = f"import/{c.connector_id}/"
+    elif c.connector_type == "file":
+        bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
+        from backend.models.collector import FileCollector as FC
+        fc = get_by_id_tenant(db, FC, c.connector_id)
+        if fc and fc.target_path_prefix:
+            base_prefix = fc.target_path_prefix.replace("{collector_id}", str(c.connector_id)).replace("{date}/", "")
+            if not base_prefix.endswith("/"):
+                base_prefix += "/"
+            bucket = fc.target_bucket or bucket
+        else:
+            base_prefix = f"raw/{c.connector_id}/"
+    else:
+        bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
+        base_prefix = f"raw/{c.connector_id}/"
+
+    if base_prefix and not base_prefix.endswith("/"):
+        base_prefix += "/"
+    return bucket, base_prefix
+
+
 def list_catalog_files(cid):
     """파일 브라우저 — 디렉토리 구조 탐색 지원
 
@@ -2226,32 +2260,8 @@ def list_catalog_files(cid):
                     ic_row, page, size, search, browse_path, date_from, date_to, c,
                 )
 
-        # base prefix 결정
-        if c.connector_type == "pipeline" and c.sink_type == "internal_file_sink":
-            sink_cfg = _get_pipeline_sink_config(db, c.pipeline_id, "internal_file_sink")
-            bucket = sink_cfg.get("bucket", bucket_for("files"))
-            base_prefix = sink_cfg.get("pathPrefix", f"pipeline/{c.pipeline_id}/")
-        elif c.connector_type == "import":
-            bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
-            base_prefix = f"import/{c.connector_id}/"
-        elif c.connector_type == "file":
-            bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
-            # FileCollector의 targetPathPrefix 사용
-            from backend.models.collector import FileCollector as FC
-            fc = get_by_id_tenant(db, FC, c.connector_id)
-            if fc and fc.target_path_prefix:
-                base_prefix = fc.target_path_prefix.replace("{collector_id}", str(c.connector_id)).replace("{date}/", "")
-                if not base_prefix.endswith("/"):
-                    base_prefix += "/"
-                bucket = fc.target_bucket or bucket
-            else:
-                base_prefix = f"raw/{c.connector_id}/"
-        else:
-            bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
-            base_prefix = f"raw/{c.connector_id}/"
-
-        if base_prefix and not base_prefix.endswith("/"):
-            base_prefix += "/"
+        # base prefix 결정 (폴더 ZIP 다운로드와 공유)
+        bucket, base_prefix = _catalog_file_base(db, c)
 
         # 탐색 경로 적용
         current_prefix = base_prefix + browse_path
@@ -2432,39 +2442,72 @@ def download_catalog_files_zip(cid):
             return _err("카탈로그를 찾을 수 없습니다.", "NOT_FOUND", 404)
 
         body = request.get_json(silent=True) or {}
-        files = body.get("files", [])  # [{"objectName": "...", "bucket": "..."}]
-        if not files:
-            return _err("다운로드할 파일을 선택하세요.", "VALIDATION")
+        files = body.get("files", [])       # [{"objectName": "...", "bucket": "..."}]
+        folder = body.get("folder", None)   # 폴더(재귀) 다운로드: browse_path(base_prefix 상대). "" = 전체
 
         import zipfile
         from backend.services.minio_client import get_minio_client
-        from backend.config import MINIO_BUCKETS
         client = get_minio_client(db)
-        default_bucket = bucket_for("files") if MINIO_BUCKETS else bucket_for("files")
+        bucket, base_prefix = _catalog_file_base(db, c)
+
+        _ZIP_MAX_BYTES = 1024 ** 3   # 1GB — 동기 in-memory ZIP 한계 (초과 시 하위 폴더로 좁힘)
+        _ZIP_MAX_FILES = 5000
+
+        # 대상 목록: (bucket, objectName, arcname) — arcname 은 base_prefix 기준 상대경로(구조 보존)
+        targets = []
+        if folder is not None:
+            prefix = base_prefix + (folder or "")
+            if prefix and not prefix.endswith("/"):
+                prefix += "/"
+            total_bytes = 0
+            for obj in client.list_objects(bucket, prefix=prefix, recursive=True):
+                if obj.object_name.endswith("/"):
+                    continue
+                arc = obj.object_name[len(base_prefix):] if obj.object_name.startswith(base_prefix) else obj.object_name
+                targets.append((bucket, obj.object_name, arc))
+                total_bytes += obj.size or 0
+                if len(targets) > _ZIP_MAX_FILES or total_bytes > _ZIP_MAX_BYTES:
+                    return _err(
+                        "폴더가 너무 큽니다 (최대 1GB / 5000개). 하위 폴더로 좁혀 받아주세요.",
+                        "TOO_LARGE", 413,
+                    )
+            if not targets:
+                return _err("폴더에 다운로드할 파일이 없습니다.", "EMPTY_FOLDER", 404)
+            label = folder.rstrip("/").split("/")[-1] if folder else (c.name or f"catalog_{c.id}")
+        else:
+            if not files:
+                return _err("다운로드할 파일을 선택하세요.", "VALIDATION")
+            for f in files:
+                obj_name = f.get("objectName", "")
+                b = f.get("bucket", "") or bucket
+                if not obj_name:
+                    continue
+                arc = obj_name[len(base_prefix):] if obj_name.startswith(base_prefix) else os.path.basename(obj_name)
+                targets.append((b, obj_name, arc))
+            if not targets:
+                return _err("다운로드할 파일을 선택하세요.", "VALIDATION")
+            label = c.name or f"catalog_{c.id}"
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f in files:
-                obj_name = f.get("objectName", "")
-                bucket = f.get("bucket", "") or default_bucket
-                if not obj_name:
-                    continue
+            written = 0
+            for b, obj_name, arc in targets:
                 try:
-                    resp = client.get_object(bucket, obj_name)
-                    data = resp.read()
+                    resp = client.get_object(b, obj_name)
+                    zf.writestr(arc or os.path.basename(obj_name), resp.read())
                     resp.close()
                     resp.release_conn()
-                    zf.writestr(os.path.basename(obj_name), data)
+                    written += 1
                 except Exception as e:
                     logger.warning(f"ZIP: skip {obj_name}: {e}")
 
         zip_buffer.seek(0)
-        catalog_name = c.name.replace("/", "_").replace(" ", "_")[:30]
+        safe = "".join(ch if (ch.isalnum() or ch in "-_.") else "_" for ch in label)[:40] or "download"
         return send_file(
             zip_buffer,
             mimetype="application/zip",
             as_attachment=True,
-            download_name=f"{catalog_name}_{len(files)}files.zip",
+            download_name=f"{safe}_{written}files.zip",
         )
     except Exception as e:
         return _err(f"ZIP 생성 실패: {e}", "SERVER_ERROR", 500)
