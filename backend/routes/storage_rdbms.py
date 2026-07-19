@@ -455,6 +455,188 @@ def list_tables(rdbms_id):
 
 
 # ──────────────────────────────────────────────
+# POST /api/storage/rdbms/<id>/tables  — 신규 테이블 생성
+# ──────────────────────────────────────────────
+
+# 허용 컬럼 타입 화이트리스트 (PostgreSQL). key = 사용자 입력(대문자),
+# value = (SQL 타입, 길이/정밀도 인자 허용 여부).
+_ALLOWED_COL_TYPES = {
+    "TEXT": ("TEXT", False),
+    "VARCHAR": ("VARCHAR", True),
+    "CHAR": ("CHAR", True),
+    "INTEGER": ("INTEGER", False),
+    "BIGINT": ("BIGINT", False),
+    "SMALLINT": ("SMALLINT", False),
+    "DOUBLE PRECISION": ("DOUBLE PRECISION", False),
+    "REAL": ("REAL", False),
+    "NUMERIC": ("NUMERIC", True),
+    "BOOLEAN": ("BOOLEAN", False),
+    "DATE": ("DATE", False),
+    "TIME": ("TIME", False),
+    "TIMESTAMP": ("TIMESTAMP", False),
+    "TIMESTAMPTZ": ("TIMESTAMPTZ", False),
+    "JSON": ("JSON", False),
+    "JSONB": ("JSONB", False),
+    "UUID": ("UUID", False),
+}
+
+# 식별자(테이블/컬럼명): 영문자/숫자/언더스코어, 숫자로 시작 불가, 최대 63자(PG 한계).
+_IDENT_RE = __import__("re").compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+
+
+def _resolve_col_type(type_name, length):
+    """화이트리스트 기반 안전 타입 SQL 생성. 실패 시 (None, error)."""
+    key = (type_name or "").strip().upper()
+    spec = _ALLOWED_COL_TYPES.get(key)
+    if not spec:
+        return None, f"허용되지 않은 컬럼 타입입니다: {type_name}"
+    sql_type, allow_len = spec
+    if allow_len and length not in (None, ""):
+        try:
+            n = int(length)
+        except (ValueError, TypeError):
+            return None, f"'{type_name}' 의 길이/정밀도는 정수여야 합니다."
+        if n < 1 or n > 10485760:
+            return None, f"'{type_name}' 의 길이/정밀도 범위가 올바르지 않습니다."
+        return f"{sql_type}({n})", None
+    return sql_type, None
+
+
+@rdbms_bp.route("/<int:rdbms_id>/tables", methods=["POST"])
+@audit_route("storage", "storage.rdbms.table.create", target_type="rdbms_table",
+             target_name_from_response="table_name",
+             detail_keys=["table_name", "if_not_exists"])
+def create_table(rdbms_id):
+    """신규 테이블 생성 (관리자 전용, PostgreSQL).
+
+    Body:
+      table_name  : str (필수) — 식별자 규칙, SYSTEM_PROTECTED_TABLES 금지
+      columns     : [{name, type, length?, nullable?, primary_key?}] (필수, 1개 이상)
+      if_not_exists : bool (default False)
+      description : str (optional) — COMMENT
+    """
+    from psycopg2 import sql as _sql
+    import psycopg2
+
+    body = request.get_json(silent=True) or {}
+    table_name = (body.get("table_name") or body.get("tableName") or "").strip()
+    columns = body.get("columns") or []
+    if_not_exists = bool(body.get("if_not_exists", False))
+    description = (body.get("description") or "").strip()
+
+    # ── 입력 검증 ──
+    if not table_name:
+        return _err("테이블명은 필수입니다.", "VALIDATION")
+    if not _IDENT_RE.match(table_name):
+        return _err("테이블명은 영문자/숫자/_ 만 사용하고 숫자로 시작할 수 없습니다 (최대 63자).", "VALIDATION")
+    if table_name.lower() in SYSTEM_PROTECTED_TABLES:
+        return _err(f"'{table_name}' 은 SDL 시스템 테이블명이라 사용할 수 없습니다.", "SYSTEM_PROTECTED", 403)
+    if not isinstance(columns, list) or len(columns) == 0:
+        return _err("컬럼을 1개 이상 정의해야 합니다.", "VALIDATION")
+
+    seen = set()
+    pk_cols = []
+    col_specs = []  # (name, resolved_type_sql, nullable, is_pk)
+    for i, c in enumerate(columns):
+        cname = (c.get("name") or "").strip()
+        if not cname:
+            return _err(f"{i + 1}번째 컬럼명이 비어 있습니다.", "VALIDATION")
+        if not _IDENT_RE.match(cname):
+            return _err(f"컬럼명 '{cname}' 이 식별자 규칙에 맞지 않습니다.", "VALIDATION")
+        if cname.lower() in seen:
+            return _err(f"중복된 컬럼명입니다: {cname}", "VALIDATION")
+        seen.add(cname.lower())
+        type_sql, terr = _resolve_col_type(c.get("type"), c.get("length"))
+        if terr:
+            return _err(terr, "VALIDATION")
+        is_pk = bool(c.get("primary_key", False))
+        # PK 컬럼은 NOT NULL 강제
+        nullable = bool(c.get("nullable", True)) and not is_pk
+        if is_pk:
+            pk_cols.append(cname)
+        col_specs.append((cname, type_sql, nullable, is_pk))
+
+    db = _db()
+    try:
+        row = get_by_id_tenant(db, RdbmsConfig, rdbms_id)
+        if not row:
+            return _err("RDBMS 인스턴스를 찾을 수 없습니다.", "NOT_FOUND", 404)
+
+        db_type = (row.db_type or "").lower()
+        if "mysql" in db_type or "maria" in db_type:
+            return _err("현재 테이블 생성은 PostgreSQL 인스턴스만 지원합니다.", "UNSUPPORTED_DBTYPE")
+
+        schema = row.schema_name or "public"
+        if schema.lower() in ("information_schema", "pg_catalog", "pg_toast"):
+            return _err("시스템 schema 에는 테이블을 생성할 수 없습니다.", "SYSTEM_PROTECTED", 403)
+
+        # ── 컬럼 정의 SQL 구성 (식별자는 Identifier, 타입은 화이트리스트 리터럴) ──
+        col_defs = []
+        for cname, type_sql, nullable, is_pk in col_specs:
+            parts = [_sql.Identifier(cname), _sql.SQL(type_sql)]
+            if not nullable:
+                parts.append(_sql.SQL("NOT NULL"))
+            # 단일 PK 는 컬럼 인라인, 복합 PK 는 테이블 제약으로 별도 추가
+            if is_pk and len(pk_cols) == 1:
+                parts.append(_sql.SQL("PRIMARY KEY"))
+            col_defs.append(_sql.SQL(" ").join(parts))
+
+        table_elems = list(col_defs)
+        if len(pk_cols) > 1:
+            table_elems.append(
+                _sql.SQL("PRIMARY KEY ({})").format(
+                    _sql.SQL(", ").join(_sql.Identifier(c) for c in pk_cols)
+                )
+            )
+
+        full_table = _sql.Identifier(schema, table_name)
+        stmt = _sql.SQL("CREATE TABLE {ifne}{tbl} ({cols})").format(
+            ifne=_sql.SQL("IF NOT EXISTS ") if if_not_exists else _sql.SQL(""),
+            tbl=full_table,
+            cols=_sql.SQL(", ").join(table_elems),
+        )
+
+        conn = _pg_connect(row)
+        try:
+            conn.autocommit = False
+            cur = conn.cursor()
+            # 이미 존재하고 if_not_exists=False 면 명확한 에러
+            cur.execute(
+                "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname=%s AND c.relname=%s AND c.relkind='r'",
+                (schema, table_name),
+            )
+            exists = cur.fetchone() is not None
+            if exists and not if_not_exists:
+                cur.close()
+                return _err(f"테이블 '{table_name}' 이 이미 존재합니다.", "ALREADY_EXISTS", 409)
+
+            cur.execute(stmt)
+            if description:
+                cur.execute(
+                    _sql.SQL("COMMENT ON TABLE {} IS %s").format(full_table),
+                    (description,),
+                )
+            conn.commit()
+            cur.close()
+        except psycopg2.Error as e:
+            conn.rollback()
+            return _err(f"테이블 생성 실패: {e}", "SQL_ERROR", 500)
+        finally:
+            conn.close()
+
+        return _ok({
+            "table_name": table_name,
+            "schema": schema,
+            "column_count": len(col_specs),
+            "primary_key": pk_cols,
+            "already_existed": exists,
+        })
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────
 # GET /api/storage/rdbms/<id>/tables/<name>/schema  — 테이블 스키마
 # ──────────────────────────────────────────────
 @rdbms_bp.route("/<int:rdbms_id>/tables/<table_name>/schema", methods=["GET"])

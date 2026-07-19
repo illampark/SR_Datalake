@@ -55,7 +55,12 @@
 <div class="card mb-24">
   <div class="card-header">
     <h3><i class="fas fa-table"></i> {{ t('page.rdbms.card_table_list') }}</h3>
-    <span id="table-count" class="badge-sm badge-primary">0{{ t('page.rdbms.badge_tables_count') }}</span>
+    <div class="d-flex align-center" style="gap:8px;">
+      <span id="table-count" class="badge-sm badge-primary">0{{ t('page.rdbms.badge_tables_count') }}</span>
+      {% if is_admin %}
+      <button class="btn btn-primary btn-sm" onclick="openCreateTableModal()"><i class="fas fa-plus"></i> {{ t('page.rdbms.btn_create_table') }}</button>
+      {% endif %}
+    </div>
   </div>
   <div class="card-body p-0">
     <div class="table-wrapper">
@@ -599,6 +604,144 @@ function _executeDeleteTable(tableName) {
       try { var b = JSON.parse(xhr.responseText); if (b.error) msg = b.error.message; } catch(e) {}
       showToast(msg, 'error');
       $('#del-execute-btn').prop('disabled', false).html('<i class="fas fa-trash"></i> ' + __t('page.rdbms.delete_execute'));
+    }
+  });
+}
+
+// ── Create table — 신규 테이블 생성 모달 ──
+var CT_TYPES = ['TEXT','VARCHAR','CHAR','INTEGER','BIGINT','SMALLINT','DOUBLE PRECISION','REAL','NUMERIC','BOOLEAN','DATE','TIME','TIMESTAMP','TIMESTAMPTZ','JSON','JSONB','UUID'];
+var CT_LEN_TYPES = ['VARCHAR','CHAR','NUMERIC'];  // 길이/정밀도 입력 허용
+var _ctRowSeq = 0;
+
+function openCreateTableModal() {
+  if (!currentInst) { showToast(__t('page.rdbms.no_rdbms_instance'), 'error'); return; }
+  if (currentInst.db_type && /mysql|maria/i.test(currentInst.db_type)) {
+    showToast(__t('page.rdbms.create_only_pg'), 'error'); return;
+  }
+  _ctRowSeq = 0;
+  var body =
+    '<div class="form-group">' +
+      '<label class="form-label"><strong>' + __t('page.rdbms.create_table_name') + '</strong> <span class="text-danger">*</span></label>' +
+      '<input type="text" id="ct-name" class="form-control mono" placeholder="my_table" maxlength="63" autocomplete="off">' +
+      '<div class="form-hint">' + __t('page.rdbms.create_name_hint') + '</div>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label class="form-label"><strong>' + __t('page.rdbms.create_columns') + '</strong> <span class="text-danger">*</span></label>' +
+      '<div class="table-wrapper"><table class="table-zebra"><thead><tr>' +
+        '<th>' + __t('page.rdbms.create_col_name') + '</th>' +
+        '<th>' + __t('page.rdbms.create_col_type') + '</th>' +
+        '<th style="width:90px;">' + __t('page.rdbms.create_col_length') + '</th>' +
+        '<th style="width:50px;" class="text-center">PK</th>' +
+        '<th style="width:70px;" class="text-center">' + __t('page.rdbms.create_col_nullable') + '</th>' +
+        '<th style="width:40px;"></th>' +
+      '</tr></thead><tbody id="ct-cols"></tbody></table></div>' +
+      '<button class="btn btn-outline btn-sm mt-8" onclick="ctAddColumn()"><i class="fas fa-plus"></i> ' + __t('page.rdbms.create_add_column') + '</button>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label class="form-label">' + __t('common.description') + '</label>' +
+      '<input type="text" id="ct-desc" class="form-control" maxlength="500" autocomplete="off">' +
+    '</div>' +
+    '<div class="form-group"><label><input type="checkbox" id="ct-ifne"> ' + __t('page.rdbms.create_if_not_exists') + '</label></div>' +
+    '<div class="text-muted fs-12"><i class="fas fa-info-circle"></i> ' +
+      __t('page.rdbms.create_schema_note').replace('{schema}', '<span class="mono">' + escHtml(currentInst.schema_name || 'public') + '</span>') + '</div>';
+
+  var footer = '<button class="btn btn-outline" onclick="closeModal()">' + __t('common.cancel') + '</button>' +
+    '<button id="ct-submit-btn" class="btn btn-primary" onclick="submitCreateTable()"><i class="fas fa-plus"></i> ' + __t('page.rdbms.btn_create_table') + '</button>';
+
+  openModal(__t('page.rdbms.create_modal_title'), body, footer, 'modal-lg');
+  // 기본 컬럼 2개 (id BIGINT PK + created_at TIMESTAMP)
+  ctAddColumn({name: 'id', type: 'BIGINT', pk: true});
+  ctAddColumn({name: 'created_at', type: 'TIMESTAMP'});
+}
+
+function ctAddColumn(preset) {
+  preset = preset || {};
+  var rid = 'ctr-' + (_ctRowSeq++);
+  var typeOpts = CT_TYPES.map(function(t) {
+    return '<option value="' + t + '"' + (preset.type === t ? ' selected' : '') + '>' + t + '</option>';
+  }).join('');
+  var needLen = CT_LEN_TYPES.indexOf(preset.type || 'TEXT') !== -1;
+  var h = '<tr id="' + rid + '">' +
+    '<td><input type="text" class="form-control mono ct-c-name" maxlength="63" placeholder="col" value="' + escAttr(preset.name || '') + '" autocomplete="off"></td>' +
+    '<td><select class="form-control ct-c-type" onchange="ctOnTypeChange(\'' + rid + '\')">' + typeOpts + '</select></td>' +
+    '<td><input type="number" class="form-control ct-c-len" min="1" placeholder="-" ' + (needLen ? '' : 'disabled') + '></td>' +
+    '<td class="text-center"><input type="checkbox" class="ct-c-pk" onchange="ctOnPkChange(\'' + rid + '\')"' + (preset.pk ? ' checked' : '') + '></td>' +
+    '<td class="text-center"><input type="checkbox" class="ct-c-null"' + (preset.pk ? ' disabled' : ' checked') + '></td>' +
+    '<td class="text-center"><button class="btn btn-outline btn-sm btn-icon" onclick="ctRemoveColumn(\'' + rid + '\')"><i class="fas fa-times text-danger"></i></button></td>' +
+    '</tr>';
+  $('#ct-cols').append(h);
+}
+
+function ctRemoveColumn(rid) { $('#' + rid).remove(); }
+
+function ctOnTypeChange(rid) {
+  var $row = $('#' + rid);
+  var t = $row.find('.ct-c-type').val();
+  var needLen = CT_LEN_TYPES.indexOf(t) !== -1;
+  $row.find('.ct-c-len').prop('disabled', !needLen);
+  if (!needLen) $row.find('.ct-c-len').val('');
+}
+
+function ctOnPkChange(rid) {
+  var $row = $('#' + rid);
+  var isPk = $row.find('.ct-c-pk').is(':checked');
+  // PK 컬럼은 NOT NULL 강제 → nullable 체크 해제/비활성
+  var $null = $row.find('.ct-c-null');
+  if (isPk) { $null.prop('checked', false).prop('disabled', true); }
+  else { $null.prop('disabled', false).prop('checked', true); }
+}
+
+function submitCreateTable() {
+  if (!currentInst) return;
+  var tableName = ($('#ct-name').val() || '').trim();
+  if (!tableName) { showToast(__t('page.rdbms.create_err_no_name'), 'error'); return; }
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(tableName)) { showToast(__t('page.rdbms.create_name_hint'), 'error'); return; }
+
+  var columns = [];
+  var dupe = {}, ok = true;
+  $('#ct-cols tr').each(function() {
+    var $r = $(this);
+    var name = ($r.find('.ct-c-name').val() || '').trim();
+    if (!name) return;  // 빈 행 스킵
+    if (dupe[name.toLowerCase()]) { showToast(__t('page.rdbms.create_err_dup_col').replace('{name}', name), 'error'); ok = false; return false; }
+    dupe[name.toLowerCase()] = true;
+    var type = $r.find('.ct-c-type').val();
+    var len = $r.find('.ct-c-len').val();
+    var pk = $r.find('.ct-c-pk').is(':checked');
+    var nullable = $r.find('.ct-c-null').is(':checked');
+    var col = {name: name, type: type, nullable: nullable, primary_key: pk};
+    if (len) col.length = parseInt(len, 10);
+    columns.push(col);
+  });
+  if (!ok) return;
+  if (columns.length === 0) { showToast(__t('page.rdbms.create_err_no_col'), 'error'); return; }
+
+  $('#ct-submit-btn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> ' + __t('page.rdbms.create_submitting'));
+  $.ajax({
+    url: API + '/' + currentInst.id + '/tables',
+    method: 'POST',
+    contentType: 'application/json',
+    data: JSON.stringify({
+      table_name: tableName,
+      columns: columns,
+      if_not_exists: $('#ct-ifne').is(':checked'),
+      description: ($('#ct-desc').val() || '').trim()
+    }),
+    success: function(res) {
+      if (res.success) {
+        showToast(__t('page.rdbms.create_toast_ok').replace('{name}', tableName), 'success');
+        closeModal();
+        loadTables(currentInst.id);
+      } else {
+        showToast((res.error && res.error.message) || __t('common.error'), 'error');
+        $('#ct-submit-btn').prop('disabled', false).html('<i class="fas fa-plus"></i> ' + __t('page.rdbms.btn_create_table'));
+      }
+    },
+    error: function(xhr) {
+      var msg = __t('common.error');
+      try { var b = JSON.parse(xhr.responseText); if (b.error) msg = b.error.message; } catch(e) {}
+      showToast(msg, 'error');
+      $('#ct-submit-btn').prop('disabled', false).html('<i class="fas fa-plus"></i> ' + __t('page.rdbms.btn_create_table'));
     }
   });
 }
