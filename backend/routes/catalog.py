@@ -796,21 +796,44 @@ def catalog_tree():
             DataCatalog.is_deprecated == False  # noqa: E712
         ).order_by(DataCatalog.connector_type, DataCatalog.connector_id).all()
 
+        # 구조: { connectorType: { connectorId: {"name": 표시이름, "items": [...] } } }
+        # 커넥터 노드에 raw id 대신 실제 이름을 노출하기 위해 name 을 함께 담는다.
+        from backend.services.catalog_sync import get_connector_name
+
         tree = {}
+        group_desc = {}   # (ct, ci) -> 그룹 카탈로그 connector_description
+        group_name = {}   # (ct, ci) -> 그룹 카탈로그 name
         for r in rows:
             ct = r.connector_type
             ci = str(r.connector_id or 0)
-            if ct not in tree:
-                tree[ct] = {}
-            if ci not in tree[ct]:
-                tree[ct][ci] = []
-            tree[ct][ci].append({
+            node = tree.setdefault(ct, {}).setdefault(ci, {"name": None, "items": []})
+            node["items"].append({
                 "id": r.id,
                 "name": r.name,
                 "tagName": r.tag_name,
                 "category": r.category,
                 "dataLevel": r.data_level,
             })
+            if not r.tag_name:  # 커넥터 레벨(그룹) 카탈로그
+                group_desc[(ct, ci)] = r.connector_description or ""
+                group_name[(ct, ci)] = r.name or ""
+
+        # 커넥터 표시 이름 해석: 실커넥터 .name → 그룹 connector_description
+        #   → 그룹 카탈로그 name → "#id" 순 폴백.
+        for ct, conns in tree.items():
+            for ci, node in conns.items():
+                display = ""
+                try:
+                    display = get_connector_name(db, ct, int(ci)) or ""
+                except (ValueError, TypeError):
+                    display = ""
+                if not display:
+                    display = group_desc.get((ct, ci), "")
+                if not display:
+                    display = group_name.get((ct, ci), "")
+                if not display:
+                    display = f"#{ci}"
+                node["name"] = display
 
         return _ok(tree)
     finally:

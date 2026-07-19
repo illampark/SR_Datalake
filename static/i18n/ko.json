@@ -1893,6 +1893,8 @@
       "no_catalogs": "등록된 카탈로그가 없습니다.",
       "tree_no_catalogs": "카탈로그가 없습니다.",
       "tree_connector_prefix": "커넥터 #",
+      "tree_search_placeholder": "커넥터·카탈로그·태그 검색",
+      "tree_no_match": "검색 결과가 없습니다.",
       "no_description": "설명 없음",
       "detail_connector_type": "커넥터 타입",
       "detail_connector_id": "커넥터 ID",

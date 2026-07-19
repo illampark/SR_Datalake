@@ -54,7 +54,15 @@
       <div class="card-header">
         <h3><i class="fas fa-sitemap"></i> {{ t('page.catalog.tree_title') }}</h3>
       </div>
-      <div class="card-body" style="max-height:600px;overflow-y:auto;padding:0;">
+      <div style="padding:8px 12px;border-bottom:1px solid var(--c-border);">
+        <div style="position:relative;">
+          <i class="fas fa-search text-muted" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:11px;"></i>
+          <input type="text" id="tree-search" class="form-control" style="padding-left:28px;font-size:12px;"
+                 placeholder="{{ t('page.catalog.tree_search_placeholder') }}"
+                 oninput="renderTree(this.value)" autocomplete="off">
+        </div>
+      </div>
+      <div class="card-body" style="max-height:560px;overflow-y:auto;padding:0;">
         <div class="tree-view" id="catalog-tree">
           <div class="text-center text-muted" style="padding:40px">{{ t('common.loading') }}</div>
         </div>
@@ -462,82 +470,131 @@ function loadCatalogs(page) {
 }
 
 /* ── Load Tree ── */
+var _treeData = null;  // /tree 응답 캐시 (검색 필터가 재렌더에 재사용)
+
 function loadTree() {
   $.getJSON(API + '/tree', function(r) {
     if (!r.success) return;
-    var tree = r.data;
-    var $tv = $('#catalog-tree').empty();
+    _treeData = r.data;
+    renderTree($('#tree-search').val() || '');
+  });
+}
 
-    if (!tree || !Object.keys(tree).length) {
-      $tv.html('<div class="text-center text-muted" style="padding:40px">' + __t('page.catalog.tree_no_catalogs') + '</div>');
-      return;
-    }
+// 검색어 하이라이트 (원본 문자열 기준, 대소문자 무시). term 은 소문자.
+function _treeHl(text, term) {
+  text = text || '';
+  var esc = escHtml(text);
+  if (!term) return esc;
+  var idx = text.toLowerCase().indexOf(term);
+  if (idx < 0) return esc;
+  return escHtml(text.substring(0, idx)) +
+         '<mark>' + escHtml(text.substring(idx, idx + term.length)) + '</mark>' +
+         _treeHl(text.substring(idx + term.length), term);
+}
 
-    // tree structure: { connectorType: { connectorId: [ items ] } }
-    Object.keys(tree).forEach(function(connType) {
-      var icon = connectorIcons[connType] || 'fa-plug';
-      var label = connectorLabels[connType] || connType;
-      var connectors = tree[connType];
-      var connCount = 0;
-      Object.keys(connectors).forEach(function(k) { connCount += connectors[k].length; });
+// 트리 렌더 + 검색 필터. term 이 있으면 매칭 브랜치만 남기고 자동 펼침·하이라이트.
+function renderTree(rawTerm) {
+  if (!_treeData) return;
+  var term = (rawTerm || '').trim().toLowerCase();
+  var filtering = term.length > 0;
+  var $tv = $('#catalog-tree').empty();
 
-      var $typeNode = $(
-        '<div class="tree-item" style="font-weight:600;padding:8px 12px;cursor:pointer;">' +
-          '<i class="fas fa-chevron-right tree-toggle" style="margin-right:6px;font-size:10px;"></i>' +
-          '<i class="fas ' + icon + '" style="margin-right:6px;color:var(--c-primary);"></i>' +
-          escHtml(label) +
-          '<span class="fs-11 text-muted" style="margin-left:6px;">(' + connCount + ')</span>' +
+  if (!Object.keys(_treeData).length) {
+    $tv.html('<div class="text-center text-muted" style="padding:40px">' + __t('page.catalog.tree_no_catalogs') + '</div>');
+    return;
+  }
+
+  var anyShown = false;
+
+  Object.keys(_treeData).forEach(function(connType) {
+    var icon = connectorIcons[connType] || 'fa-plug';
+    var label = connectorLabels[connType] || connType;
+    var connectors = _treeData[connType];
+    var typeMatch = filtering && label.toLowerCase().indexOf(term) >= 0;
+
+    var connPairs = [];   // [$connNode, $connChildren]
+    var typeCount = 0;
+
+    Object.keys(connectors).forEach(function(connId) {
+      var conn = connectors[connId] || {name: '', items: []};
+      var items = conn.items || [];
+      typeCount += items.length;
+      var connName = conn.name || ('#' + connId);
+      var connMatch = filtering &&
+        (connName.toLowerCase().indexOf(term) >= 0 || String(connId).indexOf(term) >= 0);
+
+      // 커넥터/타입 자체가 매칭이면 전체 leaf, 아니면 매칭 leaf 만.
+      var showItems = (!filtering || connMatch || typeMatch) ? items : items.filter(function(it) {
+        return (it.name || '').toLowerCase().indexOf(term) >= 0 ||
+               (it.tagName || '').toLowerCase().indexOf(term) >= 0;
+      });
+      if (filtering && showItems.length === 0 && !connMatch) return;  // 매칭 없는 커넥터 스킵
+
+      // 커넥터 노드: raw id 대신 이름 표시 (+ #id 칩)
+      var idChip = (connName === ('#' + connId)) ? '' :
+        '<span class="fs-11 text-muted" style="margin-left:5px;">#' + escHtml(String(connId)) + '</span>';
+      var $connNode = $(
+        '<div class="tree-item" style="padding:6px 12px;cursor:pointer;">' +
+          '<i class="fas fa-chevron-right tree-toggle" style="margin-right:6px;font-size:9px;"></i>' +
+          '<i class="fas fa-link text-muted" style="margin-right:6px;font-size:11px;"></i>' +
+          '<span class="fw-600 fs-12">' + _treeHl(connName, term) + '</span>' + idChip +
+          '<span class="fs-11 text-muted" style="margin-left:6px;">(' + showItems.length + ')</span>' +
         '</div>'
       );
-      var $typeChildren = $('<div class="tree-node" style="display:none;"></div>');
-
-      $typeNode.on('click', function() {
-        var $toggle = $(this).find('.tree-toggle');
-        $toggle.toggleClass('open');
-        $typeChildren.slideToggle(150);
+      var expanded = filtering;
+      if (expanded) $connNode.find('.tree-toggle').addClass('open');
+      var $connChildren = $('<div class="tree-node" style="display:' + (expanded ? 'block' : 'none') + ';"></div>');
+      $connNode.on('click', function(e) {
+        e.stopPropagation();
+        $(this).find('.tree-toggle').toggleClass('open');
+        $connChildren.slideToggle(150);
       });
 
-      Object.keys(connectors).forEach(function(connId) {
-        var items = connectors[connId];
-        var $connNode = $(
-          '<div class="tree-item" style="padding:6px 12px;cursor:pointer;">' +
-            '<i class="fas fa-chevron-right tree-toggle" style="margin-right:6px;font-size:9px;"></i>' +
-            '<i class="fas fa-link text-muted" style="margin-right:6px;font-size:11px;"></i>' +
-            '<span class="fw-600 fs-12">' + __t('page.catalog.tree_connector_prefix') + escHtml(String(connId)) + '</span>' +
-            '<span class="fs-11 text-muted" style="margin-left:6px;">(' + items.length + ')</span>' +
+      showItems.forEach(function(item) {
+        var leafIcon = item.tagName ? 'fa-tag' : 'fa-layer-group';  // 태그 vs 그룹(전체) 구분
+        var $leaf = $(
+          '<div class="tree-item" style="padding:5px 12px;cursor:pointer;font-size:12px;" data-id="' + item.id + '">' +
+            '<i class="fas ' + leafIcon + ' text-muted" style="margin-right:6px;font-size:11px;"></i>' +
+            _treeHl(item.name, term) +
           '</div>'
         );
-        var $connChildren = $('<div class="tree-node" style="display:none;"></div>');
-
-        $connNode.on('click', function(e) {
+        $leaf.on('click', function(e) {
           e.stopPropagation();
-          var $toggle = $(this).find('.tree-toggle');
-          $toggle.toggleClass('open');
-          $connChildren.slideToggle(150);
+          $('.tree-item').removeClass('selected');
+          $(this).addClass('selected');
+          showDetail(item.id);
         });
-
-        items.forEach(function(item) {
-          var $leaf = $(
-            '<div class="tree-item" style="padding:5px 12px;cursor:pointer;font-size:12px;" data-id="' + item.id + '">' +
-              '<i class="fas fa-file-alt text-muted" style="margin-right:6px;font-size:11px;"></i>' +
-              escHtml(item.name) +
-            '</div>'
-          );
-          $leaf.on('click', function(e) {
-            e.stopPropagation();
-            $('.tree-item').removeClass('selected');
-            $(this).addClass('selected');
-            showDetail(item.id);
-          });
-          $connChildren.append($leaf);
-        });
-
-        $typeChildren.append($connNode, $connChildren);
+        $connChildren.append($leaf);
       });
 
-      $tv.append($typeNode, $typeChildren);
+      connPairs.push([$connNode, $connChildren]);
     });
+
+    if (filtering && connPairs.length === 0 && !typeMatch) return;  // 매칭 없는 타입 스킵
+    anyShown = true;
+
+    var $typeNode = $(
+      '<div class="tree-item" style="font-weight:600;padding:8px 12px;cursor:pointer;">' +
+        '<i class="fas fa-chevron-right tree-toggle" style="margin-right:6px;font-size:10px;"></i>' +
+        '<i class="fas ' + icon + '" style="margin-right:6px;color:var(--c-primary);"></i>' +
+        _treeHl(label, term) +
+        '<span class="fs-11 text-muted" style="margin-left:6px;">(' + typeCount + ')</span>' +
+      '</div>'
+    );
+    var typeExpanded = filtering;
+    if (typeExpanded) $typeNode.find('.tree-toggle').addClass('open');
+    var $typeChildren = $('<div class="tree-node" style="display:' + (typeExpanded ? 'block' : 'none') + ';"></div>');
+    $typeNode.on('click', function() {
+      $(this).find('.tree-toggle').toggleClass('open');
+      $typeChildren.slideToggle(150);
+    });
+    connPairs.forEach(function(p) { $typeChildren.append(p[0], p[1]); });
+    $tv.append($typeNode, $typeChildren);
   });
+
+  if (filtering && !anyShown) {
+    $tv.html('<div class="text-center text-muted" style="padding:30px">' + __t('page.catalog.tree_no_match') + '</div>');
+  }
 }
 
 /* ── Load Categories ── */

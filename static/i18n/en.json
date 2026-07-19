@@ -1893,6 +1893,8 @@
       "no_catalogs": "No catalogs registered.",
       "tree_no_catalogs": "No catalogs available.",
       "tree_connector_prefix": "Connector #",
+      "tree_search_placeholder": "Search connectors, catalogs, tags",
+      "tree_no_match": "No matching results.",
       "no_description": "No description",
       "detail_connector_type": "Connector Type",
       "detail_connector_id": "Connector ID",
