@@ -9,6 +9,7 @@
 | 2026-08-10 22:20 | 설정만  | 프로덕션 | mosquitto.conf + 재시작 | ✓ Config loaded · pub/sub 왕복 · 드롭 0   | config/*.bak.20260810_134327 |
 | 2026-08-10 22:57 | 설정만  | 스테이징 | mosquitto.conf + 재시작 | ✓ Config loaded · pub/sub 왕복 · 드롭 0   | config/*.bak.20260810_225655 |
 | 2026-08-10 22:15 | 설정만  | DGX      | mosquitto.conf + 재시작 | ✓ Config loaded · 파이프라인 9개 유지     | deploy/config/*.bak.20260810_221554 |
+| 2026-08-11 00:52 | 3e12665 | DGX      | 로컬 빌드(aarch64) + 교체 | ✓ 2,688행 무손실 재현검증 · 드롭 0 · 8테이블 3,393행 | rollback-20260811-dgx |
 
 ## 배포 후 점검 (생략 금지)
 
