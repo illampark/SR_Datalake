@@ -21,3 +21,7 @@ deploy/config/sftp_host_key
 *.bak
 *.bak.*
 *.bak-*
+
+# 로컬에서 관리한다 (docs/runbook/environments.md 의 파일 배치 참조)
+CLAUDE.md
+HANDOFF.md

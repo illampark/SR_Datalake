@@ -66,3 +66,19 @@ DGX 는 별도 빌드이므로 애초에 시각이 다르다. **DGX 는 커밋 �
 - **Benthos 는 앱 컨테이너의 자식 프로세스다.** 재배포하면 함께 사라지고 복원 로직이
   없다. 커넥터 status 는 running 으로 남으므로 DB 만 보면 정상으로 보인다.
 - **DGX 의 git remote URL 에 GitHub 토큰이 평문으로 박혀 있다.** 토큰 교체 시 함께 정리.
+
+## 파일 배치 — 각 파일의 집은 하나다
+
+두 곳에 두면 반드시 갈라진다. 실제로 서버 정보가 세 곳(`server_info.txt` ·
+`~/server_info.md` · `~/BUILD.md`)에 각기 다르게 낡아 있던 것이 그 사례다.
+
+| 파일 | 위치 | 이유 |
+|---|---|---|
+| `CLAUDE.md` | **로컬 작업 폴더** | Claude Code 는 로컬 작업 디렉터리에서만 읽는다. 서버에 두면 효과가 없다 |
+| `HANDOFF.md` | **로컬 작업 폴더** | 세션 시작 즉시 읽어야 한다. 매 세션 덮어쓰므로 git 이력이 불필요하고 기기 간 전달은 Drive 동기화가 맡는다 |
+| `working_temp/` | **로컬** | 왕복 편집용 스크래치. 평상시 비어 있다 |
+| `docs/worklogs/` · `docs/runbook/` · `docs/decisions/` · `docs/deploy-log.md` | 이 리포 | 이력이 필요하다 |
+| `scripts/` | 이 리포 | 서버에서 실행한다 |
+
+`HANDOFF.md` 는 덮어써서 사라지므로, 남겨야 할 내용은 세션 종료 시
+`docs/worklogs/<오늘>.md` 로 옮긴다.
