@@ -11,7 +11,9 @@ import io
 import json
 import logging
 import math
+import os
 import statistics
+import threading
 from collections import deque
 from datetime import datetime
 from backend.services.minio_buckets import bucket_for
@@ -1092,9 +1094,98 @@ def _mysql_ident(s):
     return "`" + str(s).replace("`", "``").replace("%", "%%") + "`"
 
 
+# ══════════════════════════════════════════════
+# RDBMS 싱크 — 커넥션 풀 · 스키마 캐시
+# ══════════════════════════════════════════════
+#
+# 배경 (2026-08-10 유실 사고)
+#   대량 백필 중 MQTT 메시지가 유실됐다. 브로커 로그에
+#   "Outgoing messages are being dropped for client sdl-pipeline-9" 가 남았다.
+#   원인은 sink 처리 속도였다. 메시지마다
+#     (1) psycopg2.connect  (2) CREATE TABLE IF NOT EXISTS
+#     (3) information_schema 조회  (4) 필요 시 ALTER TABLE
+#   를 수행해 건당 7ms(약 144건/s)에 그쳤고, 버스트가 mosquitto 송신 큐(기본
+#   1000건)를 넘겨 QoS 1 메시지가 드롭됐다.
+#
+# 대응
+#   커넥션을 대상 DB 별 풀에서 재사용하고, 테이블·컬럼 확인 결과를 캐시해
+#   정상 경로에서 INSERT + COMMIT 만 남긴다. 스키마 오류나 연결 끊김이
+#   발생하면 캐시·커넥션을 버리고 1회 재시도하므로 자기 치유된다.
+#
+# MySQL 경로는 스키마 캐시만 적용한다. pymysql 은 내장 풀이 없어 직접 구현이
+# 필요한데, 내부 싱크는 PostgreSQL 이고 MySQL 은 외부 연동 전용이라 위험 대비
+# 이득이 작다. 필요해지면 같은 패턴으로 확장한다.
+
+_rdbms_pools = {}                 # target -> ThreadedConnectionPool
+_rdbms_pool_lock = threading.Lock()
+_rdbms_schema_cache = {}          # (target, schema, table) -> set(보장된 컬럼)
+_rdbms_schema_lock = threading.Lock()
+
+# 워커 프로세스당 대상 DB 하나에 유지할 최대 커넥션 수.
+_SINK_POOL_MAX = int(os.getenv("SDL_SINK_POOL_MAX", "8"))
+
+
+def _pg_pool(host, port, database, username, password):
+    """대상 DB 별 커넥션 풀을 반환한다. → (target, pool)"""
+    target = (host, int(port), database or "postgres", username)
+    with _rdbms_pool_lock:
+        pool = _rdbms_pools.get(target)
+        if pool is None:
+            from psycopg2 import pool as _pgpool
+            pool = _pgpool.ThreadedConnectionPool(
+                1, _SINK_POOL_MAX,
+                host=host, port=port, dbname=database or "postgres",
+                user=username, password=password, connect_timeout=10,
+            )
+            _rdbms_pools[target] = pool
+            logger.info("RDBMS sink: 커넥션 풀 생성 %s:%s/%s (max=%d)",
+                        host, port, database, _SINK_POOL_MAX)
+        return target, pool
+
+
+def _schema_cached(target, schema, table, columns):
+    """이 컬럼 집합이 이미 보장돼 있으면 True — 스키마 왕복을 건너뛴다."""
+    with _rdbms_schema_lock:
+        known = _rdbms_schema_cache.get((target, schema, table))
+    return known is not None and set(columns).issubset(known)
+
+
+def _schema_remember(target, schema, table, columns):
+    with _rdbms_schema_lock:
+        key = (target, schema, table)
+        _rdbms_schema_cache[key] = _rdbms_schema_cache.get(key, set()) | set(columns)
+
+
+def _schema_forget(target, schema=None, table=None):
+    """스키마가 바뀌었거나 연결이 끊겼을 때 캐시를 버린다."""
+    with _rdbms_schema_lock:
+        doomed = [
+            k for k in _rdbms_schema_cache
+            if k[0] == target
+            and (schema is None or k[1] == schema)
+            and (table is None or k[2] == table)
+        ]
+        for k in doomed:
+            _rdbms_schema_cache.pop(k, None)
+
+
+def close_rdbms_pools():
+    """모든 싱크 커넥션 풀을 닫는다 (프로세스 종료·테스트 정리용)."""
+    with _rdbms_pool_lock:
+        for target, pool in list(_rdbms_pools.items()):
+            try:
+                pool.closeall()
+            except Exception:
+                logger.debug("RDBMS sink: 풀 종료 실패 %s", target, exc_info=True)
+            _rdbms_pools.pop(target, None)
+    with _rdbms_schema_lock:
+        _rdbms_schema_cache.clear()
+
+
 def _rdbms_write_mysql(host, port, database, username, password,
                         table_name, columns, rows):
     import pymysql
+    target = (host, int(port), database, username)
     conn = pymysql.connect(
         host=host, port=port, database=database,
         user=username, password=password,
@@ -1104,29 +1195,32 @@ def _rdbms_write_mysql(host, port, database, username, password,
         cur = conn.cursor()
         tbl = _mysql_ident(table_name)
         col_idents = [_mysql_ident(c) for c in columns]
-        # 테이블 자동 생성 (없으면)
-        col_defs = ", ".join(f"{ci} TEXT" for ci in col_idents)
-        cur.execute(
-            f"CREATE TABLE IF NOT EXISTS {tbl} "
-            f"(id INT AUTO_INCREMENT PRIMARY KEY, {col_defs})"
-        )
-        # 스키마 진화 — 누락 컬럼 ALTER TABLE ADD COLUMN (PG 와 동일 로직).
-        cur.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = %s",
-            (database, table_name),
-        )
-        existing_cols = {r[0] for r in cur.fetchall()}
-        missing = [c for c in columns if c not in existing_cols]
-        for col_name in missing:
+        if not _schema_cached(target, database, table_name, columns):
+            # 테이블 자동 생성 (없으면)
+            col_defs = ", ".join(f"{ci} TEXT" for ci in col_idents)
             cur.execute(
-                f"ALTER TABLE {tbl} ADD COLUMN {_mysql_ident(col_name)} TEXT"
+                f"CREATE TABLE IF NOT EXISTS {tbl} "
+                f"(id INT AUTO_INCREMENT PRIMARY KEY, {col_defs})"
             )
-        if missing:
-            logger.info(
-                "RDBMS sink (mysql): added %d missing column(s) to %s: %s",
-                len(missing), table_name, missing,
+            # 스키마 진화 — 누락 컬럼 ALTER TABLE ADD COLUMN (PG 와 동일 로직).
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = %s",
+                (database, table_name),
             )
+            existing_cols = {r[0] for r in cur.fetchall()}
+            missing = [c for c in columns if c not in existing_cols]
+            for col_name in missing:
+                cur.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN {_mysql_ident(col_name)} TEXT"
+                )
+            if missing:
+                logger.info(
+                    "RDBMS sink (mysql): added %d missing column(s) to %s: %s",
+                    len(missing), table_name, missing,
+                )
+            _schema_remember(target, database, table_name,
+                             existing_cols | set(columns))
         # INSERT
         placeholders = ", ".join(["%s"] * len(columns))
         col_names = ", ".join(col_idents)
@@ -1137,6 +1231,10 @@ def _rdbms_write_mysql(host, port, database, username, password,
         ]
         cur.executemany(sql, values)
         conn.commit()
+    except Exception:
+        # 테이블·컬럼이 사라졌을 수 있다. 캐시를 버려 다음 호출이 다시 보장하게 한다.
+        _schema_forget(target, database, table_name)
+        raise
     finally:
         conn.close()
 
@@ -1153,74 +1251,119 @@ def _rdbms_write_pg(host, port, database, username, password,
         써도 결과가 어긋나 'column does not exist' 가 발생할 수 있다
       - 따라서 INSERT 경로에 한해 식별자 내부 `%` → `%%` 로 escape 하고,
         CREATE TABLE (no-params 경로) 는 원본 식별자 그대로 사용.
+
+    커넥션은 대상 DB 별 풀에서 빌려 쓰고, 스키마 확인 결과는 캐시한다.
+    캐시가 적중하면 이 함수는 INSERT + COMMIT 만 수행한다.
     """
     import psycopg2
+    target, pool = _pg_pool(host, port, database, username, password)
+
+    last_err = None
+    for attempt in (0, 1):
+        conn = pool.getconn()
+        try:
+            _pg_ensure_schema(conn, target, schema, table_name, columns)
+            _pg_insert(conn, schema, table_name, columns, rows)
+            conn.commit()
+            pool.putconn(conn)
+            return
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            # 커넥션이 끊겼다(서버 재시작·타임아웃). 폐기하고 새 커넥션으로 1회 재시도.
+            _schema_forget(target)
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            last_err = e
+            logger.warning("RDBMS sink: 커넥션 재수립 후 재시도 — %s", e)
+        except psycopg2.ProgrammingError as e:
+            # 테이블·컬럼이 사라졌다. 캐시를 버리고 스키마를 다시 보장하며 1회 재시도.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            _schema_forget(target, schema, table_name)
+            pool.putconn(conn)
+            last_err = e
+            logger.warning("RDBMS sink: 스키마 캐시 무효화 후 재시도 — %s", e)
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            pool.putconn(conn)
+            raise
+    raise last_err
+
+
+def _pg_ensure_schema(conn, target, schema, table_name, columns):
+    """테이블과 컬럼을 보장한다. 캐시가 적중하면 아무 것도 하지 않는다."""
+    if _schema_cached(target, schema, table_name, columns):
+        return
     from psycopg2 import sql as _sql
-    conn = psycopg2.connect(
-        host=host, port=port, dbname=database or "postgres",
-        user=username, password=password,
-        connect_timeout=10,
+    cur = conn.cursor()
+    # CREATE TABLE — no params → % 는 literal 그대로
+    full_table_create = (
+        _sql.Identifier(schema, table_name) if schema
+        else _sql.Identifier(table_name)
     )
-    try:
-        cur = conn.cursor()
-        # CREATE TABLE — no params → % 는 literal 그대로
-        full_table_create = (
-            _sql.Identifier(schema, table_name) if schema
-            else _sql.Identifier(table_name)
-        )
-        create_col_idents = [_sql.Identifier(c) for c in columns]
-        col_defs = _sql.SQL(", ").join(
-            _sql.SQL("{} TEXT").format(ci) for ci in create_col_idents
-        )
+    create_col_idents = [_sql.Identifier(c) for c in columns]
+    col_defs = _sql.SQL(", ").join(
+        _sql.SQL("{} TEXT").format(ci) for ci in create_col_idents
+    )
+    cur.execute(
+        _sql.SQL(
+            "CREATE TABLE IF NOT EXISTS {tbl} (id SERIAL PRIMARY KEY, {cols})"
+        ).format(tbl=full_table_create, cols=col_defs)
+    )
+    # 스키마 진화 — 기존 테이블에 누락된 컬럼이 있으면 ALTER TABLE 로 추가.
+    # 첫 배치에 등장하지 않았던 컬럼(예: 측정 레이어 L5/L6, VIA PAD WIDTH) 이
+    # 이후 row 에 나타나면 INSERT 가 "column does not exist" 로 실패하던 문제 fix.
+    cur.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = %s AND table_name = %s",
+        (schema or "public", table_name),
+    )
+    existing_cols = {r[0] for r in cur.fetchall()}
+    missing = [c for c in columns if c not in existing_cols]
+    for col_name in missing:
         cur.execute(
-            _sql.SQL(
-                "CREATE TABLE IF NOT EXISTS {tbl} (id SERIAL PRIMARY KEY, {cols})"
-            ).format(tbl=full_table_create, cols=col_defs)
-        )
-        # 스키마 진화 — 기존 테이블에 누락된 컬럼이 있으면 ALTER TABLE 로 추가.
-        # 첫 배치에 등장하지 않았던 컬럼(예: 측정 레이어 L5/L6, VIA PAD WIDTH) 이
-        # 이후 row 에 나타나면 INSERT 가 "column does not exist" 로 실패하던 문제 fix.
-        cur.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = %s AND table_name = %s",
-            (schema or "public", table_name),
-        )
-        existing_cols = {r[0] for r in cur.fetchall()}
-        missing = [c for c in columns if c not in existing_cols]
-        for col_name in missing:
-            cur.execute(
-                _sql.SQL("ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} TEXT").format(
-                    tbl=full_table_create,
-                    col=_sql.Identifier(col_name),
-                )
+            _sql.SQL("ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} TEXT").format(
+                tbl=full_table_create,
+                col=_sql.Identifier(col_name),
             )
-        if missing:
-            logger.info(
-                "RDBMS sink: added %d missing column(s) to %s: %s",
-                len(missing), table_name, missing,
-            )
-        # INSERT — executemany 가 %-format 처리하므로 식별자 % → %% escape
-        safe_table = str(table_name).replace("%", "%%")
-        safe_schema = str(schema).replace("%", "%%") if schema else None
-        safe_cols = [str(c).replace("%", "%%") for c in columns]
-        full_table_insert = (
-            _sql.Identifier(safe_schema, safe_table) if safe_schema
-            else _sql.Identifier(safe_table)
         )
-        insert_col_idents = [_sql.Identifier(c) for c in safe_cols]
-        placeholders = _sql.SQL(", ").join(_sql.Placeholder() for _ in columns)
-        col_names = _sql.SQL(", ").join(insert_col_idents)
-        insert_sql = _sql.SQL(
-            "INSERT INTO {tbl} ({cols}) VALUES ({vals})"
-        ).format(tbl=full_table_insert, cols=col_names, vals=placeholders)
-        values = [
-            tuple(str(r.get(c, "")) if r.get(c) is not None else None for c in columns)
-            for r in rows
-        ]
-        cur.executemany(insert_sql, values)
-        conn.commit()
-    finally:
-        conn.close()
+    if missing:
+        logger.info(
+            "RDBMS sink: added %d missing column(s) to %s: %s",
+            len(missing), table_name, missing,
+        )
+    # DDL 을 확정한 뒤에 캐시에 기록한다 — 롤백되면 캐시가 거짓이 되므로.
+    conn.commit()
+    _schema_remember(target, schema, table_name, existing_cols | set(columns))
+
+
+def _pg_insert(conn, schema, table_name, columns, rows):
+    """INSERT — executemany 가 %-format 처리하므로 식별자 % → %% escape."""
+    from psycopg2 import sql as _sql
+    safe_table = str(table_name).replace("%", "%%")
+    safe_schema = str(schema).replace("%", "%%") if schema else None
+    safe_cols = [str(c).replace("%", "%%") for c in columns]
+    full_table_insert = (
+        _sql.Identifier(safe_schema, safe_table) if safe_schema
+        else _sql.Identifier(safe_table)
+    )
+    insert_col_idents = [_sql.Identifier(c) for c in safe_cols]
+    placeholders = _sql.SQL(", ").join(_sql.Placeholder() for _ in columns)
+    col_names = _sql.SQL(", ").join(insert_col_idents)
+    insert_sql = _sql.SQL(
+        "INSERT INTO {tbl} ({cols}) VALUES ({vals})"
+    ).format(tbl=full_table_insert, cols=col_names, vals=placeholders)
+    values = [
+        tuple(str(r.get(c, "")) if r.get(c) is not None else None for c in columns)
+        for r in rows
+    ]
+    conn.cursor().executemany(insert_sql, values)
 
 
 # ══════════════════════════════════════════════
