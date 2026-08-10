@@ -383,6 +383,11 @@ def introspect_db_columns(db_type, host, port, database, username, password,
     table = (table or "").strip()
     if not table:
         return False, "테이블명이 비어 있습니다.", []
+    schema = (schema or "").strip()
+    # "schema.table" 형태 입력 지원 (점 포함 시 스키마 지정으로 해석)
+    if "." in table:
+        _sp, _tp = table.split(".", 1)
+        schema, table = _sp.strip(), _tp.strip()
     try:
         if db_type in ("mysql", "mariadb"):
             import pymysql
@@ -397,7 +402,7 @@ def introspect_db_columns(db_type, host, port, database, username, password,
                 "FROM information_schema.COLUMNS "
                 "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s "
                 "ORDER BY ORDINAL_POSITION",
-                (database, table),
+                ((schema or database), table),
             )
             rows = cursor.fetchall()
             conn.close()
@@ -420,7 +425,18 @@ def introspect_db_columns(db_type, host, port, database, username, password,
                 dbname=database, connect_timeout=timeout_sec,
             )
             cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            sch = (schema or "").strip() or "public"
+            # 스키마 미지정 시: 테이블이 실제로 속한 (비시스템) 스키마 자동 탐지.
+            # 멀티스키마 소스(예: fdc/mes/vms)에서 base 테이블명만으로 조회 가능.
+            sch = schema
+            if not sch:
+                cursor.execute(
+                    "SELECT table_schema FROM information_schema.tables "
+                    "WHERE table_name = %s "
+                    "AND table_schema NOT IN ('pg_catalog', 'information_schema') "
+                    "ORDER BY (table_schema = 'public') DESC, table_schema LIMIT 1",
+                    (table,))
+                _r = cursor.fetchone()
+                sch = _r["table_schema"] if _r else "public"
             cursor.execute(
                 """
                 SELECT
