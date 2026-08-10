@@ -16,3 +16,8 @@ docs/github.txt
 # i18n 자동 백업
 static/i18n/.backup/
 deploy/config/sftp_host_key
+
+# 배포 중 생성되는 설정 백업본
+*.bak
+*.bak.*
+*.bak-*
