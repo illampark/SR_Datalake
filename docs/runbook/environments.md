@@ -19,8 +19,9 @@
 | 빌드 컨텍스트   | ~/sdl-build (심볼릭 링크) | — (반입만)         | 클론에서 직접           |
 | 배포 디렉터리   | ~/sdl_deploy_package/   | ~/sdl_keti_deploy/   | 클론의 deploy/          |
 | 브로커 설정     | 위 디렉터리의 config/   | 위 디렉터리의 config/ | deploy/config/          |
-| 이미지 확보     | 로컬 빌드               | tar 반입             | 로컬 빌드 (정책 이탈)   |
-| 롤백 태그       | —                       | rollback-YYYYMMDD 보유 | 없음 (latest 덮어씀)  |
+| CPU 아키텍처    | x86_64                  | x86_64               | **aarch64**             |
+| 이미지 확보     | 로컬 빌드 (정본)        | 스테이징 이미지 반입 | 로컬 빌드 (아키텍처 상이) |
+| 롤백 태그       | rollback-YYYYMMDD       | rollback-YYYYMMDD    | rollback-YYYYMMDD-dgx   |
 | gunicorn worker | 4                       | 4                    | 4                       |
 | 메모리          | 62 GiB                  | 31 GiB               | 121 GiB                 |
 
@@ -36,7 +37,20 @@
     프로덕션  docker load -i /tmp/sdl-app.tar.gz
               cd ~/sdl_keti_deploy && docker compose up -d --no-deps --force-recreate sdl-app
 
-DGX 는 현재 이 흐름을 따르지 않고 클론에서 직접 빌드한다. 반입형으로 통일이 필요하다.
+**DGX 는 `aarch64` 라 이 흐름을 탈 수 없다.** 스테이징·프로덕션은 `x86_64` 이므로
+스테이징에서 만든 이미지를 DGX 에서 실행할 수 없다. DGX 는 클론을 pull 한 뒤
+자체 빌드하는 것이 정상이며, 롤백 태그는 `-dgx` 접미어로 구분한다.
+
+## 이미지 대조 방법 — ID 를 쓰지 말 것
+
+`docker save`/`load` 를 거치면 **이미지 ID 와 SIZE 가 호스트마다 달라진다.** 데몬이
+이미지를 재구성하기 때문이다(스테이징 715MB ↔ 프로덕션 960MB 처럼 크기까지 다르다).
+반면 이미지 config 의 `created` 는 보존되므로, 환경 간 동일성은 **빌드 시각(UTC)** 으로
+판정한다. 실제로 과거 태그 9개(`rollback-20260810`, `aasx`, `mqtt-jsonpath`,
+`with-benthos-v1`, `phase8-storage-v1~v4` 등)의 빌드 시각이 스테이징과 프로덕션에서
+초 단위까지 일치한다 — 반입이 정상 작동해 왔다는 증거다.
+
+DGX 는 별도 빌드이므로 애초에 시각이 다르다. **DGX 는 커밋 해시로 추적한다.**
 
 ## 함정
 
