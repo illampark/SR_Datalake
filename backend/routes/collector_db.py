@@ -187,6 +187,11 @@ def update_connector(cid):
                 cfg[key] = body[key]
         if "tables" in body:
             cfg["tables"] = _normalize_tables_input(body["tables"])
+            # 컬럼 스키마(코멘트 포함) → 카탈로그 schema_info 반영
+            from backend.services.catalog_sync import (
+                build_schema_info_from_tables, sync_connector_schema_info)
+            sync_connector_schema_info(
+                db, "db", cid, build_schema_info_from_tables(cfg["tables"]))
         c.config = cfg
         flag_modified(c, "config")
         c.updated_at = datetime.utcnow()
@@ -390,6 +395,55 @@ def test_connection_direct():
 
     ok, msg, info = bm.test_db_connection(db_type, host, port, database, username, password)
     return _ok({"success": ok, "message": msg, "info": info})
+
+
+# ──────────────────────────────────────────────
+# DB-010b: POST /api/connectors/db/columns — 테이블 컬럼+코멘트 조회 (저장 전 미리보기)
+# ──────────────────────────────────────────────
+@db_bp.route("/columns", methods=["POST"])
+def columns_preview():
+    """폼에 입력된 자격증명으로 소스 테이블 컬럼 목록·코멘트(주석)를 조회한다.
+    (신규 등록 화면 — 아직 저장되지 않은 커넥터용)"""
+    body = request.get_json(force=True)
+    table = (body.get("table") or "").strip()
+    if not table:
+        return _err("테이블명은 필수입니다.", "VALIDATION")
+    db_type = body.get("dbType", "mysql")
+    host = body.get("host", "localhost")
+    port_defaults = {"oracle": 1521, "mssql": 1433, "postgresql": 5432, "mysql": 3306}
+    port = int(body.get("port") or port_defaults.get(db_type, 3306))
+    database = body.get("database", "")
+    schema = body.get("schemaName", "")
+    username = body.get("username", "")
+    password = body.get("password", "")
+
+    ok, msg, cols = bm.introspect_db_columns(
+        db_type, host, port, database, username, password, table, schema=schema)
+    return _ok({"success": ok, "message": msg, "table": table, "columns": cols})
+
+
+# ──────────────────────────────────────────────
+# DB-010c: POST /api/connectors/db/<id>/columns — 저장된 커넥터 자격증명으로 컬럼 조회
+# ──────────────────────────────────────────────
+@db_bp.route("/<int:cid>/columns", methods=["POST"])
+def columns_for_connector(cid):
+    """저장된 커넥터 자격증명으로 컬럼 목록·코멘트를 조회한다.
+    (수정 화면 — 비밀번호 재입력 없이 조회 가능)"""
+    db = _db()
+    try:
+        c = get_by_id_tenant(db, DbConnector, cid)
+        if not c:
+            return _err("커넥터를 찾을 수 없습니다.", "NOT_FOUND", 404)
+        body = request.get_json(force=True)
+        table = (body.get("table") or "").strip()
+        if not table:
+            return _err("테이블명은 필수입니다.", "VALIDATION")
+        ok, msg, cols = bm.introspect_db_columns(
+            c.db_type, c.host, c.port, c.database, c.username, c.password,
+            table, schema=c.schema_name)
+        return _ok({"success": ok, "message": msg, "table": table, "columns": cols})
+    finally:
+        db.close()
 
 
 # ──────────────────────────────────────────────
@@ -732,9 +786,34 @@ def _normalize_tables_input(tables_raw):
         elif isinstance(item, dict):
             name = (item.get("name") or "").strip()
             if name:
-                result.append({
+                entry = {
                     "name": name,
                     "trackingColumn": (item.get("trackingColumn") or "id").strip(),
                     "customSql": (item.get("customSql") or "").strip(),
-                })
+                }
+                cols = _normalize_columns(item.get("columns"))
+                if cols:
+                    entry["columns"] = cols
+                result.append(entry)
+    return result
+
+
+def _normalize_columns(cols_raw):
+    """테이블 컬럼 스키마(코멘트 포함) 정규화. config.tables[].columns 에 저장된다."""
+    if not isinstance(cols_raw, list):
+        return []
+    result = []
+    for col in cols_raw:
+        if not isinstance(col, dict):
+            continue
+        name = (col.get("name") or "").strip()
+        if not name:
+            continue
+        result.append({
+            "name": name[:200],
+            "type": str(col.get("type") or "")[:100],
+            "comment": str(col.get("comment") or "")[:1000],
+            "nullable": bool(col.get("nullable", True)),
+            "isPrimary": bool(col.get("isPrimary", False)),
+        })
     return result

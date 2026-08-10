@@ -316,6 +316,7 @@ function toggleDbFields() {
 }
 
 function openAddModal() {
+  window._editId = null;  // 신규 등록 모드 — 이전 수정 컨텍스트 초기화
   var body =
     '<form id="db-form">' +
     '<div class="form-group">' +
@@ -410,7 +411,8 @@ function _collectForm() {
     var name = $(this).find('.tbl-name').val().trim();
     var tc = $(this).find('.tbl-tracking').val().trim() || 'id';
     var sql = $(this).find('.tbl-sql').val().trim();
-    if (name) tables.push({ name: name, trackingColumn: tc, customSql: sql });
+    var cols = $(this).data('columns') || [];
+    if (name) tables.push({ name: name, trackingColumn: tc, customSql: sql, columns: cols });
   });
   return {
     name: $('#f-name').val().trim(),
@@ -430,23 +432,98 @@ function _collectForm() {
   };
 }
 
-function addTableRow(name, trackingColumn, customSql) {
+function addTableRow(name, trackingColumn, customSql, columns) {
   var n = name || '';
   var tc = trackingColumn || 'id';
   var sql = customSql || '';
+  var cols = Array.isArray(columns) ? columns : [];
   var html =
     '<div class="table-row-entry" style="border:1px solid var(--border-color,#e2e8f0);border-radius:6px;padding:8px 10px;margin-bottom:8px">' +
     '  <div style="display:flex;gap:8px;align-items:center">' +
     '    <input type="text" class="form-control tbl-name" placeholder="' + __t('page.db_connector.form_table_name_placeholder') + '" value="' + escAttr(n) + '" style="flex:2">' +
     '    <input type="text" class="form-control tbl-tracking" placeholder="' + __t('page.db_connector.form_tracking_col_placeholder') + '" value="' + escAttr(tc) + '" style="flex:1">' +
+    '    <button type="button" class="btn btn-outline btn-sm" onclick="fetchColumns(this)" title="컬럼·주석 조회" style="white-space:nowrap">' +
+    '      <i class="fas fa-list-ul"></i> 컬럼 조회</button>' +
     '    <button type="button" class="btn btn-outline btn-sm btn-icon" onclick="$(this).closest(\'.table-row-entry\').remove()" title="' + __t('common.delete') + '">' +
     '      <i class="fas fa-times text-danger"></i></button>' +
     '  </div>' +
     '  <div style="margin-top:4px">' +
     '    <input type="text" class="form-control tbl-sql" placeholder="' + __t('page.db_connector.form_custom_sql_placeholder') + '" value="' + escAttr(sql) + '" style="font-size:12px">' +
     '  </div>' +
+    '  <div class="tbl-columns" style="margin-top:6px"></div>' +
     '</div>';
-  $('#f-tables-list').append(html);
+  var $row = $(html);
+  $('#f-tables-list').append($row);
+  $row.data('columns', cols);
+  if (cols.length) renderColumns($row.find('.tbl-columns'), cols);
+}
+
+/* 컬럼 목록(코멘트 포함) 렌더 */
+function renderColumns($el, cols) {
+  if (!cols || !cols.length) { $el.empty(); return; }
+  var withComment = cols.filter(function(c) { return c.comment; }).length;
+  var rows = cols.map(function(c) {
+    return '<tr>' +
+      '<td class="mono fw-600" style="padding:2px 6px">' + escHtml(c.name) +
+        (c.isPrimary ? ' <span class="badge-sm badge-warning">PK</span>' : '') + '</td>' +
+      '<td class="mono fs-12 text-muted" style="padding:2px 6px">' + escHtml(c.type || '') + '</td>' +
+      '<td class="fs-12" style="padding:2px 6px">' +
+        (c.comment ? escHtml(c.comment) : '<span class="text-muted">-</span>') + '</td>' +
+    '</tr>';
+  }).join('');
+  $el.html(
+    '<div class="fs-11 text-muted" style="margin-bottom:2px">컬럼 ' + cols.length +
+      '개 · 주석 ' + withComment + '개</div>' +
+    '<div style="border:1px solid var(--border-color,#e2e8f0);border-radius:4px;overflow:hidden">' +
+    '<table style="width:100%;font-size:12px"><thead><tr>' +
+    '<th style="text-align:left;padding:3px 6px">컬럼</th>' +
+    '<th style="text-align:left;padding:3px 6px">타입</th>' +
+    '<th style="text-align:left;padding:3px 6px">설명(주석)</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+  );
+}
+
+/* 소스 DB 에서 테이블 컬럼 + 코멘트 조회 */
+function fetchColumns(btn) {
+  var $row = $(btn).closest('.table-row-entry');
+  var table = $row.find('.tbl-name').val().trim();
+  if (!table) { showToast('테이블명을 먼저 입력하세요.', 'error'); return; }
+  var $ic = $(btn).find('i');
+  var prev = $ic.attr('class');
+  $ic.attr('class', 'fas fa-spinner fa-spin');
+  var done = function() { $ic.attr('class', prev); };
+
+  var url, payload;
+  if (window._editId) {
+    url = API + '/' + window._editId + '/columns';
+    payload = { table: table };
+  } else {
+    url = API + '/columns';
+    var d = _collectForm();
+    payload = { table: table, dbType: d.dbType, host: d.host, port: d.port,
+                database: d.database, schemaName: d.schemaName,
+                username: d.username, password: d.password };
+  }
+  $.ajax({ url: url, type: 'POST', contentType: 'application/json', data: JSON.stringify(payload),
+    success: function(r) {
+      done();
+      if (r.success && r.data && r.data.success) {
+        var cols = r.data.columns || [];
+        $row.data('columns', cols);
+        renderColumns($row.find('.tbl-columns'), cols);
+        var withComment = cols.filter(function(c) { return c.comment; }).length;
+        showToast(table + ': 컬럼 ' + cols.length + '개 (주석 ' + withComment + '개)', 'success');
+      } else {
+        var m = (r.data && r.data.message) || (r.error && r.error.message) || '컬럼 조회 실패';
+        showToast(m, 'error');
+      }
+    },
+    error: function(xhr) {
+      done();
+      var e = xhr.responseJSON;
+      showToast((e && e.error && e.error.message) || '컬럼 조회 실패', 'error');
+    }
+  });
 }
 
 function saveConnector() {
@@ -493,9 +570,9 @@ function openEditModal(id) {
       $('#f-tables-list').empty();
       tables.forEach(function(t) {
         if (typeof t === 'string') {
-          addTableRow(t, cfg.trackingColumn || 'id', cfg.customSql || '');
+          addTableRow(t, cfg.trackingColumn || 'id', cfg.customSql || '', []);
         } else {
-          addTableRow(t.name, t.trackingColumn || 'id', t.customSql || '');
+          addTableRow(t.name, t.trackingColumn || 'id', t.customSql || '', t.columns || []);
         }
       });
 

@@ -281,6 +281,19 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
         except Exception:
             conn_desc = ""
 
+        # DB 커넥터: 테이블 컬럼 스키마(코멘트 포함)를 schema_info 로 채운다
+        _schema_info = ""
+        if connector_type == "db":
+            try:
+                from backend.models.collector import DbConnector
+                from backend.services.catalog_sync import build_schema_info_from_tables
+                _dbc = db.query(DbConnector).get(connector_id)
+                if _dbc:
+                    _tables = (_dbc.config or {}).get("tables", [])
+                    _schema_info = build_schema_info_from_tables(_tables)
+            except Exception:
+                _schema_info = ""
+
         _tid = _lookup_connector_tenant(db, connector_type, connector_id)
         catalog = DataCatalog(
             name=f"{label} {conn_label} — 전체 데이터",
@@ -288,6 +301,7 @@ def _auto_create_connector_catalog(db, connector_type, connector_id,
             connector_type=connector_type,
             connector_id=connector_id,
             connector_description=conn_desc,
+            schema_info=_schema_info,
             tag_name="",
             owner="시스템 자동",
             category="기타",

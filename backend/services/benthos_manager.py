@@ -369,6 +369,101 @@ def test_db_connection(db_type, host, port, database, username, password, timeou
         return False, str(e), {}
 
 
+def introspect_db_columns(db_type, host, port, database, username, password,
+                          table, schema="", timeout_sec=5):
+    """소스 DB 테이블의 컬럼 목록과 코멘트(주석)를 조회한다.
+
+    Returns (success: bool, message: str, columns: list).
+    columns = [{"name","type","nullable","comment","isPrimary"}, ...]
+
+    - MySQL/MariaDB: information_schema.COLUMNS.COLUMN_COMMENT
+    - PostgreSQL: col_description(regclass, ordinal_position)
+    - Oracle/MSSQL: 컬럼 코멘트 조회 미지원 (명시적 안내 반환)
+    """
+    table = (table or "").strip()
+    if not table:
+        return False, "테이블명이 비어 있습니다.", []
+    try:
+        if db_type in ("mysql", "mariadb"):
+            import pymysql
+            conn = pymysql.connect(
+                host=host, port=port, user=username, password=password,
+                database=database, connect_timeout=timeout_sec,
+                cursorclass=pymysql.cursors.DictCursor,
+            )
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT "
+                "FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s "
+                "ORDER BY ORDINAL_POSITION",
+                (database, table),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            columns = [{
+                "name": r["COLUMN_NAME"],
+                "type": r["COLUMN_TYPE"],
+                "nullable": (r["IS_NULLABLE"] == "YES"),
+                "comment": r.get("COLUMN_COMMENT") or "",
+                "isPrimary": (r.get("COLUMN_KEY") == "PRI"),
+            } for r in rows]
+            if not columns:
+                return False, f"테이블을 찾을 수 없습니다: {table}", []
+            return True, f"{len(columns)}개 컬럼 조회", columns
+
+        elif db_type == "postgresql":
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(
+                host=host, port=port, user=username, password=password,
+                dbname=database, connect_timeout=timeout_sec,
+            )
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            sch = (schema or "").strip() or "public"
+            cursor.execute(
+                """
+                SELECT
+                    c.column_name,
+                    c.data_type,
+                    c.is_nullable,
+                    col_description(format('%%I.%%I', c.table_schema, c.table_name)::regclass,
+                                    c.ordinal_position) AS comment,
+                    (pk.column_name IS NOT NULL) AS is_primary
+                FROM information_schema.columns c
+                LEFT JOIN (
+                    SELECT kcu.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                     AND tc.table_schema = kcu.table_schema
+                    WHERE tc.constraint_type = 'PRIMARY KEY'
+                      AND tc.table_schema = %s AND tc.table_name = %s
+                ) pk ON pk.column_name = c.column_name
+                WHERE c.table_schema = %s AND c.table_name = %s
+                ORDER BY c.ordinal_position
+                """,
+                (sch, table, sch, table),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            columns = [{
+                "name": r["column_name"],
+                "type": r["data_type"],
+                "nullable": (r["is_nullable"] == "YES"),
+                "comment": r.get("comment") or "",
+                "isPrimary": bool(r.get("is_primary")),
+            } for r in rows]
+            if not columns:
+                return False, f"테이블을 찾을 수 없습니다: {sch}.{table}", []
+            return True, f"{len(columns)}개 컬럼 조회", columns
+
+        else:
+            return False, f"컬럼 코멘트 조회는 MySQL/PostgreSQL 만 지원합니다 (요청: {db_type})", []
+    except Exception as e:
+        return False, str(e), []
+
+
 # ── OPC-UA-specific helpers ──────────────────
 
 # NOTE: OPC-UA 는 Benthos generate-input stub 대신 asyncua.sync 기반

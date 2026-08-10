@@ -65,6 +65,45 @@ def sync_connector_description(db, connector_type, connector_id, description):
     ).update({"connector_description": description or ""})
 
 
+def build_schema_info_from_tables(tables):
+    """DB 커넥터 config.tables[].columns → 사람이 읽는 스키마 설명 텍스트.
+
+    컬럼 코멘트(주석)를 포함하며, DataCatalog.schema_info 에 저장되어
+    데이터 카탈로그 상세 화면에서 소비자가 컬럼 의미를 파악하는 데 쓰인다.
+    """
+    lines = []
+    for t in (tables or []):
+        if not isinstance(t, dict):
+            continue
+        cols = t.get("columns") or []
+        if not cols:
+            continue
+        lines.append(f"[{t.get('name', '')}]")
+        for col in cols:
+            if not isinstance(col, dict):
+                continue
+            name = col.get("name", "")
+            typ = col.get("type", "")
+            pk = " (PK)" if col.get("isPrimary") else ""
+            comment = col.get("comment", "")
+            line = f"  - {name}: {typ}{pk}"
+            if comment:
+                line += f" — {comment}"
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def sync_connector_schema_info(db, connector_type, connector_id, schema_info):
+    """커넥터 테이블 컬럼 스키마(코멘트 포함)를 관련 DataCatalog.schema_info 에 반영한다.
+
+    커밋 시점에 카탈로그 행이 아직 없으면 no-op (sync_connector_description 과 동일 패턴).
+    """
+    db.query(DataCatalog).filter_by(
+        connector_type=connector_type,
+        connector_id=connector_id,
+    ).update({"schema_info": schema_info or ""})
+
+
 def sync_connector_name(db, connector_type, connector_id, new_name):
     """커넥터 이름이 변경되면 관련 DataCatalog 의 이름을 갱신한다."""
     label = _CONNECTOR_LABELS.get(connector_type, connector_type)
