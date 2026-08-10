@@ -10,6 +10,8 @@
 | 2026-08-10 22:57 | 설정만  | 스테이징 | mosquitto.conf + 재시작 | ✓ Config loaded · pub/sub 왕복 · 드롭 0   | config/*.bak.20260810_225655 |
 | 2026-08-10 22:15 | 설정만  | DGX      | mosquitto.conf + 재시작 | ✓ Config loaded · 파이프라인 9개 유지     | deploy/config/*.bak.20260810_221554 |
 | 2026-08-11 00:52 | 3e12665 | DGX      | 로컬 빌드(aarch64) + 교체 | ✓ 2,688행 무손실 재현검증 · 드롭 0 · 8테이블 3,393행 | rollback-20260811-dgx |
+| 2026-08-11 01:05 | ff47df1 | 스테이징 | docker build (x86_64)      | ✓ 이미지 c87819c5f34a · 롤백태그 rollback-20260811 | rollback-20260811 |
+| 2026-08-11 01:08 | ff47df1 | 프로덕션 | 스테이징 이미지 반입(save/scp/load) + 교체 | ✓ healthy · HTTP 200 · 코드해시 e35d5f0b 일치 · 고객설정 12파이프라인/5커넥터 보존 · 오류 0 | rollback-20260811 |
 
 ## 배포 후 점검 (생략 금지)
 
