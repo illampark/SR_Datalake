@@ -54,6 +54,11 @@ DGX 는 별도 빌드이므로 애초에 시각이 다르다. **DGX 는 커밋 �
 
 ## 함정
 
+- **`minio/minio` · `minio/mc` 를 Docker Hub 에서 받을 수 없다** (2026-09-29 확인).
+  레지스트리 manifest 조회가 401 이며 DGX · 스테이징 어디서도 pull 되지 않는다.
+  `deploy/scripts/01_build_and_export.sh` 가 이 둘을 pull 하므로 신규 설치·재빌드가
+  막힌다. 보유 호스트에서 `docker save`/`load` 로 반입한다. 결정 기록 `0002` 참조.
+
 - **리포의 `deploy/config/` 는 실행 설정이 아니다.** 배포 디렉터리는 리포에서 갈라져
   나온 사본이며 각자 표류했다. 리포를 고쳐도 스테이징 · 프로덕션 컨테이너에는
   반영되지 않는다. 2026-08-10 에 이 착각으로 엉뚱한 파일을 고쳤다.
@@ -82,3 +87,32 @@ DGX 는 별도 빌드이므로 애초에 시각이 다르다. **DGX 는 커밋 �
 
 `HANDOFF.md` 는 덮어써서 사라지므로, 남겨야 할 내용은 세션 종료 시
 `docs/worklogs/<오늘>.md` 로 옮긴다.
+
+## 테스트 서버 — spark-6783 (2026-09-29 신설)
+
+승격 대상이 아니므로 위 개요 표(스테이징·프로덕션·DGX)에 넣지 않는다.
+
+| 항목 | 값 |
+|---|---|
+| 호스트명 | `spark-6783` (DGX Spark) |
+| 접속 | LAN `192.168.1.18` · blunex · 비밀번호 (스테이징 경유) |
+| OS · 아키텍처 | Ubuntu 24.04.5 LTS · **aarch64** |
+| CPU · RAM · Disk | 20 Core · 121 GiB · 3.7 TB |
+| docker 권한 | `blunex` ∈ `docker` → sudo 불필요 |
+| git 클론 | `~/Workspace/sr_datalake` (스테이징에서 tar 반입, `.env` 제외) |
+| 배포 디렉터리 | 클론의 `deploy/` |
+| DATA_ROOT | **`/home/blunex/sdl-data`** (기본값 `/opt/sdl-data` 는 sudo 필요) |
+| 앱 포트 | `0.0.0.0:5001` (LAN 노출 — DGX 는 loopback 전용이라 다름) |
+| 이미지 확보 | 로컬 빌드 (아키텍처 상이) + minio 2종은 DGX 반입 |
+| 동거 스택 | BaSyx AAS 5개 · ThingsBoard 2개 (포트 충돌 없음) |
+
+**망**: WiFi `SOFTRAIN_STATIC-5G`. DGX 는 같은 SSID 를 `ipv4.method=manual` ·
+gw `192.168.1.1` · dns `168.126.63.1` 로 쓰는데, 이 서버는 `auto`(DHCP) 다.
+설치 착수 시 DHCP 가 gw `192.168.1.254` 를 줘 외부망이 전부 막혀 있었다.
+현재는 DHCP 가 올바른 값을 주지만 **호스트에 고정된 것이 아니므로 재발 가능**하다.
+고정하려면 DGX 와 동일하게 `manual` 로 바꾼다.
+
+**WiFi 가 불안정하다** — 설치 중 SSH 가 3회 끊겼다. 장시간 작업은 `setsid nohup` 으로
+분리한다.
+
+설치는 `scripts/install-newhost.sh` 가 절차를 고정한다.
