@@ -119,6 +119,11 @@ services:
       BENTHOS_API: http://localhost:4195
       MQTT_DEFAULT_HOST: mosquitto
       MQTT_DEFAULT_PORT: "1883"
+      # super_admin 부트스트랩 — 값은 .env 에만 둔다 (리포에 넣지 않는다).
+      # PASSWORD 가 비어 있으면 super_admin 시드를 건너뛴다.
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-admin@softrain.co.kr}
+      SUPER_ADMIN_NAME: ${SUPER_ADMIN_NAME:-Super 관리자}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:-}
     ports:
       - "${SDL_PORT:-5001}:5001"
     volumes:

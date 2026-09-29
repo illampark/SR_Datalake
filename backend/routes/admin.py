@@ -13,7 +13,7 @@ from datetime import timedelta
 from flask import Blueprint, jsonify, request, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from sqlalchemy import func
+from sqlalchemy import func, text
 from backend.database import SessionLocal
 from backend.models.user import User, LoginHistory, AdminSetting
 from backend.config import (
@@ -98,42 +98,191 @@ _DEFAULT_SETTINGS = {
 
 
 # ──────────────────────────────────────────────
+# Seed 대상 정의
+# ──────────────────────────────────────────────
+
+# super_admin 부트스트랩.
+# 사용자 생성 API 는 is_super 부여를 super_admin 에게만 허용하므로(create_user 의
+# FORBIDDEN 분기) 최초 1개는 이 시드 경로로만 만들 수 있다.
+# 비밀번호는 리포에 두지 않는다 — deploy/.env (gitignore 대상) 에서 주입한다.
+SUPER_ADMIN_EMAIL = os.getenv("SUPER_ADMIN_EMAIL", "admin@softrain.co.kr")
+SUPER_ADMIN_NAME = os.getenv("SUPER_ADMIN_NAME", "Super 관리자")
+SUPER_ADMIN_USERNAME = os.getenv("SUPER_ADMIN_USERNAME", "")
+SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "")
+
+# 기본 테넌트 — backend/models/tenant.py 규약: id=0 system / id=1 default
+_DEFAULT_TENANTS = (
+    {"id": 0, "slug": "system", "name": "System"},
+    {"id": 1, "slug": "default", "name": "기본 테넌트"},
+)
+
+# 기본 테넌트 id. _current_tenant_id() 폴백과 같은 1 을 쓴다.
+DEFAULT_TENANT_ID = 1
+
+# 기본 사용자 2명 — 기본 테넌트의 관리자 / 뷰어로 소속시킨다.
+_DEFAULT_USERS = (
+    {"username": "admin", "display_name": "관리자",
+     "email": "admin@sdm-factory.co.kr", "password": "admin1234",
+     "role": "admin", "tenant_role": "tenant_admin"},
+    {"username": "viewer", "display_name": "뷰어",
+     "email": "viewer@sdm-factory.co.kr", "password": "viewer1234",
+     "role": "viewer", "tenant_role": "tenant_viewer"},
+)
+
+
+# ──────────────────────────────────────────────
 # 초기 데이터 Seed
 # ──────────────────────────────────────────────
 
-def seed_default_users():
-    """기본 사용자 및 로그인 정책 시드"""
-    db = SessionLocal()
-    try:
-        # 사용자 시드
-        if db.query(User).count() == 0:
-            defaults = [
-                User(
-                    username="admin",
-                    display_name="관리자",
-                    email="admin@sdm-factory.co.kr",
-                    password_hash=generate_password_hash("admin1234"),
-                    role="admin",
-                ),
-                User(
-                    username="viewer",
-                    display_name="뷰어",
-                    email="viewer@sdm-factory.co.kr",
-                    password_hash=generate_password_hash("viewer1234"),
-                    role="viewer",
-                ),
-            ]
-            db.add_all(defaults)
-            db.commit()
-            logger.info("기본 사용자 2명 생성 완료")
+def _seed_tenants(db):
+    """기본 테넌트 2개를 만든다. 이미 있으면 건너뛴다 (멱등)."""
+    from backend.models.tenant import Tenant
+    created = []
+    for t in _DEFAULT_TENANTS:
+        exists = db.query(Tenant).filter(
+            (Tenant.id == t["id"]) | (Tenant.slug == t["slug"])
+        ).first()
+        if exists:
+            continue
+        db.add(Tenant(id=t["id"], slug=t["slug"], name=t["name"],
+                      status="active", plan="default", settings={}))
+        created.append(t["slug"])
+    if not created:
+        return []
+    db.flush()
+    # id 를 명시 삽입했으므로 시퀀스를 현재 최대값에 맞춘다. 그러지 않으면 이후
+    # 자동 생성되는 테넌트가 id 충돌로 깨진다.
+    db.execute(text(
+        "select setval('tenant_id_seq',"
+        " greatest(coalesce((select max(id) from tenant), 1), 1))"
+    ))
+    db.commit()
+    logger.info("기본 테넌트 생성: %s", ", ".join(created))
+    return created
 
-        # 로그인 정책 + 시스템 설정 시드
-        all_defaults = {**_DEFAULT_POLICY, **_DEFAULT_SETTINGS}
-        for k, v in all_defaults.items():
-            exists = db.query(AdminSetting).filter(AdminSetting.key == k).first()
-            if not exists:
-                db.add(AdminSetting(key=k, value=v))
+
+def _seed_default_users(db):
+    """기본 사용자 2명을 만든다. 이메일 기준 멱등."""
+    created = []
+    for u in _DEFAULT_USERS:
+        if db.query(User).filter(User.email == u["email"]).first():
+            continue
+        db.add(User(
+            username=u["username"],
+            display_name=u["display_name"],
+            email=u["email"],
+            password_hash=generate_password_hash(u["password"]),
+            role=u["role"],
+        ))
+        created.append(u["email"])
+    if created:
         db.commit()
+        logger.info("기본 사용자 생성: %s", ", ".join(created))
+    return created
+
+
+def _ensure_membership(db, user, tenant_id, tenant_role):
+    """user 를 tenant 에 소속시킨다. 이미 있으면 역할만 맞춘다 (멱등)."""
+    from backend.models.tenant import TenantMembership
+    m = db.query(TenantMembership).filter_by(
+        user_id=user.id, tenant_id=tenant_id,
+    ).first()
+    if m is None:
+        db.add(TenantMembership(
+            user_id=user.id, tenant_id=tenant_id, role=tenant_role,
+        ))
+        logger.info("멤버십 생성: %s → tenant=%d/%s",
+                    user.email, tenant_id, tenant_role)
+        return True
+    if m.role != tenant_role:
+        logger.info("멤버십 역할 유지: %s → tenant=%d/%s (기대 %s)",
+                    user.email, tenant_id, m.role, tenant_role)
+    return False
+
+
+def _seed_default_memberships(db):
+    """기본 사용자 2명을 기본 테넌트의 관리자 / 뷰어로 소속시킨다."""
+    changed = 0
+    for u in _DEFAULT_USERS:
+        user = db.query(User).filter(User.email == u["email"]).first()
+        if user is None:
+            continue
+        if _ensure_membership(db, user, DEFAULT_TENANT_ID, u["tenant_role"]):
+            changed += 1
+    if changed:
+        db.commit()
+    return changed
+
+
+def _seed_super_admin(db):
+    """super_admin 1명 + 기본 테넌트 멤버십을 만든다. 이미 있으면 건너뛴다 (멱등)."""
+    if not SUPER_ADMIN_PASSWORD:
+        logger.warning(
+            "SUPER_ADMIN_PASSWORD 가 비어 있어 super_admin 시드를 건너뜁니다. "
+            "deploy/.env 에 설정한 뒤 sdl-app 을 재시작하십시오."
+        )
+        return None
+
+    user = db.query(User).filter(User.email == SUPER_ADMIN_EMAIL).first()
+    if user is None:
+        # username 은 글로벌 unique 가 아니다(mig 0012). 기본값은 이메일 도메인의
+        # 첫 라벨 — admin@softrain.co.kr → 'softrain'.
+        uname = (SUPER_ADMIN_USERNAME
+                 or SUPER_ADMIN_EMAIL.split("@", 1)[1].split(".", 1)[0])
+        user = User(
+            username=uname,
+            display_name=SUPER_ADMIN_NAME,
+            email=SUPER_ADMIN_EMAIL,
+            password_hash=generate_password_hash(SUPER_ADMIN_PASSWORD),
+            role="admin",
+            is_super=True,
+        )
+        db.add(user)
+        db.flush()
+        logger.info("super_admin 생성: %s (username=%s)", SUPER_ADMIN_EMAIL, uname)
+    elif not user.is_super:
+        # 이미 있는 계정이면 권한만 올린다. 비밀번호는 건드리지 않는다.
+        user.is_super = True
+        logger.info("super_admin 권한 부여: %s", SUPER_ADMIN_EMAIL)
+
+    _ensure_membership(db, user, DEFAULT_TENANT_ID, "tenant_admin")
+    db.commit()
+    return user
+
+
+def seed_default_users():
+    """기본 테넌트 · 기본 사용자 · 멤버십 · super_admin · 로그인 정책 시드.
+
+    각 단계를 독립적으로 감싼다 — gunicorn 워커가 4개라 동시에 실행되므로,
+    한 단계의 경쟁 조건이 나머지 단계를 막지 않게 한다.
+
+    순서 고정: 테넌트 → 사용자 → 멤버십(FK: user, tenant) → super_admin.
+    """
+    db = SessionLocal()
+    steps = (
+        ("기본 테넌트", _seed_tenants),
+        ("기본 사용자", _seed_default_users),
+        ("기본 멤버십", _seed_default_memberships),
+        ("super_admin", _seed_super_admin),
+    )
+    try:
+        for label, fn in steps:
+            try:
+                fn(db)
+            except Exception as e:
+                db.rollback()
+                logger.warning("%s 시드 건너뜀 (워커 동시 실행 가능): %s", label, e)
+
+        # 로그인 정책 + 시스템 설정
+        try:
+            all_defaults = {**_DEFAULT_POLICY, **_DEFAULT_SETTINGS}
+            for k, v in all_defaults.items():
+                if not db.query(AdminSetting).filter(AdminSetting.key == k).first():
+                    db.add(AdminSetting(key=k, value=v))
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning("설정 시드 건너뜀 (워커 동시 실행 가능): %s", e)
     except Exception as e:
         db.rollback()
         logger.error("초기 데이터 시드 실패: %s", e)

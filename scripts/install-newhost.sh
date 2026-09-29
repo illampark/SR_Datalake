@@ -50,9 +50,13 @@ MINIO_ROOT_USER=sdladmin
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
 SDL_PORT=${SDL_PORT}
 DATA_ROOT=${DATA_ROOT}
+SUPER_ADMIN_EMAIL=${SUPER_ADMIN_EMAIL:-admin@softrain.co.kr}
+SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:-$(openssl rand -base64 18 | tr -d '/+=' | head -c 16)}
 EOF
   chmod 600 .env
   echo ".env 생성 (비밀번호 무작위 · 값은 이 파일에만)"
+  echo "   super_admin: $(grep '^SUPER_ADMIN_EMAIL=' .env | cut -d= -f2)"
+   echo "   비밀번호는 .env 의 SUPER_ADMIN_PASSWORD 를 보라. 환경변수로 미리 지정 가능."
 fi
 
 # ── 4. 베이스 이미지 ──
