@@ -14,6 +14,7 @@
 | 2026-08-11 01:08 | ff47df1 | 프로덕션 | 스테이징 이미지 반입(save/scp/load) + 교체 | ✓ healthy · HTTP 200 · 코드해시 e35d5f0b 일치 · 고객설정 12파이프라인/5커넥터 보존 · 오류 0 | rollback-20260811 |
 | 2026-09-08 10:30 | 설정만  | 프로덕션 | nginx enable --now (호스트 서비스) | ✓ 08-18 재부팅 후 nginx disabled 로 HTTPS 3주 다운 → 복구. 외부 :51404/login 200 · 내부 443 LISTEN · enabled·active | 해당없음(서비스 기동) |
 | 2026-09-29 16:13 | ef3da08 | 테스트(spark-6783) | 자체 빌드(aarch64) + 신규 설치 | ✓ 5컨테이너 healthy · /login 200(LAN) · 로그인 API 200 · 55테이블 · MinIO 버킷 5 · 핵심 API 200 / minio 이미지는 Docker Hub 불가 → DGX 반입(결정 0002) / 커넥터·파이프라인 0개라 데이터 흐름 미검증 | 해당없음(신규 설치) |
+| 2026-09-29 16:49 | 528cff8 | 테스트(spark-6783) | 자체 빌드(aarch64) + sdl-app 교체 | ✓ healthy · super_admin isSuper=True · 기본테넌트 2개(system/default) · 멤버십 3건 · RBAC 경계 확인(tenant_admin 403 / super 200) · 로그인 3계정 200 | sdl-app:rollback-20260929-test |
 
 ## 배포 후 점검 (생략 금지)
 
